@@ -65,6 +65,11 @@ void test_format_inf() {
 
     std::cout << "Expect CSR: " << (a_ij + b_ij).type().format << "\n";
     std::cout << "Expect DCSR: " << (a_ij * b_ij).type().format << "\n";
+
+    std::cout << "Expect [DC]{D}: "
+              << (bc("k", a_ij) + bc("k", b_ij)).type().format << "\n";
+    std::cout << "Expect [DC]{D}: "
+              << (bc("k", a_ij) * bc("k", b_ij)).type().format << "\n";
 }
 
 // TODO: write a parser.

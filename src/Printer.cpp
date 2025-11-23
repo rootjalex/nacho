@@ -35,13 +35,13 @@ std::ostream &operator<<(std::ostream &os, const Format &format) {
     }
 
     // Unordered levels
-    if (!format.unordered_levels.empty()) {
+    if (!format.bc_levels.empty()) {
         if (!format.levels.empty())
             os << ", "; // separator only if needed
 
         os << "{";
         bool first = true;
-        for (const auto &lvl : format.unordered_levels) {
+        for (const auto &lvl : format.bc_levels) {
             if (!first)
                 os << ", ";
             os << lvl;
@@ -51,7 +51,7 @@ std::ostream &operator<<(std::ostream &os, const Format &format) {
     }
 
     // If both empty, show explicitly
-    if (format.levels.empty() && format.unordered_levels.empty()) {
+    if (format.levels.empty() && format.bc_levels.empty()) {
         os << "empty";
     }
 

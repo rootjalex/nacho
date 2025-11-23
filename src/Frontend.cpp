@@ -76,7 +76,7 @@ Expr Bc::make(std::string index, Expr a) {
         << "Broadcast error: level '" << index
         << "' already exists in tensor format" << f;
 
-    f.unordered_levels.insert({index, LevelFormat::Dense});
+    f.bc_levels.insert({index, LevelFormat::Dense});
 
     Bc *node = new Bc;
     node->type = TensorType(f, a.type().dtype);
@@ -111,9 +111,8 @@ Expr Sum::make(std::string index, Expr a) {
                                  "' does not exist in tensor format");
     }
     // TODO: only one of these should do any erasing
-    std::size_t n_erased =
-        std::erase_if(f.unordered_levels,
-                      [&](const Level &lvl) { return lvl.index == index; });
+    std::size_t n_erased = std::erase_if(
+        f.bc_levels, [&](const Level &lvl) { return lvl.index == index; });
 
     n_erased += std::erase_if(
         f.levels, [&](const Level &lvl) { return lvl.index == index; });
@@ -129,7 +128,7 @@ Expr Sum::make(std::string index, Expr a) {
 }
 
 Expr Tensor::make(TensorType type, std::string name) {
-    internal_assert(type.format.unordered_levels.empty())
+    internal_assert(type.format.bc_levels.empty())
         << "Tensor cannot be made with a type with unordered levels: " << name;
     Tensor *node = new Tensor;
     node->type = std::move(type);

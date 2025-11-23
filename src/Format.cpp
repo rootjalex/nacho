@@ -90,6 +90,7 @@ make_format(const Format &a, const Format &b,
     std::set<std::string> remaining(all.begin(), all.end());
     std::vector<std::string> merged;
     merged.reserve(all.size());
+    std::set<std::string> broadcasts;
 
     auto precedes = [&](const std::string &x, const std::string &y) {
         bool inA = A.count(x) && A.count(y) && A.at(x) < A.at(y);
@@ -114,7 +115,13 @@ make_format(const Format &a, const Format &b,
             }
 
             if (!has_pred) {
-                merged.push_back(idx);
+                // if idx is broadcasted in A and B then it should be put in
+                // broadcasts, not merged.
+                if (a.is_bc_lvl(idx) && b.is_bc_lvl(idx)) {
+                    broadcasts.insert(idx);
+                } else {
+                    merged.push_back(idx);
+                }
                 remaining.erase(it);
                 progress = true;
                 break;
@@ -135,6 +142,12 @@ make_format(const Format &a, const Format &b,
         out.levels.push_back(Level{idx, combine(fa, fb)});
     }
 
+    for (auto &idx : broadcasts) {
+        LevelFormat fa = a.lvlfmt_of(idx);
+        LevelFormat fb = b.lvlfmt_of(idx);
+        out.bc_levels.insert(Level{idx, combine(fa, fb)});
+    }
+
     return out;
 }
 
@@ -146,6 +159,11 @@ LevelFormat Format::lvlfmt_of(const std::string &idx) const {
                            [&](const Level &lv) { return lv.index == idx; });
     internal_assert(it != all.end());
     return it->format;
+}
+
+bool Format::is_bc_lvl(const std::string &idx) const {
+    return std::any_of(bc_levels.begin(), bc_levels.end(),
+                       [&](const Level &lvl) { return lvl.index == idx; });
 }
 
 Format add_formats(const Format &a, const Format &b) {

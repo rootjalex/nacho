@@ -30,27 +30,29 @@ struct Level {
 
 struct Format {
     std::vector<Level> levels;
-    std::set<Level> unordered_levels;
+    std::set<Level> bc_levels;
 
     // Factories
     static Format ordered(std::vector<Level> lvls) {
         return Format{.levels = std::move(lvls)};
     }
     static Format unordered(std::set<Level> lvls) {
-        return Format{.unordered_levels = std::move(lvls)};
+        return Format{.bc_levels = std::move(lvls)};
     }
 
     std::set<Level> get_all_levels() const {
         if (levels.empty()) {
-            return unordered_levels;
+            return bc_levels;
         } else {
-            std::set<Level> copy = unordered_levels;
+            std::set<Level> copy = bc_levels;
             copy.insert(levels.cbegin(), levels.cend());
             return copy;
         }
     }
 
     LevelFormat lvlfmt_of(const std::string &idx) const;
+
+    bool is_bc_lvl(const std::string &idx) const;
 };
 
 // Format inference.
