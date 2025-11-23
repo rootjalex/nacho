@@ -2,6 +2,9 @@
 
 namespace nacho {
 
+struct Level;
+struct Format;
+
 struct Expr;
 struct Add;
 struct Bc;

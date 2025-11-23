@@ -49,6 +49,12 @@ struct Format {
             return copy;
         }
     }
+
+    LevelFormat lvlfmt_of(const std::string &idx) const;
 };
+
+// Format inference.
+Format add_formats(const Format &a, const Format &b);
+Format mul_formats(const Format &a, const Format &b);
 
 } // namespace nacho

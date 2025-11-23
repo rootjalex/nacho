@@ -1,6 +1,7 @@
 #include "Frontend.h"
 
 #include "Error.h"
+#include "Printer.h"
 
 #include <algorithm>
 
@@ -14,24 +15,36 @@ bool compatible_and_broadcast(Expr &a, Expr &b) {
     auto a_levels = a.type().format.get_all_levels();
     auto b_levels = b.type().format.get_all_levels();
 
-    if (a_levels != b_levels) {
-        std::vector<Level> a_missing;
-        std::vector<Level> b_missing;
+    auto to_index_set = [](const std::set<Level> &lvls) {
+        std::set<std::string> s;
+        for (auto &lvl : lvls)
+            s.insert(lvl.index);
+        return s;
+    };
 
-        std::set_difference(b_levels.begin(), b_levels.end(), a_levels.begin(),
-                            a_levels.end(), std::back_inserter(a_missing));
+    auto a_idx = to_index_set(a_levels);
+    auto b_idx = to_index_set(b_levels);
 
-        std::set_difference(a_levels.begin(), a_levels.end(), b_levels.begin(),
-                            b_levels.end(), std::back_inserter(b_missing));
+    if (a_idx != b_idx) {
+        std::vector<std::string> a_missing;
+        std::vector<std::string> b_missing;
+
+        // TODO: custom equality?
+        std::set_difference(b_idx.begin(), b_idx.end(), a_idx.begin(),
+                            a_idx.end(), std::back_inserter(a_missing));
+
+        // TODO: custom equality?
+        std::set_difference(a_idx.begin(), a_idx.end(), b_idx.begin(),
+                            b_idx.end(), std::back_inserter(b_missing));
 
         // For each level in a - b, do:
         for (const auto &lvl : a_missing) {
-            a = Bc::make(lvl.index, a);
+            a = Bc::make(lvl, a);
         }
 
         // For each level in b - a, do:
         for (const auto &lvl : b_missing) {
-            b = Bc::make(lvl.index, b);
+            b = Bc::make(lvl, b);
         }
     }
 
@@ -43,7 +56,8 @@ Expr Add::make(Expr a, Expr b) {
         << "Incompatible types being added"; // << a << " + " << b;
 
     Add *node = new Add;
-    node->type = a.type(); // TODO: might not always be a type?
+    auto format = add_formats(a.type().format, b.type().format);
+    node->type = TensorType(std::move(format), a.type().dtype);
     node->a = std::move(a);
     node->b = std::move(b);
     return node;
@@ -58,13 +72,14 @@ Expr Bc::make(std::string index, Expr a) {
         return lvl.index == index; // matching index means level already exists
     });
 
-    internal_assert(it == all.end()) << "Broadcast error: level '" << index
-                                     << "' already exists in tensor format";
+    internal_assert(it == all.end())
+        << "Broadcast error: level '" << index
+        << "' already exists in tensor format" << f;
 
     f.unordered_levels.insert({index, LevelFormat::Dense});
 
     Bc *node = new Bc;
-    node->type = TensorType{f, a.type().dtype};
+    node->type = TensorType(f, a.type().dtype);
     node->index = std::move(index);
     node->a = std::move(a);
     return node;
@@ -75,7 +90,8 @@ Expr Mul::make(Expr a, Expr b) {
         << "Incompatible types being multiplied"; // << a << " + " << b;
 
     Mul *node = new Mul;
-    node->type = a.type(); // TODO: might not always be a type?
+    auto format = mul_formats(a.type().format, b.type().format);
+    node->type = TensorType(std::move(format), a.type().dtype);
     node->a = std::move(a);
     node->b = std::move(b);
     return node;
@@ -106,7 +122,7 @@ Expr Sum::make(std::string index, Expr a) {
                                    << "' from " << n_erased << " levels.";
 
     Sum *node = new Sum;
-    node->type = TensorType{f, a.type().dtype};
+    node->type = TensorType(f, a.type().dtype);
     node->index = std::move(index);
     node->a = std::move(a);
     return node;

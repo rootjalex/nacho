@@ -58,6 +58,7 @@ target_compile_features(nacho_library PUBLIC cxx_std_20)
 target_sources(
     nacho_library
     PRIVATE
+    src/Format.cpp
     src/Frontend.cpp
     src/Printer.cpp
     src/Visitor.cpp

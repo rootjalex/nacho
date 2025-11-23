@@ -6,6 +6,9 @@
 
 namespace nacho {
 
+std::ostream &operator<<(std::ostream &os, const Level &lvl);
+std::ostream &operator<<(std::ostream &os, const Format &format);
+
 std::ostream &operator<<(std::ostream &os, const Expr &expr);
 
 struct Printer : public Visitor {
