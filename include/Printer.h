@@ -11,6 +11,10 @@ std::ostream &operator<<(std::ostream &os, const Format &format);
 
 std::ostream &operator<<(std::ostream &os, const Expr &expr);
 
+std::ostream &operator<<(std::ostream &os, const Seq &seq);
+std::ostream &operator<<(std::ostream &os, const cExpr &cexpr);
+std::ostream &operator<<(std::ostream &os, const CIN &cin);
+
 struct Printer : public Visitor {
     explicit Printer(std::ostream &os) : os(os) {}
 
@@ -20,7 +24,28 @@ struct Printer : public Visitor {
     virtual void visit(const Bc *) override;
     virtual void visit(const Mul *) override;
     virtual void visit(const Sum *) override;
+    virtual void print_tensor(const std::string &name, const TensorType &type);
     virtual void visit(const Tensor *) override;
+
+    virtual void print(const Seq &);
+    virtual void print_no_parens(const Seq &);
+    virtual void visit(const Index *) override;
+    virtual void visit(const Intersect *) override;
+    virtual void visit(const Union *) override;
+    virtual void visit(const Universe *) override;
+
+    virtual void print(const cExpr &);
+    virtual void print_no_parens(const cExpr &);
+    virtual void visit(const cAdd *) override;
+    virtual void visit(const cMul *) override;
+    virtual void visit(const cTensor *) override;
+
+    virtual void print(const CIN &);
+    virtual void visit(const Accumulate *) override;
+    virtual void visit(const Assign *) override;
+    virtual void visit(const Forall *) override;
+    virtual void visit(const Sequence *) override;
+    virtual void visit(const Where *) override;
 
   private:
     /** The stream on which we're outputting */
@@ -41,7 +66,18 @@ struct Printer : public Visitor {
         }
     }
 
-    // TODO: indentation for statements
+    size_t indent_count = 0;
+
+    void indent() { indent_count++; }
+    void dedent() { indent_count--; }
+
+    virtual void print_indent() {
+        for (size_t i = 0; i < indent_count; i++) {
+            os << "  "; // two spaces
+        }
+    }
+
+    virtual void end_line() { os << "\n"; }
 };
 
 } // namespace nacho

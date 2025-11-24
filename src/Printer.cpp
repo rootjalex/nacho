@@ -1,5 +1,6 @@
 #include "Printer.h"
 
+#include "CIN.h"
 #include "Frontend.h"
 #include "Scope.h"
 
@@ -70,6 +71,36 @@ std::ostream &operator<<(std::ostream &os, const Expr &expr) {
     return os;
 }
 
+std::ostream &operator<<(std::ostream &os, const Seq &seq) {
+    if (seq.defined()) {
+        Printer printer(os);
+        printer.print_no_parens(seq);
+    } else {
+        os << "(undef-seq)";
+    }
+    return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const cExpr &cexpr) {
+    if (cexpr.defined()) {
+        Printer printer(os);
+        printer.print_no_parens(cexpr);
+    } else {
+        os << "(undef-cexpr)";
+    }
+    return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const CIN &cin) {
+    if (cin.defined()) {
+        Printer printer(os);
+        printer.print(cin);
+    } else {
+        os << "(undef-cin)";
+    }
+    return os;
+}
+
 void Printer::print(const Expr &expr) {
     ScopedValue<bool> old(implicit_parens, false);
     expr.accept(this);
@@ -108,12 +139,12 @@ void Printer::visit(const Sum *node) {
     os << ")";
 }
 
-void Printer::visit(const Tensor *node) {
-    os << node->name;
-    if (!node->type.format.levels.empty()) {
+void Printer::print_tensor(const std::string &name, const TensorType &type) {
+    os << name;
+    if (!type.format.levels.empty()) {
         os << "[";
         bool first = true;
-        for (const auto &lvl : node->type.format.levels) {
+        for (const auto &lvl : type.format.levels) {
             if (!first) {
                 os << ", ";
             }
@@ -122,6 +153,126 @@ void Printer::visit(const Tensor *node) {
         }
         os << "]";
     }
+}
+
+void Printer::visit(const Tensor *node) {
+    print_tensor(node->name, node->type);
+}
+
+void Printer::print(const Seq &seq) {
+    ScopedValue<bool> old(implicit_parens, false);
+    seq.accept(this);
+}
+
+void Printer::print_no_parens(const Seq &seq) {
+    ScopedValue<bool> old(implicit_parens, true);
+    seq.accept(this);
+}
+
+void Printer::visit(const Index *node) {
+    os << node->format.levels[node->level].index;
+    os << "_" << node->tensor;
+    // Print dependency
+    if (node->level != 0) {
+        os << "[";
+        os << node->format.levels[node->level - 1].index;
+        os << "]";
+    }
+}
+
+void Printer::visit(const Intersect *node) {
+    open();
+    print(node->a);
+    os << " ∩ ";
+    print(node->b);
+    close();
+}
+
+void Printer::visit(const Union *node) {
+    open();
+    print(node->a);
+    os << " ∪ ";
+    print(node->b);
+    close();
+}
+
+void Printer::visit(const Universe *node) { os << "U_{" << node->idx << "}"; }
+
+void Printer::print(const cExpr &cexpr) {
+    ScopedValue<bool> old(implicit_parens, false);
+    cexpr.accept(this);
+}
+
+void Printer::print_no_parens(const cExpr &cexpr) {
+    ScopedValue<bool> old(implicit_parens, true);
+    cexpr.accept(this);
+}
+
+void Printer::visit(const cAdd *node) {
+    open();
+    print(node->a);
+    os << " + ";
+    print(node->b);
+    close();
+}
+
+void Printer::visit(const cMul *node) {
+    open();
+    print(node->a);
+    os << " + ";
+    print(node->b);
+    close();
+}
+
+void Printer::visit(const cTensor *node) {
+    print_tensor(node->name, node->type);
+}
+
+void Printer::print(const CIN &cin) { cin.accept(this); }
+
+void Printer::visit(const Accumulate *node) {
+    print_indent();
+    print_tensor(node->tensor, node->type);
+    os << " += ";
+    print_no_parens(node->expr);
+    end_line();
+}
+
+void Printer::visit(const Assign *node) {
+    print_indent();
+    print_tensor(node->tensor, node->type);
+    os << " = ";
+    print_no_parens(node->expr);
+    end_line();
+}
+
+void Printer::visit(const Forall *node) {
+    print_indent();
+    os << "forall " << node->idx << " in ";
+    print_no_parens(node->seq);
+    os << "\n";
+    indent();
+    print(node->body);
+    dedent();
+}
+
+void Printer::visit(const Sequence *node) {
+    for (const auto &stmt : node->stmts) {
+        print(stmt);
+    }
+}
+
+void Printer::visit(const Where *node) {
+    print_indent();
+    os << "let " << node->temp << "\n";
+    indent();
+    print(node->producer);
+    dedent();
+    print_indent();
+    os << "in\n";
+    indent();
+    print(node->consumer);
+    dedent();
 }
 
 } // namespace nacho

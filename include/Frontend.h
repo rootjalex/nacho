@@ -12,7 +12,7 @@ namespace nacho {
 
 struct Expr;
 
-enum class IRExprEnum {
+enum class ExprEnum {
     Add,
     Bc,
     Mul,
@@ -20,15 +20,13 @@ enum class IRExprEnum {
     Tensor,
 };
 
-using IRExprNode = IRNode<Expr, IRExprEnum>;
-
-using IRExprNode = IRNode<Expr, IRExprEnum>;
+using IRExprNode = IRNode<Expr, ExprEnum>;
 
 /** This is necessary to get mutate() to work properly...
  *  They all contain their types (e.g. Int(32), Float(32))
  */
 struct BaseExprNode : public IRExprNode {
-    BaseExprNode(IRExprEnum t) : IRExprNode(t) {}
+    BaseExprNode(ExprEnum t) : IRExprNode(t) {}
     // virtual Expr mutate_expr(Mutator *m) const = 0;
     TensorType type;
 };
@@ -77,7 +75,7 @@ struct Add : ExprNode<Add> {
 
     static Expr make(Expr a, Expr b);
 
-    static const IRExprEnum node_type = IRExprEnum::Add;
+    static const ExprEnum node_type = ExprEnum::Add;
 };
 
 // Broadcast
@@ -87,7 +85,7 @@ struct Bc : ExprNode<Bc> {
 
     static Expr make(std::string index, Expr a);
 
-    static const IRExprEnum node_type = IRExprEnum::Bc;
+    static const ExprEnum node_type = ExprEnum::Bc;
 };
 
 struct Mul : ExprNode<Mul> {
@@ -95,7 +93,7 @@ struct Mul : ExprNode<Mul> {
 
     static Expr make(Expr a, Expr b);
 
-    static const IRExprEnum node_type = IRExprEnum::Mul;
+    static const ExprEnum node_type = ExprEnum::Mul;
 };
 
 struct Sum : ExprNode<Sum> {
@@ -104,7 +102,7 @@ struct Sum : ExprNode<Sum> {
 
     static Expr make(std::string index, Expr a);
 
-    static const IRExprEnum node_type = IRExprEnum::Sum;
+    static const ExprEnum node_type = ExprEnum::Sum;
 };
 
 struct Tensor : ExprNode<Tensor> {
@@ -112,7 +110,7 @@ struct Tensor : ExprNode<Tensor> {
 
     static Expr make(TensorType type, std::string name);
 
-    static const IRExprEnum node_type = IRExprEnum::Tensor;
+    static const ExprEnum node_type = ExprEnum::Tensor;
 };
 
 Expr operator+(Expr a, Expr b);

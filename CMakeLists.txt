@@ -58,9 +58,12 @@ target_compile_features(nacho_library PUBLIC cxx_std_20)
 target_sources(
     nacho_library
     PRIVATE
+    src/CIN.cpp
+    src/Compile.cpp
     src/Format.cpp
     src/Frontend.cpp
     src/Printer.cpp
+    src/Seq.cpp
     src/Visitor.cpp
 )
 
@@ -70,6 +73,8 @@ target_sources(
     FILE_SET HEADERS
     BASE_DIRS include
     FILES
+    include/CIN.h
+    include/Compile.h
     include/Frontend.h
     include/IntrusivePtr.h
     include/IRFwdDecl.h
@@ -79,6 +84,7 @@ target_sources(
     include/Printer.h
     include/RefCount.h
     include/Scope.h
+    include/Seq.h
     include/Type.h
     include/Visitor.h
 )

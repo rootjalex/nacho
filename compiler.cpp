@@ -44,6 +44,8 @@ void spgemm() {
 
     std::cout << z_ik << "\n";
     std::cout << "Expect CSR: " << z_ik.type().format << "\n";
+
+    std::cout << compile_to_cin(z_ik) << "\n";
 }
 
 void test_format_inf() {

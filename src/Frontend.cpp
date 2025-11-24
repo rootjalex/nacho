@@ -7,6 +7,8 @@
 
 namespace nacho {
 
+namespace {
+
 bool compatible_and_broadcast(Expr &a, Expr &b) {
     if (a.type().dtype != b.type().dtype) {
         return false;
@@ -51,7 +53,11 @@ bool compatible_and_broadcast(Expr &a, Expr &b) {
     return true;
 }
 
+} // namespace
+
 Expr Add::make(Expr a, Expr b) {
+    internal_assert(a.defined() && b.defined())
+        << "Add of undefined: " << a << " + " << b;
     internal_assert(compatible_and_broadcast(a, b))
         << "Incompatible types being added"; // << a << " + " << b;
 
@@ -64,6 +70,7 @@ Expr Add::make(Expr a, Expr b) {
 }
 
 Expr Bc::make(std::string index, Expr a) {
+    internal_assert(a.defined()) << "Bc of undefined: " << a;
     // Broadcast index dimension.
     Format f = a.type().format; // copy
 
@@ -86,6 +93,8 @@ Expr Bc::make(std::string index, Expr a) {
 }
 
 Expr Mul::make(Expr a, Expr b) {
+    internal_assert(a.defined() && b.defined())
+        << "Mul of undefined: " << a << " * " << b;
     internal_assert(compatible_and_broadcast(a, b))
         << "Incompatible types being multiplied"; // << a << " + " << b;
 
@@ -98,6 +107,7 @@ Expr Mul::make(Expr a, Expr b) {
 }
 
 Expr Sum::make(std::string index, Expr a) {
+    internal_assert(a.defined()) << "Sum of undefined: " << a;
     // Remove index dimension.
     Format f = a.type().format; // copy
 
@@ -128,6 +138,7 @@ Expr Sum::make(std::string index, Expr a) {
 }
 
 Expr Tensor::make(TensorType type, std::string name) {
+    internal_assert(!name.empty()) << "Cannot make Tensor with empty name.";
     internal_assert(type.format.bc_levels.empty())
         << "Tensor cannot be made with a type with unordered levels: " << name;
     Tensor *node = new Tensor;
