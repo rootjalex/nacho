@@ -85,11 +85,7 @@ struct BuildSeq : public Visitor {
 
     void visit(const Mul *node) { visit_binop<Intersect>(node); }
 
-    void visit(const Sum *node) {
-        internal_assert(index != node->index)
-            << "Cannot get seq for index: " << index << " from " << Expr(node);
-        node->a.accept(this);
-    }
+    // Default Sum behavior is fine
 
     void visit(const Tensor *node) {
         // Find index of `index` in levels.
@@ -112,25 +108,6 @@ Seq build_seq(const std::string &index, const Expr &expr) {
     return builder.seq;
 }
 
-CIN handle_sums(const std::string &out, const TensorType &type,
-                const Expr &expr) {
-    // Any non-innermost sum gets turned into a scalar temporary
-    // static size_t count = 0;
-
-    if (!contains_inner_sum(expr)) {
-        if (const Sum *sum = expr.as<Sum>()) {
-            CIN cin = Accumulate::make(out, type, from_expr(sum->a));
-            return Forall::make(sum->index, build_seq(sum->index, sum->a),
-                                std::move(cin));
-        } else {
-            return Assign::make(out, type, from_expr(expr));
-        }
-    }
-
-    internal_error << "TODO: handle inner sums with Where statements!" << expr;
-    return CIN();
-}
-
 } // namespace
 
 CIN compile_to_cin(const Expr &expr, std::string out) {
@@ -142,9 +119,23 @@ CIN compile_to_cin(const Expr &expr, std::string out) {
 
     // TODO: support reorder loops if it doesn't break dependencies.
 
-    CIN cin = handle_sums(out, out_type, expr);
-    for (auto it = out_type.format.levels.rbegin();
-         it != out_type.format.levels.rend(); ++it) {
+    // TODO: need to support inner_sums for generality.
+    // Will use Where statements.
+    internal_assert(!contains_inner_sum(expr));
+
+    CIN cin;
+    std::vector<Level> levels;
+
+    if (const Sum *sum = expr.as<Sum>()) {
+        cin = Accumulate::make(out, out_type, from_expr(sum->a));
+        // Include sum loop.
+        levels = sum->a.type().format.levels;
+    } else {
+        cin = Assign::make(out, out_type, from_expr(expr));
+        levels = out_type.format.levels;
+    }
+
+    for (auto it = levels.rbegin(); it != levels.rend(); ++it) {
         cin =
             Forall::make(it->index, build_seq(it->index, expr), std::move(cin));
     }
