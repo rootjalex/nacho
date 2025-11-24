@@ -128,7 +128,7 @@ void Printer::visit(const Bc *node) {
 void Printer::visit(const Mul *node) {
     open();
     print(node->a);
-    os << " + ";
+    os << " * ";
     print(node->b);
     close();
 }
@@ -219,7 +219,7 @@ void Printer::visit(const cAdd *node) {
 void Printer::visit(const cMul *node) {
     open();
     print(node->a);
-    os << " + ";
+    os << " * ";
     print(node->b);
     close();
 }

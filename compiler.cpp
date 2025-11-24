@@ -3,6 +3,7 @@
 using namespace nacho;
 
 void test() {
+    std::cout << "Basic tests\n";
     Format csr = Format::ordered({
         {"i", LevelFormat::Dense},
         {"j", LevelFormat::Compressed},
@@ -16,13 +17,23 @@ void test() {
     Expr z_ij = a_ij + b_ij;
 
     std::cout << z_ij << "\n";
+    std::cout << compile_to_cin(z_ij) << "\n";
 
     Expr z_i = sum("i", z_ij);
 
     std::cout << z_i << "\n";
+    std::cout << compile_to_cin(z_i) << "\n";
+
+    z_ij = a_ij * b_ij;
+
+    std::cout << z_ij << "\n";
+    std::cout << compile_to_cin(z_ij) << "\n";
+
+    std::cout << "\n\n";
 }
 
 void spgemm() {
+    std::cout << "SpGEMM test\n";
     Format csr0 = Format::ordered({
         {"i", LevelFormat::Dense},
         {"j", LevelFormat::Compressed},
@@ -46,9 +57,11 @@ void spgemm() {
     std::cout << "Expect CSR: " << z_ik.type().format << "\n";
 
     std::cout << compile_to_cin(z_ik) << "\n";
+    std::cout << "\n\n";
 }
 
 void test_format_inf() {
+    std::cout << "Format inference test\n";
     Format csr = Format::ordered({
         {"i", LevelFormat::Dense},
         {"j", LevelFormat::Compressed},
@@ -66,12 +79,16 @@ void test_format_inf() {
     Expr b_ij = Tensor::make(dcsr_f32, "b");
 
     std::cout << "Expect CSR: " << (a_ij + b_ij).type().format << "\n";
+    std::cout << compile_to_cin(a_ij + b_ij) << "\n";
     std::cout << "Expect DCSR: " << (a_ij * b_ij).type().format << "\n";
+    std::cout << compile_to_cin(a_ij * b_ij) << "\n";
 
     std::cout << "Expect [DC]{D}: "
               << (bc("k", a_ij) + bc("k", b_ij)).type().format << "\n";
     std::cout << "Expect [DC]{D}: "
               << (bc("k", a_ij) * bc("k", b_ij)).type().format << "\n";
+
+    std::cout << "\n\n";
 }
 
 // TODO: write a parser.

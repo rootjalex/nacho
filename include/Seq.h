@@ -82,7 +82,7 @@ struct Intersect : SeqNode<Intersect> {
     static const SeqEnum node_type = SeqEnum::Intersect;
 };
 
-struct Union : SeqNode<Intersect> {
+struct Union : SeqNode<Union> {
     Seq a, b;
 
     static Seq make(Seq a, Seq b);
