@@ -1,12 +1,12 @@
 #pragma once
 
+#include "Format.h"
 #include "IRHandle.h"
 #include "IRNode.h"
 #include "IntrusivePtr.h"
-#include "Visitor.h"
-
-#include "Format.h"
+#include "Mutator.h"
 #include "Type.h"
+#include "Visitor.h"
 
 namespace nacho {
 
@@ -27,14 +27,14 @@ using IRExprNode = IRNode<Expr, ExprEnum>;
  */
 struct BaseExprNode : public IRExprNode {
     BaseExprNode(ExprEnum t) : IRExprNode(t) {}
-    // virtual Expr mutate_expr(Mutator *m) const = 0;
+    virtual Expr mutate_Expr(Mutator *m) const = 0;
     TensorType type;
 };
 
 template <typename T>
 struct ExprNode : public BaseExprNode {
     void accept(Visitor *v) const override { return v->visit((const T *)this); }
-    // Expr mutate_expr(Mutator *m) const override;
+    Expr mutate_Expr(Mutator *m) const override;
     ExprNode() : BaseExprNode(T::node_type) {}
     ~ExprNode() override = default;
 };
@@ -65,10 +65,10 @@ inline void destroy<IRExprNode>(const IRExprNode *t) {
     delete t;
 }
 
-// template <typename T>
-// Expr ExprNode<T>::mutate_expr(Mutator *m) const {
-//     return m->visit((const T *)this);
-// }
+template <typename T>
+Expr ExprNode<T>::mutate_Expr(Mutator *m) const {
+    return m->visit((const T *)this);
+}
 
 struct Add : ExprNode<Add> {
     Expr a, b;

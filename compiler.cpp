@@ -32,6 +32,50 @@ void test() {
     std::cout << "\n\n";
 }
 
+void test_vec() {
+    std::cout << "Vector math test\n";
+    Format dense = Format::ordered({
+        {"i", LevelFormat::Dense},
+    });
+    Format sparse = Format::ordered({
+        {"i", LevelFormat::Compressed},
+    });
+
+    TensorType dense_f32 = TensorType(dense, dType::Float32);
+    TensorType sparse_f32 = TensorType(sparse, dType::Float32);
+
+    Expr a_i = Tensor::make(sparse_f32, "a");
+    Expr b_i = Tensor::make(sparse_f32, "b");
+    Expr c_i = Tensor::make(dense_f32, "c");
+    Expr d_i = Tensor::make(dense_f32, "d");
+
+    Expr e = a_i * b_i;
+    std::cout << "Expect sparse: " << e.type().format << "\n";
+    std::cout << compile_to_cin(e) << "\n";
+
+    e = c_i * d_i;
+    std::cout << "Expect dense: " << e.type().format << "\n";
+    std::cout << compile_to_cin(e) << "\n";
+
+    e = a_i * c_i;
+    std::cout << "Expect sparse: " << e.type().format << "\n";
+    std::cout << compile_to_cin(e) << "\n";
+
+    e = a_i + b_i;
+    std::cout << "Expect sparse: " << e.type().format << "\n";
+    std::cout << compile_to_cin(e) << "\n";
+
+    e = c_i + d_i;
+    std::cout << "Expect dense: " << e.type().format << "\n";
+    std::cout << compile_to_cin(e) << "\n";
+
+    e = a_i + c_i;
+    std::cout << "Expect dense: " << e.type().format << "\n";
+    std::cout << compile_to_cin(e) << "\n";
+
+    std::cout << "\n\n";
+}
+
 void spgemm() {
     std::cout << "SpGEMM test\n";
     Format csr0 = Format::ordered({
@@ -95,6 +139,7 @@ void test_format_inf() {
 int main(int argc, char **argv) {
     test();
     test_format_inf();
+    test_vec();
     spgemm();
 
     return 0;

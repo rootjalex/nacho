@@ -62,6 +62,7 @@ target_sources(
     src/Compile.cpp
     src/Format.cpp
     src/Frontend.cpp
+    src/Mutator.cpp
     src/Printer.cpp
     src/Seq.cpp
     src/Visitor.cpp
@@ -80,6 +81,7 @@ target_sources(
     include/IRFwdDecl.h
     include/IRHandle.h
     include/IRNode.h
+    include/Mutator.h
     include/Nacho.h
     include/Printer.h
     include/RefCount.h

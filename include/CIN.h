@@ -1,14 +1,14 @@
 #pragma once
 
+#include "Format.h"
+#include "Frontend.h"
 #include "IRHandle.h"
 #include "IRNode.h"
 #include "IntrusivePtr.h"
-#include "Visitor.h"
-
-#include "Format.h"
-#include "Frontend.h"
+#include "Mutator.h"
 #include "Seq.h"
 #include "Type.h"
+#include "Visitor.h"
 
 namespace nacho {
 
@@ -38,18 +38,18 @@ using IRCINNode = IRNode<CIN, CINEnum>;
 // This is necessary to get mutate() to work properly...
 struct BasecExprNode : public IRcExprNode {
     BasecExprNode(cExprEnum t) : IRcExprNode(t) {}
-    // virtual CIN mutate_CIN(Mutator *m) const = 0;
+    virtual cExpr mutate_cExpr(Mutator *m) const = 0;
 };
 
 struct BaseCINNode : public IRCINNode {
     BaseCINNode(CINEnum t) : IRCINNode(t) {}
-    // virtual CIN mutate_CIN(Mutator *m) const = 0;
+    virtual CIN mutate_CIN(Mutator *m) const = 0;
 };
 
 template <typename T>
 struct cExprNode : public BasecExprNode {
     void accept(Visitor *v) const override { return v->visit((const T *)this); }
-    // cExpr mutate_cExpr(Mutator *m) const override;
+    cExpr mutate_cExpr(Mutator *m) const override;
     cExprNode() : BasecExprNode(T::node_type) {}
     ~cExprNode() override = default;
 };
@@ -57,7 +57,7 @@ struct cExprNode : public BasecExprNode {
 template <typename T>
 struct CINNode : public BaseCINNode {
     void accept(Visitor *v) const override { return v->visit((const T *)this); }
-    // CIN mutate_CIN(Mutator *m) const override;
+    CIN mutate_CIN(Mutator *m) const override;
     CINNode() : BaseCINNode(T::node_type) {}
     ~CINNode() override = default;
 };
@@ -86,10 +86,10 @@ inline void destroy<IRcExprNode>(const IRcExprNode *t) {
     delete t;
 }
 
-// template <typename T>
-// cExpr cExprNode<T>::mutate_cExpr(Mutator *m) const {
-//     return m->visit((const T *)this);
-// }
+template <typename T>
+cExpr cExprNode<T>::mutate_cExpr(Mutator *m) const {
+    return m->visit((const T *)this);
+}
 
 struct CIN : public IRHandle<IRCINNode> {
     /** Make an undefined CIN */
@@ -115,10 +115,10 @@ inline void destroy<IRCINNode>(const IRCINNode *t) {
     delete t;
 }
 
-// template <typename T>
-// CIN CINNode<T>::mutate_CIN(Mutator *m) const {
-//     return m->visit((const T *)this);
-// }
+template <typename T>
+CIN CINNode<T>::mutate_CIN(Mutator *m) const {
+    return m->visit((const T *)this);
+}
 
 // Scalar math
 struct cAdd : cExprNode<cAdd> {
@@ -191,7 +191,7 @@ struct Where : CINNode<Where> {
     CIN producer; // writes to temp
     CIN consumer; // reads from temp.
 
-    static CIN make(std::string tensor, TensorType temp_type, CIN consumer,
+    static CIN make(std::string temp, TensorType temp_type, CIN consumer,
                     CIN producer);
 
     static const CINEnum node_type = CINEnum::Where;

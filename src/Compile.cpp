@@ -3,6 +3,7 @@
 #include "CIN.h"
 #include "Error.h"
 #include "Frontend.h"
+#include "Mutator.h"
 #include "Printer.h"
 
 namespace nacho {
@@ -102,10 +103,72 @@ struct BuildSeq : public Visitor {
     }
 };
 
+bool is_dense(const Seq &seq) {
+    struct IsDense : public Visitor {
+        bool dense = false;
+
+        void visit(const Index *node) override {
+            dense =
+                node->format.levels[node->level].format == LevelFormat::Dense;
+        }
+
+        void visit(const Intersect *node) override {
+            node->a.accept(this);
+            if (!dense) {
+                return;
+            }
+            // implicit &&
+            node->b.accept(this);
+        }
+
+        void visit(const Union *node) override {
+            node->a.accept(this);
+            if (dense) {
+                return;
+            }
+            // implicit ||
+            node->b.accept(this);
+        }
+
+        void visit(const Universe *) override { dense = true; }
+    };
+
+    IsDense checker;
+    seq.accept(&checker);
+    return checker.dense;
+}
+
+// TODO: move this to an Optimize.cpp?
+Seq simplify_seq(const Seq &seq) {
+    struct Simplify : public Mutator {
+        Seq visit(const Intersect *node) override {
+            Seq a = mutate(node->a);
+            Seq b = mutate(node->b);
+
+            // a ∩ U = a
+            if (b.is<Universe>() || is_dense(b)) {
+                return a;
+            }
+
+            // U ∩ b = b
+            if (a.is<Universe>() || is_dense(a)) {
+                return b;
+            }
+
+            if (a.same_as(node->a) && b.same_as(node->b)) {
+                return node;
+            }
+            return Intersect::make(std::move(a), std::move(b));
+        }
+    };
+    return Simplify().mutate(seq);
+}
+
 Seq build_seq(const std::string &index, const Expr &expr) {
     BuildSeq builder(index);
     expr.accept(&builder);
-    return builder.seq;
+    // TODO: break this out into a simplify or optimize pass?
+    return simplify_seq(builder.seq);
 }
 
 } // namespace

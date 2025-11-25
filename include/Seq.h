@@ -1,12 +1,12 @@
 #pragma once
 
+#include "Format.h"
 #include "IRHandle.h"
 #include "IRNode.h"
 #include "IntrusivePtr.h"
-#include "Visitor.h"
-
-#include "Format.h"
+#include "Mutator.h"
 #include "Type.h"
+#include "Visitor.h"
 
 namespace nacho {
 
@@ -24,13 +24,13 @@ using IRSeqNode = IRNode<Seq, SeqEnum>;
 // This is necessary to get mutate() to work properly...
 struct BaseSeqNode : public IRSeqNode {
     BaseSeqNode(SeqEnum t) : IRSeqNode(t) {}
-    // virtual Seq mutate_Seq(Mutator *m) const = 0;
+    virtual Seq mutate_Seq(Mutator *m) const = 0;
 };
 
 template <typename T>
 struct SeqNode : public BaseSeqNode {
     void accept(Visitor *v) const override { return v->visit((const T *)this); }
-    // Seq mutate_Seq(Mutator *m) const override;
+    Seq mutate_Seq(Mutator *m) const override;
     SeqNode() : BaseSeqNode(T::node_type) {}
     ~SeqNode() override = default;
 };
@@ -59,10 +59,10 @@ inline void destroy<IRSeqNode>(const IRSeqNode *t) {
     delete t;
 }
 
-// template <typename T>
-// Seq SeqNode<T>::mutate_Seq(Mutator *m) const {
-//     return m->visit((const T *)this);
-// }
+template <typename T>
+Seq SeqNode<T>::mutate_Seq(Mutator *m) const {
+    return m->visit((const T *)this);
+}
 
 struct Index : SeqNode<Index> {
     std::string tensor;
