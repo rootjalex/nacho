@@ -15,6 +15,9 @@ std::ostream &operator<<(std::ostream &os, const Seq &seq);
 std::ostream &operator<<(std::ostream &os, const cExpr &cexpr);
 std::ostream &operator<<(std::ostream &os, const CIN &cin);
 
+std::ostream &operator<<(std::ostream &os, const llir::lExpr &lexpr);
+std::ostream &operator<<(std::ostream &os, const llir::lStmt &lstmt);
+
 struct Printer : public Visitor {
     explicit Printer(std::ostream &os) : os(os) {}
 
@@ -47,6 +50,30 @@ struct Printer : public Visitor {
     virtual void visit(const Sequence *) override;
     virtual void visit(const Where *) override;
 
+    virtual void print(const llir::lType &);
+    virtual void visit(const llir::Generic_t *) override;
+    virtual void visit(const llir::Int_t *) override;
+    virtual void visit(const llir::Float_t *) override;
+    virtual void visit(const llir::Ptr_t *) override;
+
+    virtual void print(const llir::lExpr &);
+    virtual void print_no_parens(const llir::lExpr &);
+    virtual void visit(const llir::lBinOp *) override;
+    virtual void visit(const llir::lConst *) override;
+    virtual void visit(const llir::lLoad *) override;
+    virtual void visit(const llir::lVar *) override;
+
+    virtual void print(const llir::lStmt &);
+    virtual void visit(const llir::Declare *) override;
+    virtual void visit(const llir::IfElse *) override;
+    virtual void visit(const llir::Return *) override;
+    virtual void visit(const llir::Sequence *) override;
+    virtual void visit(const llir::Store *) override;
+    virtual void visit(const llir::While *) override;
+
+    void indent() { indent_count++; }
+    void dedent() { indent_count--; }
+
   private:
     /** The stream on which we're outputting */
     std::ostream &os;
@@ -67,9 +94,6 @@ struct Printer : public Visitor {
     }
 
     size_t indent_count = 0;
-
-    void indent() { indent_count++; }
-    void dedent() { indent_count--; }
 
     virtual void print_indent() {
         for (size_t i = 0; i < indent_count; i++) {

@@ -66,6 +66,8 @@ target_sources(
     src/Printer.cpp
     src/Seq.cpp
     src/Visitor.cpp
+    src/llir/Function.cpp
+    src/llir/LLIR.cpp
 )
 
 target_sources(
@@ -89,6 +91,8 @@ target_sources(
     include/Seq.h
     include/Type.h
     include/Visitor.h
+    include/llir/Function.h
+    include/llir/LLIR.h
 )
 
 if (nacho_ENABLE_WARNINGS)
