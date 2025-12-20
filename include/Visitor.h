@@ -29,6 +29,22 @@ struct Visitor {
     virtual void visit(const Forall *);
     virtual void visit(const Sequence *);
     virtual void visit(const Where *);
+
+    // LLIR
+    virtual void visit(const llir::Generic_t *);
+    virtual void visit(const llir::Int_t *);
+    virtual void visit(const llir::Float_t *);
+    virtual void visit(const llir::Ptr_t *);
+    virtual void visit(const llir::lBinOp *);
+    virtual void visit(const llir::lConst *);
+    virtual void visit(const llir::lLoad *);
+    virtual void visit(const llir::lVar *);
+    virtual void visit(const llir::Declare *);
+    virtual void visit(const llir::IfElse *);
+    virtual void visit(const llir::Return *);
+    virtual void visit(const llir::Sequence *);
+    virtual void visit(const llir::Store *);
+    virtual void visit(const llir::While *);
 };
 
 #define RESTRICT_VISITOR(IRNODE)                                               \
