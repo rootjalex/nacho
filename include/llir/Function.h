@@ -7,6 +7,8 @@
 namespace nacho {
 namespace llir {
 
+// Represents a callable (host | device) function.
+// Should be able to represent basically any C++ function.
 struct Function {
     std::vector<std::string> generics;
 
@@ -34,7 +36,6 @@ struct Function {
 
     void print(std::ostream &os) const;
 };
-
 
 } // namespace llir
 } // namespace nacho
