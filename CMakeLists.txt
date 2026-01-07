@@ -62,6 +62,7 @@ target_sources(
     src/Compile.cpp
     src/Format.cpp
     src/Frontend.cpp
+    src/GeneratePartition.cpp
     src/Mutator.cpp
     src/Printer.cpp
     src/Seq.cpp
@@ -79,6 +80,7 @@ target_sources(
     include/CIN.h
     include/Compile.h
     include/Frontend.h
+    include/GeneratePartition.h
     include/IntrusivePtr.h
     include/IRFwdDecl.h
     include/IRHandle.h

@@ -1,6 +1,7 @@
 #include "Nacho.h"
 
 // Temporary, for make_binary_search example
+#include "GeneratePartition.h"
 #include "llir/Function.h"
 #include "llir/LLIR.h"
 
@@ -187,7 +188,7 @@ void make_binary_search() {
             //   high = mid
             // }
             llir::IfElse::make(
-                llir::lLoad::make(crds, mid) <= c,
+                crds[mid] <= c,
                 llir::Store::make("low", mid + llir::lConst::make(1)),
                 llir::Store::make("high", mid)));
 
@@ -206,14 +207,21 @@ void make_binary_search() {
     func.print(std::cout);
 }
 
+void make_binary_partition() {
+    auto funcs = generate_nary_1d_partition({"a", "b"});
+    assert(funcs.size() == 1);
+    funcs[0].print(std::cout);
+}
+
 // TODO: write a parser.
 int main(int argc, char **argv) {
-    test();
-    test_format_inf();
-    test_vec();
-    spgemm();
+    // test();
+    // test_format_inf();
+    // test_vec();
+    // spgemm();
 
-    make_binary_search();
+    // make_binary_search();
+    make_binary_partition();
 
     return 0;
 }

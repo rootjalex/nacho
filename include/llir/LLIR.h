@@ -18,19 +18,14 @@ struct lStmt;
 
 // Types (for declarations)
 // TODO: make this complete
-enum class lTypeEnum {
-    Generic_t,
-    Float_t,
-    Int_t,
-    Ptr_t,
-};
+enum class lTypeEnum { Generic_t, Float_t, Int_t, Ptr_t, Tuple_t };
 
 // Expressions
 enum class lExprEnum {
     lBinOp,
     lConst,
     lVar,
-    lLoad,
+    lBuild,
 };
 
 // Statements
@@ -108,6 +103,9 @@ struct lExpr : public IRHandle<IRlExprNode> {
     const BaselExprNode *get() const { return (const BaselExprNode *)ptr; }
 
     // TODO: implement copy/move semantics!
+
+    // Overloads a[b] operation.
+    lExpr operator[](const lExpr &idx);
 };
 
 // template <typename T>
@@ -180,6 +178,14 @@ struct Ptr_t : lTypeNode<Ptr_t> {
     static const lTypeEnum node_type = lTypeEnum::Ptr_t;
 };
 
+struct Tuple_t : lTypeNode<Tuple_t> {
+    std::vector<lType> types;
+
+    static lType make(std::vector<lType> types);
+
+    static const lTypeEnum node_type = lTypeEnum::Tuple_t;
+};
+
 struct lBinOp : lExprNode<lBinOp> {
     enum Op {
         And,
@@ -187,6 +193,7 @@ struct lBinOp : lExprNode<lBinOp> {
         Div,
         Eq,
         Leq,
+        Load,
         Lt,
         Mul,
         Or,
@@ -207,7 +214,10 @@ lExpr operator-(lExpr a, lExpr b);
 lExpr operator*(lExpr a, lExpr b);
 lExpr operator/(lExpr a, lExpr b);
 lExpr operator<(lExpr a, lExpr b);
+lExpr operator>(lExpr a, lExpr b);
 lExpr operator<=(lExpr a, lExpr b);
+lExpr operator>=(lExpr a, lExpr b);
+lExpr operator&&(lExpr a, lExpr b);
 
 struct lConst : lExprNode<lConst> {
     std::variant<int64_t, uint64_t, double> value;
@@ -217,13 +227,12 @@ struct lConst : lExprNode<lConst> {
     static const lExprEnum node_type = lExprEnum::lConst;
 };
 
-struct lLoad : lExprNode<lLoad> {
-    lExpr var;
-    lExpr idx;
+struct lBuild : lExprNode<lBuild> {
+    std::vector<lExpr> values;
 
-    static lExpr make(lExpr var, lExpr idx);
+    static lExpr make(lType type, std::vector<lExpr> values);
 
-    static const lExprEnum node_type = lExprEnum::lLoad;
+    static const lExprEnum node_type = lExprEnum::lBuild;
 };
 
 struct lVar : lExprNode<lVar> {

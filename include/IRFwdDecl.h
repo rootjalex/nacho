@@ -38,11 +38,12 @@ struct Generic_t;
 struct Int_t;
 struct Float_t;
 struct Ptr_t;
+struct Tuple_t;
 
 struct lExpr;
 struct lBinOp;
 struct lConst;
-struct lLoad;
+struct lBuild;
 struct lVar;
 
 struct lStmt;

@@ -55,12 +55,13 @@ struct Printer : public Visitor {
     virtual void visit(const llir::Int_t *) override;
     virtual void visit(const llir::Float_t *) override;
     virtual void visit(const llir::Ptr_t *) override;
+    virtual void visit(const llir::Tuple_t *) override;
 
     virtual void print(const llir::lExpr &);
     virtual void print_no_parens(const llir::lExpr &);
     virtual void visit(const llir::lBinOp *) override;
     virtual void visit(const llir::lConst *) override;
-    virtual void visit(const llir::lLoad *) override;
+    virtual void visit(const llir::lBuild *) override;
     virtual void visit(const llir::lVar *) override;
 
     virtual void print(const llir::lStmt &);

@@ -78,6 +78,12 @@ void Visitor::visit(const llir::Float_t *node) { (void)node; }
 
 void Visitor::visit(const llir::Ptr_t *node) { node->type.accept(this); }
 
+void Visitor::visit(const llir::Tuple_t *node) {
+    for (const auto &t : node->types) {
+        t.accept(this);
+    }
+}
+
 void Visitor::visit(const llir::lBinOp *node) {
     node->a.accept(this);
     node->b.accept(this);
@@ -85,9 +91,10 @@ void Visitor::visit(const llir::lBinOp *node) {
 
 void Visitor::visit(const llir::lConst *node) { (void)node; }
 
-void Visitor::visit(const llir::lLoad *node) {
-    node->var.accept(this);
-    node->idx.accept(this);
+void Visitor::visit(const llir::lBuild *node) {
+    for (const auto &e : node->values) {
+        e.accept(this);
+    }
 }
 
 void Visitor::visit(const llir::lVar *node) { (void)node; }

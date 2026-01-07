@@ -330,6 +330,17 @@ void Printer::visit(const llir::Ptr_t *node) {
     os << "*";
 }
 
+void Printer::visit(const llir::Tuple_t *node) {
+    os << "tuple<";
+    for (size_t i = 0, e = node->types.size(); i < e; i++) {
+        if (i > 0) {
+            os << ", ";
+        }
+        print(node->types[i]);
+    }
+    os << ">";
+}
+
 void Printer::print(const llir::lExpr &lexpr) {
     ScopedValue<bool> old(implicit_parens, false);
     lexpr.accept(this);
@@ -340,52 +351,88 @@ void Printer::print_no_parens(const llir::lExpr &lexpr) {
     lexpr.accept(this);
 }
 
-void Printer::visit(const llir::lBinOp *node) {
-    open();
-    print(node->a);
-    switch (node->op) {
+bool is_infix_op(const llir::lBinOp::Op op) {
+    switch (op) {
+    case llir::lBinOp::And:
+    case llir::lBinOp::Add:
+    case llir::lBinOp::Div:
+    case llir::lBinOp::Eq:
+    case llir::lBinOp::Leq:
+    case llir::lBinOp::Lt:
+    case llir::lBinOp::Mul:
+    case llir::lBinOp::Or:
+    case llir::lBinOp::Sub:
+        return true;
+    default: {
+        return false;
+    }
+    }
+}
+
+std::string get_op_string(const llir::lBinOp::Op op) {
+    switch (op) {
     case llir::lBinOp::And: {
-        os << " && ";
+        return " && ";
         break;
     }
     case llir::lBinOp::Add: {
-        os << " + ";
+        return " + ";
         break;
     }
     case llir::lBinOp::Div: {
-        os << " / ";
+        return " / ";
         break;
     }
     case llir::lBinOp::Eq: {
-        os << " == ";
+        return " == ";
         break;
     }
     case llir::lBinOp::Leq: {
-        os << " <= ";
+        return " <= ";
         break;
     }
     case llir::lBinOp::Lt: {
-        os << " < ";
+        return " < ";
         break;
     }
     case llir::lBinOp::Mul: {
-        os << " * ";
+        return " * ";
         break;
     }
     case llir::lBinOp::Or: {
-        os << " || ";
+        return " || ";
         break;
     }
     case llir::lBinOp::Sub: {
-        os << " - ";
+        return " - ";
         break;
     }
     default: {
         internal_error << "Unknown lBinOp::Op in printing.";
     }
     }
-    print(node->b);
-    close();
+}
+
+void Printer::visit(const llir::lBinOp *node) {
+    if (is_infix_op(node->op)) {
+        open();
+        print(node->a);
+        os << get_op_string(node->op);
+        print(node->b);
+        close();
+    } else if (node->op == llir::lBinOp::Load) {
+        print(node->a);
+        os << "[";
+        print_no_parens(node->b);
+        os << "]";
+    } else {
+        // prefix notation
+        os << get_op_string(node->op) << "(";
+        print_no_parens(node->a);
+        os << ", ";
+        print_no_parens(node->b);
+        os << ")";
+    }
 }
 
 void Printer::visit(const llir::lConst *node) {
@@ -393,11 +440,18 @@ void Printer::visit(const llir::lConst *node) {
     std::visit([&](auto &&v) { os << v; }, node->value);
 }
 
-void Printer::visit(const llir::lLoad *node) {
-    print(node->var);
-    os << "[";
-    print_no_parens(node->idx);
-    os << "]";
+void Printer::visit(const llir::lBuild *node) {
+    // TODO: fix this to match C++!
+    open();
+    print(node->type);
+    os << "(";
+    for (size_t i = 0, e = node->values.size(); i < e; i++) {
+        if (i > 0) {
+            os << ", ";
+        }
+        print_no_parens(node->values[i]);
+    }
+    os << ")";
 }
 
 void Printer::visit(const llir::lVar *node) { os << node->name; }

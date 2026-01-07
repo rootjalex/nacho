@@ -36,15 +36,30 @@ lType Ptr_t::make(lType type) {
     return node;
 }
 
+lType Tuple_t::make(std::vector<lType> types) {
+    internal_assert(!types.empty()) << "Cannot make empty tuple type.";
+    for (const auto &t : types) {
+        internal_assert(t.defined())
+            << "Cannot make tuple with empty element type.";
+    }
+    Tuple_t *node = new Tuple_t;
+    node->types = std::move(types);
+    return node;
+}
+
 lExpr lBinOp::make(lBinOp::Op op, lExpr a, lExpr b) {
     internal_assert(a.defined() && b.defined())
-        << "lBinOp of undefined: " << a << " + " << b;
+        << "lBinOp of undefined: " << a << " op " << b;
     lBinOp *node = new lBinOp;
     node->op = op;
-    // TODO: TYPE INFERENCE
+    // TODO: TYPE INFERENCE BASED ON OP
     node->a = std::move(a);
     node->b = std::move(b);
     return node;
+}
+
+lExpr lExpr::operator[](const lExpr &idx) {
+    return lBinOp::make(lBinOp::Load, *this, idx);
 }
 
 lExpr operator+(lExpr a, lExpr b) {
@@ -67,8 +82,20 @@ lExpr operator<(lExpr a, lExpr b) {
     return lBinOp::make(lBinOp::Lt, std::move(a), std::move(b));
 }
 
+lExpr operator>(lExpr a, lExpr b) {
+    return lBinOp::make(lBinOp::Lt, std::move(b), std::move(a));
+}
+
 lExpr operator<=(lExpr a, lExpr b) {
     return lBinOp::make(lBinOp::Leq, std::move(a), std::move(b));
+}
+
+lExpr operator>=(lExpr a, lExpr b) {
+    return lBinOp::make(lBinOp::Leq, std::move(b), std::move(a));
+}
+
+lExpr operator&&(lExpr a, lExpr b) {
+    return lBinOp::make(lBinOp::And, std::move(a), std::move(b));
 }
 
 lExpr lConst::make(std::variant<int64_t, uint64_t, double> value) {
@@ -78,15 +105,15 @@ lExpr lConst::make(std::variant<int64_t, uint64_t, double> value) {
     return node;
 }
 
-lExpr lLoad::make(lExpr var, lExpr idx) {
-    internal_assert(var.defined())
-        << "lLoad from undefined";
-    internal_assert(idx.defined())
-        << "lLoad with undefined index.";
-    lLoad *node = new lLoad;
-    // TODO: TYPE INFERENCE
-    node->var = std::move(var);
-    node->idx = std::move(idx);
+lExpr lBuild::make(lType type, std::vector<lExpr> values) {
+    internal_assert(type.defined()) << "lBuild with undefined type";
+    for (const auto &v : values) {
+        internal_assert(v.defined())
+            << "Cannot make lBuild with empty element.";
+    }
+    lBuild *node = new lBuild;
+    node->type = std::move(type);
+    node->values = std::move(values);
     return node;
 }
 
