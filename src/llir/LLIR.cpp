@@ -47,6 +47,22 @@ lType Tuple_t::make(std::vector<lType> types) {
     return node;
 }
 
+lType Struct_t::make(std::string name, std::vector<std::pair<std::string, lType>> fields, std::vector<std::string> generics) {
+    internal_assert(!name.empty()) << "Cannot make Struct with empty name.";
+    internal_assert(!fields.empty()) << "Cannot make Struct with empty fields.";
+    for (const auto &field : fields) {
+        internal_assert(field.second.defined())
+            << "Cannot make Struct with undefined field type: " << field.first;
+        internal_assert(!field.first.empty())
+            << "Cannot make Struct with empty field name.";
+    }
+    Struct_t *node = new Struct_t;
+    node->name = std::move(name);
+    node->fields = std::move(fields);
+    node->generics = std::move(generics);
+    return node;
+}
+
 lExpr lBinOp::make(lBinOp::Op op, lExpr a, lExpr b) {
     internal_assert(a.defined() && b.defined())
         << "lBinOp of undefined: " << a << " op " << b;
@@ -114,6 +130,24 @@ lExpr lBuild::make(lType type, std::vector<lExpr> values) {
     lBuild *node = new lBuild;
     node->type = std::move(type);
     node->values = std::move(values);
+    return node;
+}
+
+lExpr lArrayAccess::make(lExpr array, lExpr index) {
+    internal_assert(array.defined() && index.defined())
+        << "lArrayAccess of undefined: " << array << " [ " << index << " ]";
+    lArrayAccess *node = new lArrayAccess;
+    node->array = std::move(array);
+    node->index = std::move(index);
+    return node;
+}
+
+lExpr lFieldAccess::make(lExpr object, lExpr field) {
+    internal_assert(object.defined() && field.defined())
+        << "lFieldAccess of undefined: " << object << " . " << field;
+    lFieldAccess *node = new lFieldAccess;
+    node->object = std::move(object);
+    node->field = std::move(field);
     return node;
 }
 

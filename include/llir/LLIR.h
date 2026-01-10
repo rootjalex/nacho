@@ -18,7 +18,7 @@ struct lStmt;
 
 // Types (for declarations)
 // TODO: make this complete
-enum class lTypeEnum { Generic_t, Float_t, Int_t, Ptr_t, Tuple_t };
+enum class lTypeEnum { Generic_t, Float_t, Int_t, Ptr_t, Tuple_t, Struct_t };
 
 // Expressions
 enum class lExprEnum {
@@ -26,6 +26,8 @@ enum class lExprEnum {
     lConst,
     lVar,
     lBuild,
+    lArrayAccess,
+    lFieldAccess
 };
 
 // Statements
@@ -36,6 +38,7 @@ enum class lStmtEnum {
     Sequence,
     Store,
     While,
+    Function,
 };
 
 using IRlTypeNode = IRNode<lType, lTypeEnum>;
@@ -186,6 +189,18 @@ struct Tuple_t : lTypeNode<Tuple_t> {
     static const lTypeEnum node_type = lTypeEnum::Tuple_t;
 };
 
+struct Struct_t : lTypeNode<Struct_t> {
+    std::string name;
+    std::vector<std::string> generics;
+    std::vector<std::pair<std::string, lType>> fields;
+
+    static lType make(std::string name,
+                      std::vector<std::pair<std::string, lType>> fields,
+                      std::vector<std::string> generics);
+
+    static const lTypeEnum node_type = lTypeEnum::Struct_t;
+};
+
 struct lBinOp : lExprNode<lBinOp> {
     enum Op {
         And,
@@ -233,6 +248,24 @@ struct lBuild : lExprNode<lBuild> {
     static lExpr make(lType type, std::vector<lExpr> values);
 
     static const lExprEnum node_type = lExprEnum::lBuild;
+};
+
+struct lArrayAccess : lExprNode<lArrayAccess> {
+    lExpr array;
+    lExpr index;
+
+    static lExpr make(lExpr array, lExpr index);
+
+    static const lExprEnum node_type = lExprEnum::lArrayAccess;
+};
+
+struct lFieldAccess : lExprNode<lFieldAccess> {
+    lExpr object;
+    lExpr field;
+
+    static lExpr make(lExpr object, lExpr field);
+
+    static const lExprEnum node_type = lExprEnum::lFieldAccess;
 };
 
 struct lVar : lExprNode<lVar> {

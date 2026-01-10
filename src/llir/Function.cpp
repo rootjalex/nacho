@@ -1,16 +1,36 @@
 #include "llir/Function.h"
 
 #include "Printer.h"
-
+#include "Error.h"
 namespace nacho {
 namespace llir {
 
-void Function::print(std::ostream &os) const {
-    Printer printer(os);
-    if (!generics.empty()) {
+lStmt Function::make(std::vector<std::string> generics,
+    std::vector<Attribute> attributes,
+    std::vector<Argument> args,
+    lType ret_type,
+    std::string name,
+    lStmt body) {
+
+    internal_assert(!name.empty())
+        << "Cannot make Function with empty name";
+    internal_assert(body.defined())
+        << "Cannot make Function with undefined body";
+    Function *node = new Function;
+    node->generics = std::move(generics);
+    node->args = std::move(args);
+    node->ret_type = std::move(ret_type);
+    node->name = std::move(name);
+    node->body = std::move(body);
+    return node;
+}
+} // namespace llir
+
+void Printer::visit(const llir::Function *node) {
+     if (!node->generics.empty()) {
         os << "template<";
         bool first = true;
-        for (const auto &g : generics) {
+        for (const auto &g : node->generics) {
             if (!first) {
                 os << ", ";
             }
@@ -19,53 +39,55 @@ void Function::print(std::ostream &os) const {
         }
         os << ">\n";
     }
-
-    for (const auto &a : attributes) {
+    for (const auto &a : node->attributes) {
         switch (a) {
-            case Function::device: {
+            case llir::Function::global: {
+                os << "__global__ ";
+                break;
+            }
+            case llir::Function::device: {
                 os << "__device__ ";
                 break;
             }
-            case Function::inline_: {
+            case llir::Function::inline_: {
                 os << "__inline__ ";
                 break;
             }
-            case Function::host: {
+            case llir::Function::host: {
                 os << "__host__ ";
                 break;
             }
         }
     }
 
-    if (!attributes.empty()) {
+    if (!node->attributes.empty()) {
         os << "\n";
     }
 
-    printer.print(ret_type);
+    node->ret_type.accept(this);
 
-    os << " " << name << "(";
+    os << " " << node->name << "(";
 
-    for (size_t i = 0, e = args.size(); i < e; i++) {
+    for (size_t i = 0, e = node->args.size(); i < e; i++) {
         if (i != 0) {
             os << ", ";
         }
-        const auto &arg = args[i];
+        const auto &arg = node->args[i];
         if (!arg.mutating) {
             os << "const ";
         }
-        printer.print(arg.type);
-        if (!arg.mutating && arg.type.is<Ptr_t>()) {
+        arg.type.accept(this);
+        if (!arg.mutating && arg.type.is<llir::Ptr_t>()) {
             os << " __restrict__";
         }
         os << " " << arg.name;
     }
 
     os << ") {\n";
-    printer.indent();
-    printer.print(body);
-    printer.dedent();
+    indent();
+    node->body.accept(this);
+    dedent();
     os << "}\n";
 }
 
-} // namespace llir
 } // namespace nacho

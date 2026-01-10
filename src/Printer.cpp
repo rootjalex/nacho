@@ -123,6 +123,16 @@ std::ostream &operator<<(std::ostream &os, const llir::lStmt &lstmt) {
     return os;
 }
 
+std::ostream &operator<<(std::ostream &os, llir::lType &ltype) {
+    if (ltype.defined()) {
+        Printer printer(os);
+        printer.print(ltype);
+    } else {
+        os << "(undef-ltype)";
+    }
+    return os;
+}
+
 void Printer::print(const Expr &expr) {
     ScopedValue<bool> old(implicit_parens, false);
     expr.accept(this);
@@ -192,12 +202,12 @@ void Printer::print_no_parens(const Seq &seq) {
 }
 
 void Printer::visit(const Index *node) {
-    os << node->format.levels[node->level].index;
+    os << node->type.format.levels[node->level].index;
     os << "_" << node->tensor;
     // Print dependency
     if (node->level != 0) {
         os << "[";
-        os << node->format.levels[node->level - 1].index;
+        os << node->type.format.levels[node->level - 1].index;
         os << "]";
     }
 }
@@ -302,7 +312,7 @@ void Printer::print(const llir::lType &ltype) { ltype.accept(this); }
 void Printer::visit(const llir::Generic_t *node) { os << node->name; }
 
 void Printer::visit(const llir::Int_t *node) {
-    os << "int" << node->bits << "_t";
+    os << "int" << std::to_string(node->bits) << "_t";
 }
 
 void Printer::visit(const llir::Float_t *node) {
@@ -339,6 +349,30 @@ void Printer::visit(const llir::Tuple_t *node) {
         print(node->types[i]);
     }
     os << ">";
+}
+
+void Printer::visit(const llir::Struct_t *node) {
+    if (!node->generics.empty()) {
+        os << "template<";
+        bool first = true;
+        for (const auto &g : node->generics) {
+            if (!first) {
+                os << ", ";
+            }
+            first = false;
+            os << "typename " << g;
+        }
+        os << ">\n";
+    }
+    os << "struct " << node->name << " {\n";
+    indent();
+    for (const auto &field : node->fields) {
+        print_indent();
+        print(field.second);
+        os << " " << field.first << ";\n";
+    }
+    dedent();
+    os << "};\n";
 }
 
 void Printer::print(const llir::lExpr &lexpr) {
@@ -452,6 +486,19 @@ void Printer::visit(const llir::lBuild *node) {
         print_no_parens(node->values[i]);
     }
     os << ")";
+}
+
+void Printer::visit(const llir::lFieldAccess *node) {
+    node->object.accept(this);
+    os << ".";
+    node->field.accept(this);
+}
+
+void Printer::visit(const llir::lArrayAccess *node) {
+    node->array.accept(this);
+    os << "[";
+    node->index.accept(this);
+    os << "]";
 }
 
 void Printer::visit(const llir::lVar *node) { os << node->name; }

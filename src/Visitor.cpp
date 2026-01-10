@@ -5,6 +5,7 @@
 #include "Seq.h"
 
 #include "llir/LLIR.h"
+#include "llir/Function.h"
 
 namespace nacho {
 
@@ -70,6 +71,7 @@ void Visitor::visit(const Where *node) {
     node->consumer.accept(this);
 }
 
+
 void Visitor::visit(const llir::Generic_t *node) { (void)node; }
 
 void Visitor::visit(const llir::Int_t *node) { (void)node; }
@@ -84,6 +86,12 @@ void Visitor::visit(const llir::Tuple_t *node) {
     }
 }
 
+void Visitor::visit(const llir::Struct_t *node) {
+    for (const auto &field : node->fields) {
+        field.second.accept(this);
+    }
+}
+
 void Visitor::visit(const llir::lBinOp *node) {
     node->a.accept(this);
     node->b.accept(this);
@@ -95,6 +103,16 @@ void Visitor::visit(const llir::lBuild *node) {
     for (const auto &e : node->values) {
         e.accept(this);
     }
+}
+
+void Visitor::visit(const llir::lArrayAccess *node) {
+    node->array.accept(this);
+    node->index.accept(this);
+}
+
+void Visitor::visit(const llir::lFieldAccess *node) {
+    node->object.accept(this);
+    node->field.accept(this);
 }
 
 void Visitor::visit(const llir::lVar *node) { (void)node; }
@@ -126,6 +144,14 @@ void Visitor::visit(const llir::Store *node) {
 
 void Visitor::visit(const llir::While *node) {
     node->cond.accept(this);
+    node->body.accept(this);
+}
+
+void Visitor::visit(const llir::Function *node) {
+    for (const auto &arg : node->args) {
+        arg.type.accept(this);
+    }
+    node->ret_type.accept(this);
     node->body.accept(this);
 }
 

@@ -69,6 +69,9 @@ target_sources(
     src/Visitor.cpp
     src/llir/Function.cpp
     src/llir/LLIR.cpp
+    src/backend/compile.cpp
+    src/backend/partition.cpp
+    src/backend/tensor.cpp
 )
 
 target_sources(
@@ -95,6 +98,9 @@ target_sources(
     include/Visitor.h
     include/llir/Function.h
     include/llir/LLIR.h
+    include/backend/partition.h
+    include/backend/compile.h
+    include/backend/tensor.h
 )
 
 if (nacho_ENABLE_WARNINGS)

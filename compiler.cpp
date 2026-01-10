@@ -5,6 +5,9 @@
 #include "llir/Function.h"
 #include "llir/LLIR.h"
 
+#include "backend/compile.h"
+#include "backend/tensor.h"
+
 using namespace nacho;
 
 void test() {
@@ -14,7 +17,17 @@ void test() {
         {"j", LevelFormat::Compressed},
     });
 
+    Format dcsr = Format::ordered({
+        {"i", LevelFormat::Compressed},
+        {"j", LevelFormat::Compressed},
+    });
+   
+
     TensorType csr_f32 = TensorType(csr, dType::Float32);
+    TensorType dcsr_f32 = TensorType(dcsr, dType::Float32);
+    auto dcsr_lowered = nacho::backend::TensorLowerer("dcsr", dcsr_f32).lower_tensor_struct_definition();
+    std::cout << dcsr_lowered << "\n";
+
 
     Expr a_ij = Tensor::make(csr_f32, "a");
     Expr b_ij = Tensor::make(csr_f32, "b");
@@ -23,16 +36,19 @@ void test() {
 
     std::cout << z_ij << "\n";
     std::cout << compile_to_cin(z_ij) << "\n";
+    nacho::backend::CINLowerer(compile_to_cin(z_ij), std::cout).lower_cin();
 
     Expr z_i = sum("i", z_ij);
 
     std::cout << z_i << "\n";
     std::cout << compile_to_cin(z_i) << "\n";
+    nacho::backend::CINLowerer(compile_to_cin(z_ij), std::cout).lower_cin();
 
     z_ij = a_ij * b_ij;
 
     std::cout << z_ij << "\n";
     std::cout << compile_to_cin(z_ij) << "\n";
+    nacho::backend::CINLowerer(compile_to_cin(z_ij), std::cout).lower_cin();
 
     std::cout << "\n\n";
 }
@@ -105,8 +121,38 @@ void spgemm() {
     std::cout << z_ik << "\n";
     std::cout << "Expect CSR: " << z_ik.type().format << "\n";
 
-    std::cout << compile_to_cin(z_ik) << "\n";
+    CIN cin = compile_to_cin(z_ik);
+    nacho::backend::CINLowerer(compile_to_cin(z_ik), std::cout).lower_cin();
+    std::cout << cin << "\n";
     std::cout << "\n\n";
+
+}
+
+void sss_s_s(){
+    Format sss = Format::ordered({
+        {"i", LevelFormat::Compressed},
+        {"j", LevelFormat::Compressed},
+        {"l", LevelFormat::Compressed},
+    });
+    Format s1 = Format::ordered({
+        {"j", LevelFormat::Compressed},
+    });
+    Format s2 = Format::ordered({
+        {"k", LevelFormat::Compressed},
+    });
+    TensorType sss_f32 = TensorType(sss, dType::Float32);
+    TensorType s1_f32 = TensorType(s1, dType::Float32);
+    TensorType s2_f32 = TensorType(s2, dType::Float32);
+
+    Expr a_ijk = Tensor::make(sss_f32, "a");
+    Expr b_j = Tensor::make(s1_f32, "b");
+    Expr c_k = Tensor::make(s2_f32, "c");
+    Expr z_ijk = a_ijk *  b_j * c_k;
+
+    CIN cin = compile_to_cin(z_ijk);
+    std::cout << cin << "\n";
+    std::cout << "\n\n";
+    nacho::backend::CINLowerer(compile_to_cin(z_ijk), std::cout).lower_cin();
 }
 
 void test_format_inf() {
@@ -140,88 +186,88 @@ void test_format_inf() {
     std::cout << "\n\n";
 }
 
-void make_binary_search() {
-    llir::Function func;
-    func.generics.push_back("index_t");
+// void make_binary_search() {
+//     llir::Function func;
+//     func.generics.push_back("index_t");
 
-    func.attributes.push_back(llir::Function::device);
-    func.attributes.push_back(llir::Function::inline_);
+//     func.attributes.push_back(llir::Function::device);
+//     func.attributes.push_back(llir::Function::inline_);
 
-    llir::lType index_t = llir::Generic_t::make("index_t");
-    func.ret_type = index_t;
+//     llir::lType index_t = llir::Generic_t::make("index_t");
+//     func.ret_type = index_t;
 
-    func.name = "lower_bound";
+//     func.name = "lower_bound";
 
-    llir::lType ptr_index_t = llir::Ptr_t::make(index_t);
-    func.args.push_back(
-        {.mutating = false, .type = ptr_index_t, .name = "crds"});
-    func.args.push_back({.mutating = false, .type = index_t, .name = "n"});
-    func.args.push_back({.mutating = false, .type = index_t, .name = "c"});
+//     llir::lType ptr_index_t = llir::Ptr_t::make(index_t);
+//     func.args.push_back(
+//         {.mutating = false, .type = ptr_index_t, .name = "crds"});
+//     func.args.push_back({.mutating = false, .type = index_t, .name = "n"});
+//     func.args.push_back({.mutating = false, .type = index_t, .name = "c"});
 
-    {
-        llir::lExpr crds = llir::lVar::make(ptr_index_t, "crds");
-        llir::lExpr n = llir::lVar::make(index_t, "n");
-        llir::lExpr c = llir::lVar::make(index_t, "c");
+//     {
+//         llir::lExpr crds = llir::lVar::make(ptr_index_t, "crds");
+//         llir::lExpr n = llir::lVar::make(index_t, "n");
+//         llir::lExpr c = llir::lVar::make(index_t, "c");
 
-        std::vector<llir::lStmt> stmts;
+//         std::vector<llir::lStmt> stmts;
 
-        // index_t low = 0;
-        stmts.push_back(
-            llir::Declare::make(index_t, "low", llir::lConst::make(0)));
-        llir::lExpr low = llir::lVar::make(index_t, "low");
-        // index_t high = n;
-        stmts.push_back(llir::Declare::make(index_t, "high", n));
-        llir::lExpr high = llir::lVar::make(index_t, "high");
+//         // index_t low = 0;
+//         stmts.push_back(
+//             llir::Declare::make(index_t, "low", llir::lConst::make(0)));
+//         llir::lExpr low = llir::lVar::make(index_t, "low");
+//         // index_t high = n;
+//         stmts.push_back(llir::Declare::make(index_t, "high", n));
+//         llir::lExpr high = llir::lVar::make(index_t, "high");
 
-        std::vector<llir::lStmt> while_body;
+//         std::vector<llir::lStmt> while_body;
 
-        while_body.push_back(
-            // index_t mid = low + (high - low) / 2;
-            llir::Declare::make(index_t, "mid",
-                                low + (high - low) / llir::lConst::make(2)));
-        llir::lExpr mid = llir::lVar::make(index_t, "mid");
+//         while_body.push_back(
+//             // index_t mid = low + (high - low) / 2;
+//             llir::Declare::make(index_t, "mid",
+//                                 low + (high - low) / llir::lConst::make(2)));
+//         llir::lExpr mid = llir::lVar::make(index_t, "mid");
 
-        while_body.push_back(
-            // if (a->indices[mid] <= crd) {
-            //   low = mid + 1;
-            // } else {
-            //   high = mid
-            // }
-            llir::IfElse::make(
-                crds[mid] <= c,
-                llir::Store::make("low", mid + llir::lConst::make(1)),
-                llir::Store::make("high", mid)));
+//         while_body.push_back(
+//             // if (a->indices[mid] <= crd) {
+//             //   low = mid + 1;
+//             // } else {
+//             //   high = mid
+//             // }
+//             llir::IfElse::make(
+//                 crds[mid] <= c,
+//                 llir::Store::make("low", mid + llir::lConst::make(1)),
+//                 llir::Store::make("high", mid)));
 
-        // while (low < high) { ... }
-        llir::lStmt while_loop = llir::While::make(
-            low < high, llir::Sequence::make(std::move(while_body)));
+//         // while (low < high) { ... }
+//         llir::lStmt while_loop = llir::While::make(
+//             low < high, llir::Sequence::make(std::move(while_body)));
 
-        stmts.push_back(std::move(while_loop));
+//         stmts.push_back(std::move(while_loop));
 
-        // return low;
-        stmts.push_back(llir::Return::make(low));
+//         // return low;
+//         stmts.push_back(llir::Return::make(low));
 
-        func.body = llir::Sequence::make(std::move(stmts));
-    }
+//         func.body = llir::Sequence::make(std::move(stmts));
+//     }
 
-    func.print(std::cout);
-}
+//     func.print(std::cout);
+// }
 
-void make_binary_partition() {
-    auto funcs = generate_nary_1d_partition({"a", "b"});
-    assert(funcs.size() == 1);
-    funcs[0].print(std::cout);
-}
+// void make_binary_partition() {
+//     auto funcs = generate_nary_1d_partition({"a", "b"});
+//     assert(funcs.size() == 1);
+//     funcs[0].print(std::cout);
+// }
 
 // TODO: write a parser.
 int main(int argc, char **argv) {
-    // test();
+    test();
     // test_format_inf();
-    // test_vec();
-    // spgemm();
-
+     //test_vec();
+     spgemm();
+    sss_s_s();
     // make_binary_search();
-    make_binary_partition();
+    //make_binary_partition();
 
     return 0;
 }

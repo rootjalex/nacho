@@ -7,10 +7,6 @@
 
 namespace nacho {
 
-namespace {
-
-using OrderMap = std::unordered_map<std::string, size_t>;
-
 // Map index -> position for fast lookup
 OrderMap index_order_map(const std::vector<Level> &levels) {
     OrderMap pos;
@@ -19,6 +15,9 @@ OrderMap index_order_map(const std::vector<Level> &levels) {
     }
     return pos;
 }
+namespace {
+
+
 
 std::set<std::string> extract_indices(const std::set<Level> &S) {
     std::set<std::string> out;
