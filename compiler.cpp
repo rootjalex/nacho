@@ -36,8 +36,9 @@ void test() {
 
     std::cout << z_ij << "\n";
     std::cout << compile_to_cin(z_ij) << "\n";
+    std::cout << "Debug\n";
     nacho::backend::CINLowerer(compile_to_cin(z_ij), std::cout).lower_cin();
-
+    std::cout << "Debug\n";
     Expr z_i = sum("i", z_ij);
 
     std::cout << z_i << "\n";
@@ -264,8 +265,8 @@ int main(int argc, char **argv) {
     test();
     // test_format_inf();
      //test_vec();
-     spgemm();
-    sss_s_s();
+     //spgemm();
+    //sss_s_s();
     // make_binary_search();
     //make_binary_partition();
 

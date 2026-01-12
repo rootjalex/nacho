@@ -152,12 +152,44 @@ make_format(const Format &a, const Format &b,
 
 } // namespace
 
+int Format::get_prev_sparse_level(int curr_level) const {
+    for (int i = curr_level - 1; i >= 0; --i) {
+        if (is_sparse_format(levels[i].format)) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+int Format::get_next_sparse_level(int curr_level) const {
+    for (size_t i = curr_level + 1; i < levels.size(); ++i) {
+        if (is_sparse_format(levels[i].format)) {
+            return static_cast<int>(i);
+        }
+    }
+    return static_cast<int>(levels.size());
+}
+
+int Format::get_last_sparse_level() const {
+    for (int i = static_cast<int>(levels.size()) - 1; i >= 0; --i) {
+        if (is_sparse_format(levels[i].format)) {
+            return i;
+        }
+    }
+    return -1;
+}
+
 LevelFormat Format::lvlfmt_of(const std::string &idx) const {
     auto all = get_all_levels();
     auto it = std::find_if(all.begin(), all.end(),
                            [&](const Level &lv) { return lv.index == idx; });
     internal_assert(it != all.end());
     return it->format;
+}
+
+bool Format::level_exists(const std::string &idx) const {
+    return std::any_of(levels.begin(), levels.end(),
+                       [&](const Level &lvl) { return lvl.index == idx; });
 }
 
 bool Format::is_bc_lvl(const std::string &idx) const {

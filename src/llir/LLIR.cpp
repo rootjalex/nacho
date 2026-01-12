@@ -184,8 +184,7 @@ lStmt IfElse::make(lExpr cond, lStmt then_case, lStmt else_case) {
 }
 
 lStmt Return::make() {
-    // Use the same pointer for all void returns
-    static Return *node = new Return;
+    Return *node = new Return;
     return node;
 }
 

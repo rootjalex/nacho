@@ -18,6 +18,7 @@ lStmt Function::make(std::vector<std::string> generics,
         << "Cannot make Function with undefined body";
     Function *node = new Function;
     node->generics = std::move(generics);
+    node->attributes = std::move(attributes);
     node->args = std::move(args);
     node->ret_type = std::move(ret_type);
     node->name = std::move(name);

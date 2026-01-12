@@ -11,47 +11,129 @@
 namespace nacho {
 namespace backend {
 
+    CINLowerer::CINLowerer(CIN cin, std::ostream &os) : cin(std::move(cin)), printer(os) {
+        struct TensorVisitor : Visitor {
+            std::vector<TensorLowerer> &operand_tensors;
+            TensorLowerer &result_tensor;
+            TensorVisitor(std::vector<TensorLowerer> &operand_tensors, TensorLowerer &result_tensor)
+                : operand_tensors(operand_tensors), result_tensor(result_tensor) {}
+
+            void add_tensor(std::string str, TensorType type) {
+                TensorLowerer lowerer(str, type);
+                operand_tensors.push_back(lowerer);
+            }
+
+            void visit(const cTensor *node) override {
+                add_tensor(node->name, node->type);
+            }
+
+            void visit(const Accumulate *node) override { 
+                result_tensor = TensorLowerer(node->tensor, node->type);
+                node->expr.accept(this); 
+            }
+
+            void visit(const Assign *node) override { 
+                result_tensor = TensorLowerer(node->tensor, node->type);
+                node->expr.accept(this); 
+            }
+        };
+
+        TensorVisitor visitor(operand_tensors, result_tensor);
+        this->cin.accept(&visitor);
+    }
+
+    std::vector<std::string> CINLowerer::get_loop_order() {
+        std::vector<std::string> loop_order;
+        struct ForallVisitor : Visitor {
+            std::vector<std::string> &loop_order;
+            ForallVisitor(std::vector<std::string> &loop_order) : loop_order(loop_order) {}
+
+            void visit(const Forall *node) override {
+                loop_order.push_back(node->idx);
+                node->body.accept(this);
+            }
+        };
+        ForallVisitor visitor(loop_order);
+        cin.accept(&visitor);
+        return loop_order;
+    }
+
     void CINLowerer::lower_cin() {
         this->lower_struct_definitions();
+        this->lower_work_functions();
         this->lower_partition_function();
     }
 
     // lower_struct_definitions loweres all the initial struct definitions for the program
     // this includes tensor struct definitions for both the operand and result tensors
     void CINLowerer::lower_struct_definitions() {
-        struct TensorVisitor : Visitor {
-            Printer& printer;
-            TensorVisitor(Printer& printer) : printer(printer) {}
+        for (auto &lowerer : operand_tensors) {
+            printer.print(lowerer.lower_tensor_struct_definition());
+            printer.print(lowerer.lower_tensor_index_definition());
+        }
+        printer.print(result_tensor.lower_tensor_struct_definition());
+    }
 
-            void print(std::string str, TensorType type) {
-                TensorLowerer lowerer(str, type);
-                auto struct_def = lowerer.lower_tensor_struct_definition();
-                printer.print(struct_def);
+    void CINLowerer::lower_work_functions() {
+        auto loop_order = get_loop_order();
+        for (auto &lowerer : operand_tensors) {
+
+            for (int i=0; i<loop_order.size(); i++) {
+                auto work_function = lowerer.lower_work_function(loop_order, i);
+                printer.print(work_function);
             }
-
-            void visit(const cTensor *node) override {
-                print(node->name, node->type);
-            }
-
-            void visit(const Accumulate *node) override { 
-                print(node->tensor, node->type);
-                node->expr.accept(this); 
-            }
-
-            void visit(const Assign *node) override { 
-                print(node->tensor, node->type);
-                node->expr.accept(this); 
-            }
-        };
-
-        TensorVisitor visitor(printer);
-        cin.accept(&visitor);
+            
+        }
     }
 
     void CINLowerer::lower_partition_function() {
-        // Implementation for lowering partition function
+        internal_assert(is_innermost_sparse_intersection()) << "CIN which are not innermost sparse intersection are not supported";
+
+        PartitionFunctionLowerer partition_lowerer(operand_tensors, get_loop_order());
+
+        printer.print(partition_lowerer.lower_innermost_sparse_intersection());
     }
 
-}
+    // Check if the CIN represents an innermost sparse intersection
+    // This also returns true if the CIN does not have any sparse intersection.
+    // TODO : There are some exceptions to this like (A: DCSR , B:Dense-Dense) a_ij*b_ij
+    bool CINLowerer::is_innermost_sparse_intersection() {
+        struct Checker : public Visitor {
+            bool is_innermost_sparse = true;
+            bool found_sparse_intersection = false;
 
+            void visit(const Intersect * node) override{
+
+                // This means this is a sparse intersection
+                if(node->is_sparse) {
+                    found_sparse_intersection = true;
+                }
+                node->a.accept(this);
+                node->b.accept(this);
+            }
+
+            void visit(const Forall * node) override{
+                // if we already found a sparse intersection, 
+                // that means this forall is inside a sparse intersection forall
+                // hence cin is not innermost sparse
+                if(found_sparse_intersection) {
+                    is_innermost_sparse = false;
+                }
+                node->seq.accept(this);
+                node->body.accept(this);
+            }
+        };
+
+        Checker checker;
+
+        if (const Forall *forall = cin.as<Forall>()) {
+            forall->body.accept(&checker);
+        } else {
+            internal_assert(false) << "Root node of CIN is not a Forall.";
+        }
+
+        return checker.is_innermost_sparse;
+
+    }
+}
 } // namespace nacho
