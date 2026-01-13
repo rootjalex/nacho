@@ -21,10 +21,15 @@ void test() {
         {"i", LevelFormat::Compressed},
         {"j", LevelFormat::Compressed},
     });
+
+    Format s = Format::ordered({
+        {"i", LevelFormat::Compressed}
+    });
    
 
     TensorType csr_f32 = TensorType(csr, dType::Float32);
     TensorType dcsr_f32 = TensorType(dcsr, dType::Float32);
+    TensorType s_f32 = TensorType(s, dType::Float32);
     auto dcsr_lowered = nacho::backend::TensorLowerer("dcsr", dcsr_f32).lower_tensor_struct_definition();
     std::cout << dcsr_lowered << "\n";
 
@@ -33,6 +38,11 @@ void test() {
     Expr b_ij = Tensor::make(csr_f32, "b");
     Expr c_ij = Tensor::make(csr_f32, "c");
     Expr d_ij = Tensor::make(csr_f32, "d");
+
+    Expr a_i = Tensor::make(s_f32, "a_vec");
+    Expr b_i = Tensor::make(s_f32, "b_vec");
+    Expr c_i = Tensor::make(s_f32, "c_vec");
+    Expr d_i = Tensor::make(s_f32, "d_vec");
 
     Expr z_ij = a_ij + b_ij;
 
@@ -58,6 +68,11 @@ void test() {
     std::cout << compile_to_cin(z_ij) << "\n";
     nacho::backend::CINLowerer(compile_to_cin(z_ij), std::cout).lower_cin();
     std::cout << "\n\n";
+
+    Expr z = (a_i + b_i + c_i) * d_i;
+    std::cout << z << "\n";
+    std::cout << compile_to_cin(z) << "\n";
+    nacho::backend::CINLowerer(compile_to_cin(z), std::cout).lower_cin();
 }
 
 void test_vec() {

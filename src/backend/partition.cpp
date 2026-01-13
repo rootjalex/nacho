@@ -192,7 +192,25 @@ namespace backend {
             )
         );
 
-        // All forall except last forall needs to be handled separately
+        
+        llir::lExpr total_work_var = llir::lVar::make(index_t, "total_work");
+        llir::lExpr rem_count_var = llir::lVar::make(index_t, "rem_count");
+        stmts.emplace_back(
+            llir::Declare::make(
+                index_t,
+                "rem_count",
+                llir::lVar::make(index_t, "count")
+            )
+        );
+        stmts.emplace_back(
+            llir::Declare::make(
+                index_t,
+                "total_work",
+                llir::lConst::make((int64_t)0)
+            )
+        );
+
+
         for(int i=0;i<forall_list.size();i++) {
             CIN forall = forall_list[i];
             std::string forall_idx = forall.as<Forall>()->idx;
@@ -215,7 +233,7 @@ namespace backend {
             llir::lExpr mid_var = llir::lVar::make(index_t, "mid_"+forall_idx);
 
             llir::lExpr start_expr, end_expr, mid_expr;
-            start_expr = llir::lConst::make((int64_t)0);
+            start_expr = llir::lConst::make((int64_t)-1);
             end_expr = llir::lFieldAccess::make(
                 llir::lVar::make(
                     llir::Ptr_t::make(llir::Generic_t::make(tensors_with_curr_dim[0].get_struct_name())),
@@ -289,18 +307,23 @@ namespace backend {
                     llir::Declare::make(
                         index_t,
                         tensor.tensor_name+"_"+forall_idx+"_p_start",
-                        llir::lArrayAccess::make(
-                            llir::lFieldAccess::make(
-                                llir::lVar::make(llir::Generic_t::make(tensor.get_struct_name()), tensor.tensor_name),
-                                llir::lVar::make(index_t, tensor.get_offsets_field_name(forall_idx))
-                            ),
-                            tensor.get_offset_expression_for_next_sparse(
-                                tensor.tensor_type.format.get_prev_sparse_level(current_dim_level), current_dim_level-1, false, true, 
+                        llir::lBinOp::make(
+                            llir::lBinOp::Sub,
+                            current_dim_level == 0 ? llir::lConst::make((int64_t)0) :
                                 llir::lArrayAccess::make(
-                                    llir::lVar::make(llir::Generic_t::make(tensor.get_index_struct_name()), "partitions_"+tensor.tensor_name),
-                                    llir::lVar::make(index_t, "thread_id")
-                                )
-                            )
+                                    llir::lFieldAccess::make(
+                                        llir::lVar::make(llir::Generic_t::make(tensor.get_struct_name()), tensor.tensor_name),
+                                        llir::lVar::make(index_t, tensor.get_offsets_field_name(forall_idx))
+                                    ),
+                                        tensor.get_offset_expression_for_next_sparse(
+                                            tensor.tensor_type.format.get_prev_sparse_level(current_dim_level), current_dim_level-1, false, true, 
+                                            llir::lArrayAccess::make(
+                                                llir::lVar::make(llir::Generic_t::make(tensor.get_index_struct_name()), "partitions_"+tensor.tensor_name),
+                                                llir::lVar::make(index_t, "thread_id")
+                                            )
+                                        )
+                                ),
+                            llir::lConst::make((int64_t)1)
                         )
                     )
                 );
@@ -310,19 +333,24 @@ namespace backend {
                         tensor.tensor_name+"_"+forall_idx+"_p_end",
                         llir::lBinOp::make(
                             llir::lBinOp::Sub,
-                            llir::lArrayAccess::make(
+                            current_dim_level == 0 ? 
                                 llir::lFieldAccess::make(
                                     llir::lVar::make(llir::Generic_t::make(tensor.get_struct_name()), tensor.tensor_name),
-                                    llir::lVar::make(index_t, tensor.get_offsets_field_name(forall_idx))
-                                ),
-                                tensor.get_offset_expression_for_next_sparse(
-                                    tensor.tensor_type.format.get_prev_sparse_level(current_dim_level), current_dim_level-1, true, true, 
-                                    llir::lArrayAccess::make(
-                                    llir::lVar::make(llir::Generic_t::make(tensor.get_index_struct_name()), "partitions_"+tensor.tensor_name),
-                                    llir::lVar::make(index_t, "thread_id")
+                                    llir::lVar::make(index_t, tensor.get_length_field_name(forall_idx))
+                                ) :
+                                llir::lArrayAccess::make(
+                                    llir::lFieldAccess::make(
+                                        llir::lVar::make(llir::Generic_t::make(tensor.get_struct_name()), tensor.tensor_name),
+                                        llir::lVar::make(index_t, tensor.get_offsets_field_name(forall_idx))
+                                    ),
+                                    tensor.get_offset_expression_for_next_sparse(
+                                        tensor.tensor_type.format.get_prev_sparse_level(current_dim_level), current_dim_level-1, true, true, 
+                                        llir::lArrayAccess::make(
+                                        llir::lVar::make(llir::Generic_t::make(tensor.get_index_struct_name()), "partitions_"+tensor.tensor_name),
+                                        llir::lVar::make(index_t, "thread_id")
+                                        )
                                     )
-                                )
-                            ),
+                                ),
                             llir::lConst::make((int64_t)1)
                         )
                     )
@@ -332,8 +360,12 @@ namespace backend {
                     llir::lBinOp::Div,
                     llir::lBinOp::make(
                         llir::lBinOp::Add,
-                        position_var_start,
-                        position_var_end
+                        llir::lBinOp::make(
+                            llir::lBinOp::Add,
+                            position_var_start,
+                            position_var_end
+                        ),
+                        llir::lConst::make((int64_t)1)
                     ),
                     llir::lConst::make((int64_t)2)
                 );
@@ -357,7 +389,7 @@ namespace backend {
                 binary_search_stmts.emplace_back(
                     llir::IfElse::make(
                         llir::lBinOp::make(
-                            llir::lBinOp::Lt,
+                            llir::lBinOp::Leq,
                             llir::lArrayAccess::make(
                                 llir::lFieldAccess::make(
                                     llir::lVar::make(llir::Generic_t::make(tensor.get_struct_name()), tensor.tensor_name),
@@ -370,17 +402,17 @@ namespace backend {
                         llir::Sequence::make({
                             llir::Store::make(
                                 position_var_start,
-                                llir::lBinOp::make(
-                                    llir::lBinOp::Add,
-                                    position_var,
-                                    llir::lConst::make((int64_t)1)
-                                )
+                                position_var
                             )
                         }),
                         llir::Sequence::make({
                             llir::Store::make(
                                 position_var_end,
-                                position_var
+                                llir::lBinOp::make(
+                                    llir::lBinOp::Sub,
+                                    position_var,
+                                    llir::lConst::make((int64_t)1)
+                                )
                             )
                         })
                     )
@@ -404,47 +436,13 @@ namespace backend {
                 );
             }
 
-            // store calculate paritions into partition struct if needed partition is found.
-            std::vector<llir::lStmt> store_partition_stmts;
-            for(auto tensor : operand_tensors) {
-                if(tensor.tensor_type.format.level_exists(forall_idx)) {
-                    bool is_sparse = is_sparse_format(tensor.tensor_type.format.lvlfmt_of(forall_idx));
-                    store_partition_stmts.emplace_back(
-                        llir::Store::make(
-                            llir::lFieldAccess::make(
-                                llir::lArrayAccess::make(
-                                    llir::lVar::make(llir::Generic_t::make(tensor.get_index_struct_name()), "partitions_"+tensor.tensor_name),
-                                    llir::lVar::make(index_t, "thread_id")
-                                ),
-                                llir::lVar::make(index_t, forall_idx + (is_sparse ? "_p" : ""))
-                            ),
-                            mid_var
-                        )
-                    );
-                }
-            }
-            store_partition_stmts.emplace_back(llir::Break::make());
 
-            while_stmts.emplace_back(
-                llir::IfElse::make(
-                    llir::lBinOp::make(
-                        llir::lBinOp::Leq,
-                        end_var,
-                        start_var
-                    ),
-                    llir::Sequence::make(store_partition_stmts),
-                    nullptr
-                )
-            );
-
-
-            llir::lExpr total_work_var = llir::lVar::make(index_t, "total_work");
+            
 
             // Now have to calculate the total work for the parition with current indices
             while_stmts.emplace_back(
-                llir::Declare::make(
-                    index_t,
-                    "total_work",
+                llir::Store::make(
+                    total_work_var,
                     llir::lConst::make((int64_t)0)
                 )
             );
@@ -517,6 +515,49 @@ namespace backend {
                     )
                 );
             }
+
+            // store calculated paritions into partition struct if needed partition is found.
+            std::vector<llir::lStmt> store_partition_stmts;
+            for(auto tensor : operand_tensors) {
+                if(tensor.tensor_type.format.level_exists(forall_idx)) {
+                    bool is_sparse = is_sparse_format(tensor.tensor_type.format.lvlfmt_of(forall_idx));
+                    store_partition_stmts.emplace_back(
+                        llir::Store::make(
+                            llir::lFieldAccess::make(
+                                llir::lArrayAccess::make(
+                                    llir::lVar::make(llir::Generic_t::make(tensor.get_index_struct_name()), "partitions_"+tensor.tensor_name),
+                                    llir::lVar::make(index_t, "thread_id")
+                                ),
+                                llir::lVar::make(index_t, forall_idx + (is_sparse ? "_p" : ""))
+                            ),
+                            mid_var
+                        )
+                    );
+                }
+            }
+            store_partition_stmts.emplace_back(
+                llir::Store::make(
+                    rem_count_var,
+                    llir::lBinOp::make(
+                        llir::lBinOp::Sub,
+                        rem_count_var,
+                        total_work_var
+                    )
+                )
+            );
+            store_partition_stmts.emplace_back(llir::Break::make());
+
+            while_stmts.emplace_back(
+                llir::IfElse::make(
+                    llir::lBinOp::make(
+                        llir::lBinOp::Leq,
+                        end_var,
+                        start_var
+                    ),
+                    llir::Sequence::make(store_partition_stmts),
+                    nullptr
+                )
+            );
 
             while_stmts.emplace_back(
                     llir::IfElse::make(

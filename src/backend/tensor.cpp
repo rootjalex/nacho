@@ -14,8 +14,8 @@ namespace backend {
         llir::lType value_t = llir::Generic_t::make("value_t");
         std::vector<std::string> generics = {"index_t", "value_t"};
         std::vector<std::pair<std::string, llir::lType>> data_fields;
-        data_fields.emplace_back("nnz", llir::Ptr_t::make(index_t));
-        data_fields.emplace_back("values", value_t);
+        data_fields.emplace_back("nnz", index_t);
+        data_fields.emplace_back("values", llir::Ptr_t::make(value_t));
         for (int i=tensor_type.format.levels.size()-1; i>=0; i--) {
             auto index = tensor_type.format.levels[i].index;
 
@@ -333,7 +333,7 @@ namespace backend {
                         ? get_offset_expression_for_next_sparse(tensor_type.format.get_prev_sparse_level(last_level), last_level-1, false) 
                         : llir::lConst::make((int64_t)0);
 
-                    if(last_level-1>=0 & tensor_type.format.get_prev_sparse_level(last_level) >=0)
+                    if(last_level-1>=0)
                         start_expr = llir::lArrayAccess::make(
                             llir::lFieldAccess::make(
                                 llir::lVar::make(
@@ -497,14 +497,11 @@ namespace backend {
                     index_t, 
                     "count",
                     llir::lBinOp::make(
-                        llir::lBinOp::Add,
-                        llir::lBinOp::make(
-                            llir::lBinOp::Sub,
-                            llir::lVar::make(index_t, "count_end"),
-                            llir::lVar::make(index_t, "count_start")
-                        ),
-                        llir::lConst::make((int64_t)1)
+                        llir::lBinOp::Sub,
+                        llir::lVar::make(index_t, "count_end"),
+                        llir::lVar::make(index_t, "count_start")
                     )
+                    
                 )
             );
         }
