@@ -41,6 +41,11 @@ namespace nacho {
             return "dim_" + index + "_size";
         }
 
+        inline std::string get_work_function_name(const std::string &index) {
+            return "work_"+tensor_name+"_dim_"+index;
+
+        }
+
         llir::lType lower_tensor_struct_definition();
 
 
@@ -54,7 +59,7 @@ namespace nacho {
         // Then the args are loop_order = [i,j,k,l],target_dim = 2, prev_dim_positions = [12, 32], target_dim_position = 54
         llir::lStmt lower_work_function(std::vector<std::string> loop_order, int target_dim);
 
-        llir::lExpr get_offset_expression_for_next_sparse(int dim_level_start, int dim_level_end, bool upper_bound);
+        llir::lExpr get_offset_expression_for_next_sparse(int dim_level_start, int dim_level_end, bool upper_bound, bool use_field_access = false, llir::lExpr field_access_var=nullptr);
 
         // Lower the tensor index definition to LLIR.
         // This struct defines an object to specify the values of different levels to index

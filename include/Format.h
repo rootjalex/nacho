@@ -57,6 +57,7 @@ struct Format {
     int get_prev_sparse_level(int curr_level) const;   
     int get_next_sparse_level(int curr_level) const;
     int get_last_sparse_level() const;
+    int get_level_order(const std::string &idx) const;
 
     LevelFormat lvlfmt_of(const std::string &idx) const;
     bool level_exists(const std::string &idx) const;

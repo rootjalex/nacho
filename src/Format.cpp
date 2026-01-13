@@ -179,6 +179,15 @@ int Format::get_last_sparse_level() const {
     return -1;
 }
 
+int Format::get_level_order(const std::string &idx) const {
+    for (size_t i = 0; i < levels.size(); ++i) {
+        if (levels[i].index == idx) {
+            return static_cast<int>(i);
+        }
+    }
+    return -1;
+}
+
 LevelFormat Format::lvlfmt_of(const std::string &idx) const {
     auto all = get_all_levels();
     auto it = std::find_if(all.begin(), all.end(),

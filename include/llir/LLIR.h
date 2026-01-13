@@ -27,7 +27,9 @@ enum class lExprEnum {
     lVar,
     lBuild,
     lArrayAccess,
-    lFieldAccess
+    lFieldAccess,
+    lPtrAccess,
+    lFunctionCall
 };
 
 // Statements
@@ -39,6 +41,8 @@ enum class lStmtEnum {
     Store,
     While,
     Function,
+    BaseExpr,
+    Break
 };
 
 using IRlTypeNode = IRNode<lType, lTypeEnum>;
@@ -235,9 +239,9 @@ lExpr operator>=(lExpr a, lExpr b);
 lExpr operator&&(lExpr a, lExpr b);
 
 struct lConst : lExprNode<lConst> {
-    std::variant<int64_t, uint64_t, double> value;
+    std::variant<int64_t, uint64_t, double, bool> value;
 
-    static lExpr make(std::variant<int64_t, uint64_t, double> value);
+    static lExpr make(std::variant<int64_t, uint64_t, double, bool> value);
 
     static const lExprEnum node_type = lExprEnum::lConst;
 };
@@ -268,12 +272,30 @@ struct lFieldAccess : lExprNode<lFieldAccess> {
     static const lExprEnum node_type = lExprEnum::lFieldAccess;
 };
 
+struct lPtrAccess : lExprNode<lPtrAccess> {
+    lExpr ptr;
+    lExpr index;
+
+    static lExpr make(lExpr ptr, lExpr index);
+
+    static const lExprEnum node_type = lExprEnum::lPtrAccess;
+};
+
 struct lVar : lExprNode<lVar> {
     std::string name;
 
     static lExpr make(lType type, std::string name);
 
     static const lExprEnum node_type = lExprEnum::lVar;
+};
+
+struct lFunctionCall : lExprNode<lFunctionCall> {
+    std::string function_name;
+    std::vector<lExpr> args;
+
+    static lExpr make(std::string function_name, std::vector<lExpr> args);
+
+    static const lExprEnum node_type = lExprEnum::lFunctionCall;
 };
 
 struct Declare : lStmtNode<Declare> {
@@ -305,6 +327,12 @@ struct Return : lStmtNode<Return> {
     static const lStmtEnum node_type = lStmtEnum::Return;
 };
 
+struct Break : lStmtNode<Break> {
+    static lStmt make();
+
+    static const lStmtEnum node_type = lStmtEnum::Break;
+};
+
 struct Sequence : lStmtNode<Sequence> {
     std::vector<lStmt> stmts;
 
@@ -314,13 +342,10 @@ struct Sequence : lStmtNode<Sequence> {
 };
 
 struct Store : lStmtNode<Store> {
-    std::string name;
-    // TODO: handle more general write locations (e.g., field writes).
-    lExpr index; // possibly empty
-    lExpr expr;
+    lExpr var;
+    lExpr value;
 
-    static lStmt make(std::string name, lExpr expr);
-    static lStmt make(std::string name, lExpr index, lExpr expr);
+    static lStmt make(lExpr var, lExpr value);
 
     static const lStmtEnum node_type = lStmtEnum::Store;
 };
@@ -332,6 +357,13 @@ struct While : lStmtNode<While> {
     static lStmt make(lExpr cond, lStmt body);
 
     static const lStmtEnum node_type = lStmtEnum::While;
+};
+
+struct BaseExpr : lStmtNode<BaseExpr> {
+    lExpr expr;
+    static lStmt make(lExpr expr);
+
+    static const lStmtEnum node_type = lStmtEnum::BaseExpr;
 };
 
 } // namespace llir

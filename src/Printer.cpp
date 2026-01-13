@@ -501,7 +501,24 @@ void Printer::visit(const llir::lArrayAccess *node) {
     os << "]";
 }
 
+void Printer::visit(const llir::lPtrAccess *node) {
+    node->ptr.accept(this);
+    os << "->";
+    node->index.accept(this);
+}
+
 void Printer::visit(const llir::lVar *node) { os << node->name; }
+
+void Printer::visit(const llir::lFunctionCall *node) {
+    os << node->function_name << "(";
+    for (size_t i = 0, e = node->args.size(); i < e; i++) {
+        if (i > 0) {
+            os << ", ";
+        }
+        print_no_parens(node->args[i]);
+    }
+    os << ")";
+}
 
 void Printer::print(const llir::lStmt &lstmt) { lstmt.accept(this); }
 
@@ -554,14 +571,9 @@ void Printer::visit(const llir::Sequence *node) {
 
 void Printer::visit(const llir::Store *node) {
     print_indent();
-    os << node->name;
-    if (node->index.defined()) {
-        os << "[";
-        print_no_parens(node->index);
-        os << "]";
-    }
+    print_no_parens(node->var);
     os << " = ";
-    print_no_parens(node->expr);
+    print_no_parens(node->value);
     os << ";\n";
 }
 
@@ -575,6 +587,19 @@ void Printer::visit(const llir::While *node) {
     dedent();
     print_indent();
     os << "}\n";
+}
+
+void Printer::visit(const llir::BaseExpr *node) { 
+    print_indent();
+    print(node->expr); 
+
+    os << ";\n";
+}
+
+void Printer::visit(const llir::Break *node) {
+    print_indent();
+    os << "break";
+    os << ";\n";
 }
 
 } // namespace nacho

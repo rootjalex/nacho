@@ -115,7 +115,18 @@ void Visitor::visit(const llir::lFieldAccess *node) {
     node->field.accept(this);
 }
 
+void Visitor::visit(const llir::lPtrAccess *node) {
+    node->ptr.accept(this);
+    node->index.accept(this);
+}
+
 void Visitor::visit(const llir::lVar *node) { (void)node; }
+
+void Visitor::visit(const llir::lFunctionCall *node) {
+    for (const auto &arg : node->args) {
+        arg.accept(this);
+    }
+}
 
 void Visitor::visit(const llir::Declare *node) { node->init.accept(this); }
 
@@ -136,10 +147,8 @@ void Visitor::visit(const llir::Sequence *node) {
 }
 
 void Visitor::visit(const llir::Store *node) {
-    if (node->index.defined()) {
-        node->index.accept(this);
-    }
-    node->expr.accept(this);
+    node->var.accept(this);
+    node->value.accept(this);
 }
 
 void Visitor::visit(const llir::While *node) {
@@ -154,5 +163,9 @@ void Visitor::visit(const llir::Function *node) {
     node->ret_type.accept(this);
     node->body.accept(this);
 }
+
+void Visitor::visit(const llir::BaseExpr *node) { node->expr.accept(this); }
+
+void Visitor::visit(const llir::Break *node) { (void)node; }
 
 } // namespace nacho

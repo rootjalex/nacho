@@ -58,6 +58,22 @@ namespace backend {
         return loop_order;
     }
 
+    std::vector<CIN> CINLowerer::get_forall_list() {
+        std::vector<CIN> forall_list;
+        struct ForallVisitor : Visitor {
+            std::vector<CIN> &forall_list;
+            ForallVisitor(std::vector<CIN> &forall_list) : forall_list(forall_list) {}
+
+            void visit(const Forall *node) override {
+                forall_list.push_back(node);
+                node->body.accept(this);
+            }
+        };
+        ForallVisitor visitor(forall_list);
+        cin.accept(&visitor);
+        return forall_list;
+    }
+
     void CINLowerer::lower_cin() {
         this->lower_struct_definitions();
         this->lower_work_functions();
@@ -89,7 +105,7 @@ namespace backend {
     void CINLowerer::lower_partition_function() {
         internal_assert(is_innermost_sparse_intersection()) << "CIN which are not innermost sparse intersection are not supported";
 
-        PartitionFunctionLowerer partition_lowerer(operand_tensors, get_loop_order());
+        PartitionFunctionLowerer partition_lowerer(operand_tensors, get_forall_list());
 
         printer.print(partition_lowerer.lower_innermost_sparse_intersection());
     }

@@ -21,6 +21,7 @@ namespace backend {
             CINLowerer(CIN cin, std::ostream &os);
 
             std::vector<std::string> get_loop_order();
+            std::vector<CIN> get_forall_list();
             void lower_cin();
             void lower_struct_definitions();
             void lower_partition_function();

@@ -114,7 +114,7 @@ lExpr operator&&(lExpr a, lExpr b) {
     return lBinOp::make(lBinOp::And, std::move(a), std::move(b));
 }
 
-lExpr lConst::make(std::variant<int64_t, uint64_t, double> value) {
+lExpr lConst::make(std::variant<int64_t, uint64_t, double, bool> value) {
     lConst *node = new lConst;
     // TODO: TYPE
     node->value = std::move(value);
@@ -151,12 +151,33 @@ lExpr lFieldAccess::make(lExpr object, lExpr field) {
     return node;
 }
 
+lExpr lPtrAccess::make(lExpr ptr, lExpr index) {
+    internal_assert(ptr.defined() && index.defined())
+        << "lPtrAccess of undefined: " << ptr << " [ " << index << " ]";
+    lPtrAccess *node = new lPtrAccess;
+    node->ptr = std::move(ptr);
+    node->index = std::move(index);
+    return node;
+}
+
 lExpr lVar::make(lType type, std::string name) {
     internal_assert(type.defined()) << "Cannot make lVar with undef type.";
     internal_assert(!name.empty()) << "Cannot make lVar with empty name.";
     lVar *node = new lVar;
     node->type = std::move(type);
     node->name = std::move(name);
+    return node;
+}
+
+lExpr lFunctionCall::make(std::string function_name, std::vector<lExpr> args) {
+    internal_assert(!function_name.empty()) << "Cannot make lFunctionCall with empty function name.";
+    for (const auto &arg : args) {
+        internal_assert(arg.defined())
+            << "Cannot make lFunctionCall with undefined argument.";
+    }
+    lFunctionCall *node = new lFunctionCall;
+    node->function_name = std::move(function_name);
+    node->args = std::move(args);
     return node;
 }
 
@@ -203,20 +224,17 @@ lStmt Sequence::make(std::vector<lStmt> stmts) {
     return node;
 }
 
-lStmt Store::make(std::string name, lExpr expr) {
-    return Store::make(std::move(name), lExpr(), std::move(expr));
-}
-
-lStmt Store::make(std::string name, lExpr index, lExpr expr) {
-    internal_assert(!name.empty()) << "Cannot make Store with empty name.";
-    internal_assert(expr.defined())
-        << "Cannot make Store with empty value: " << name;
+lStmt Store::make(lExpr var, lExpr value) {
+    internal_assert(var.defined())
+        << "Cannot make Store with undefined var";
+    internal_assert(value.defined())
+        << "Cannot make Store with undefined value";
     Store *node = new Store;
-    node->name = std::move(name);
-    node->index = std::move(index);
-    node->expr = std::move(expr);
+    node->var = std::move(var);
+    node->value = std::move(value);
     return node;
 }
+
 
 lStmt While::make(lExpr cond, lStmt body) {
     internal_assert(cond.defined())
@@ -226,6 +244,18 @@ lStmt While::make(lExpr cond, lStmt body) {
     While *node = new While;
     node->cond = std::move(cond);
     node->body = std::move(body);
+    return node;
+}
+
+lStmt BaseExpr::make(lExpr expr) {
+    internal_assert(expr.defined()) << "Undefined expr in BaseExpr::make()";
+    BaseExpr *node = new BaseExpr;
+    node->expr = std::move(expr);
+    return node;
+}
+
+lStmt Break::make() {
+    Break *node = new Break;
     return node;
 }
 

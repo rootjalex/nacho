@@ -47,7 +47,9 @@ struct lConst;
 struct lBuild;
 struct lArrayAccess;
 struct lFieldAccess;
+struct lPtrAccess;
 struct lVar;
+struct lFunctionCall;
 
 struct lStmt;
 struct Declare;
@@ -57,6 +59,8 @@ struct Sequence;
 struct Store;
 struct While;
 struct Function;
+struct BaseExpr;
+struct Break;
 
 } // namespace llir
 
