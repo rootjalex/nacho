@@ -77,7 +77,7 @@ namespace backend {
     void CINLowerer::lower_cin() {
         this->lower_struct_definitions();
         this->lower_work_functions();
-        this->lower_partition_function();
+        //this->lower_partition_function();
     }
 
     // lower_struct_definitions loweres all the initial struct definitions for the program

@@ -155,6 +155,7 @@ void sss_s_s(){
         {"i", LevelFormat::Compressed},
         {"j", LevelFormat::Compressed},
         {"l", LevelFormat::Compressed},
+        {"m", LevelFormat::Dense},
     });
     Format s1 = Format::ordered({
         {"j", LevelFormat::Compressed},
@@ -162,14 +163,20 @@ void sss_s_s(){
     Format s2 = Format::ordered({
         {"k", LevelFormat::Compressed},
     });
+    Format s3 = Format::ordered({
+        {"o", LevelFormat::Compressed},
+    });
+    
     TensorType sss_f32 = TensorType(sss, dType::Float32);
     TensorType s1_f32 = TensorType(s1, dType::Float32);
     TensorType s2_f32 = TensorType(s2, dType::Float32);
+    TensorType s3_f32 = TensorType(s3, dType::Float32);
 
-    Expr a_ijk = Tensor::make(sss_f32, "a");
+    Expr a_ijlm = Tensor::make(sss_f32, "a");
     Expr b_j = Tensor::make(s1_f32, "b");
     Expr c_k = Tensor::make(s2_f32, "c");
-    Expr z_ijk = a_ijk *  b_j * c_k;
+    Expr d_o = Tensor::make(s3_f32, "d");
+    Expr z_ijk = a_ijlm *  b_j * c_k * d_o;
 
     CIN cin = compile_to_cin(z_ijk);
     std::cout << cin << "\n";
@@ -287,7 +294,7 @@ int main(int argc, char **argv) {
     // test_format_inf();
      //test_vec();
      //spgemm();
-    //sss_s_s();
+    sss_s_s();
     // make_binary_search();
     //make_binary_partition();
 

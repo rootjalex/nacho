@@ -181,7 +181,7 @@ namespace backend {
         internal_assert(it != loop_order.end());
         int last_level_loop_place = std::distance(loop_order.begin(), it); // This is used later
 
-
+        // checks the loop order is consistent with the tensor format
         auto violates_order = [&](const std::vector<std::string> &loop_order,
             OrderMap &level_order
         ) {
@@ -223,7 +223,6 @@ namespace backend {
             // only add arguments for non-broadcasted levels
             if(tensor_type.format.level_exists(loop_order[i]))
             {
-                
                 // sparse dimensions are iterated by positions while dense are iterated by coordinates
                 // hence args are named accordingly
                 std::string name = loop_order[i];
@@ -252,7 +251,7 @@ namespace backend {
         }
         
         // broadcast Sizes of all broadcast dimensions coming after target_dim need to be added as arguments.
-        // As work calculation will require multiplying with bc_sizes at end.
+        // As work calculation will require multiplying with these bc_sizes at end.
         for(int i=target_dim+1; i < loop_order.size(); i++) {
             if(!tensor_type.format.level_exists(loop_order[i])) {
                 args.emplace_back(llir::Function::Argument{
@@ -266,16 +265,10 @@ namespace backend {
         std::string name =  get_work_function_name(loop_order[target_dim]);
 
 
-        // if(!tensor_type.format.level_exists(loop_order[target_dim]) && last_level == tensor_type.format.levels.size()-1 ){
-            
-        //     llir::lStmt body = llir::Return::make(llir::lConst::make((int64_t)0));
-        //     return llir::Function::make(std::move(generics),std::move(attributes), std::move(args), std::move(ret_type), name, std::move(body));
-        // }
-        
         std::vector<llir::lStmt> stmts;
 
         // if target_dim is a loop that comes after last level of the tensor in the loop order
-        // Then iteration work for this tensor in target_dim is 0
+        // Then iteration work for this tensor is 0 (as we are not iterating on any non-zeros of the tensor)
         if(last_level_loop_place < target_dim) {
             stmts.emplace_back(
                 llir::Return::make(
@@ -290,7 +283,10 @@ namespace backend {
         //  to calculate the number of non zeros that are being iterated on 
 
         llir::lExpr count_expr;
+        // We need to iterate on all the nonzeros if last_level == -1
        if(last_level == -1) {
+            // if there is no sparse dimension in the tensor (i.e all dense) just return 1
+            // (The 1 will get multiplied later by sizes of all dense dimensions in the next for loop below)
             if(tensor_type.format.get_last_sparse_level() == -1) {
         
                 count_expr = llir::lConst::make((int64_t)1);
@@ -324,6 +320,8 @@ namespace backend {
             llir::lExpr start_expr;
             llir::lExpr end_expr;
 
+
+            // target_dim is a level inside this tensor
             if(tensor_type.format.level_exists(loop_order[target_dim])) {
                 // loop_order[target_dim] == last_level
                 
@@ -426,10 +424,15 @@ namespace backend {
                 int last_sparse_level = next_sparse_level;
                 next_sparse_level = tensor_type.format.get_next_sparse_level(next_sparse_level);
 
-                end_expr = llir::lVar::make(
-                                index_t, 
-                                tensor_type.format.levels[last_sparse_level].index+"_p_end"
-                            );
+                // end_expr needs upper_bound so wee need to add `1`.
+                end_expr = llir::lBinOp::make(
+                    llir::lBinOp::Add,
+                    llir::lVar::make(
+                        index_t, 
+                        tensor_type.format.levels[last_sparse_level].index+"_p_end"
+                    ),
+                    llir::lConst::make((int)1)
+                );
                 start_expr = llir::lVar::make(
                                 index_t, 
                                 tensor_type.format.levels[last_sparse_level].index+"_p_start"
@@ -462,7 +465,7 @@ namespace backend {
                                     ),
                                     llir::lVar::make(
                                         llir::Ptr_t::make(index_t), 
-                                        get_offsets_field_name(tensor_type.format.levels[last_sparse_level].index)
+                                        get_offsets_field_name(tensor_type.format.levels[next_sparse_level].index)
                                     )
                                 ),
                                 end_expr
@@ -484,7 +487,7 @@ namespace backend {
                                     ),
                                     llir::lVar::make(
                                         llir::Ptr_t::make(index_t), 
-                                        get_offsets_field_name(tensor_type.format.levels[last_sparse_level].index)
+                                        get_offsets_field_name(tensor_type.format.levels[next_sparse_level].index)
                                     )
                                 ),
                                 start_expr
