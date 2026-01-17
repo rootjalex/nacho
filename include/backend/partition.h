@@ -9,10 +9,10 @@ namespace nacho {
 namespace backend {
 
 struct PartitionFunctionLowerer {
-    std::vector<TensorLowerer> operand_tensors;
+    std::map<std::string, TensorLowerer> &operand_tensors;
     std::vector<CIN> forall_list;
     // Lower the partitioning information from the CIN to the LLIR.
-    PartitionFunctionLowerer(const std::vector<TensorLowerer> &operand_tensors, const std::vector<CIN> &forall_list)
+    PartitionFunctionLowerer(std::map<std::string, TensorLowerer> &operand_tensors, const std::vector<CIN> &forall_list)
         : operand_tensors(operand_tensors), forall_list(forall_list) {}
 
     inline std::string get_partition_all_loops_string() {

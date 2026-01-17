@@ -7,6 +7,11 @@
 #include "Mutator.h"
 #include "Type.h"
 #include "Visitor.h"
+#include "Error.h"
+#include "Printer.h"
+#include "IRFwdDecl.h"
+#include "Frontend.h"
+
 
 namespace nacho {
 
@@ -99,5 +104,14 @@ struct Universe : SeqNode<Universe> {
 
     static const SeqEnum node_type = SeqEnum::Universe;
 };
+
+
+std::vector<std::string> get_tensors_in_seq(const Seq &seq);
+
+Seq simplify_seq(const Seq &seq);  
+
+Seq build_seq(const std::string &index, const Expr &expr);
+
+bool is_dense(const Seq &seq);
 
 } // namespace nacho

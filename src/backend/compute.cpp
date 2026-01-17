@@ -52,8 +52,8 @@ namespace backend {
         //     end_B_i = partitions_B.i_p[thread_id + 1];
         // }
         // TODO: end_B calculation might need some changing when non lowermost intersections (see spgemm.cu)
-        for(int i=0; i<operand_tensors.size(); i++) {
-            auto tensor = operand_tensors[i];
+        for(auto it : operand_tensors) {
+            auto tensor = it.second;
             for(int j=0;j<tensor.tensor_type.format.levels.size();j++) {
                 auto level = tensor.tensor_type.format.levels[j];
                 
@@ -132,13 +132,13 @@ namespace backend {
             }
         }
 
-        for(auto tensor: operand_tensors) {
+        for(auto it: operand_tensors) {
             auto last_forall = forall_list[forall_list.size()-1].as<Forall>();
-            if(tensor.tensor_type.format.level_exists(last_forall->idx)) {
+            if(it.second.tensor_type.format.level_exists(last_forall->idx)) {
                 stmts.emplace_back(
                     llir::BaseExpr::make(
                         llir::lIncrement::make(
-                            llir::lVar::make(index_t, get_iterator_name(tensor, last_forall->idx))
+                            llir::lVar::make(index_t, get_iterator_name(it.second, last_forall->idx))
                         )
                     )
                 );
@@ -166,12 +166,12 @@ namespace backend {
 
         for(auto tensor: operand_tensors) {
             args.emplace_back(llir::Function::Argument{
-                .mutating = false, .type = llir::Generic_t::make(tensor.get_struct_name()+"<index_t, value_t>"), .name = tensor.tensor_name
+                .mutating = false, .type = llir::Generic_t::make(tensor.second.get_struct_name()+"<index_t, value_t>"), .name = tensor.second.tensor_name
             });
         }
         for(auto tensor:operand_tensors) {
             args.emplace_back(llir::Function::Argument{
-                .mutating = true, .type = llir::Ptr_t::make(llir::Generic_t::make(tensor.get_index_struct_name()+"<index_t, value_t>")), .name = "partitions_"+tensor.tensor_name
+                .mutating = true, .type = llir::Ptr_t::make(llir::Generic_t::make(tensor.second.get_index_struct_name()+"<index_t, value_t>")), .name = "partitions_"+tensor.second.tensor_name
             });
         }
 
@@ -267,12 +267,12 @@ namespace backend {
 
         for(auto tensor: operand_tensors) {
             args.emplace_back(llir::Function::Argument{
-                .mutating = false, .type = llir::Generic_t::make(tensor.get_struct_name()+"<index_t, value_t>"), .name = tensor.tensor_name
+                .mutating = false, .type = llir::Generic_t::make(tensor.second.get_struct_name()+"<index_t, value_t>"), .name = tensor.second.tensor_name
             });
         }
         for(auto tensor:operand_tensors) {
             args.emplace_back(llir::Function::Argument{
-                .mutating = true, .type = llir::Ptr_t::make(llir::Generic_t::make(tensor.get_index_struct_name()+"<index_t, value_t>")), .name = "partitions_"+tensor.tensor_name
+                .mutating = true, .type = llir::Ptr_t::make(llir::Generic_t::make(tensor.second.get_index_struct_name()+"<index_t, value_t>")), .name = "partitions_"+tensor.second.tensor_name
             });
         }
 
