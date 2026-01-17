@@ -14,7 +14,7 @@ bool contains_inner_sum(const Expr &expr) {
     struct Checker : public Visitor {
         bool found = false;
 
-        void visit(const Sum *node) { found = true; }
+        void visit(const Sum *node) override { found = true; }
     };
 
     Checker checker;
@@ -99,7 +99,7 @@ struct BuildSeq : public Visitor {
             << "Index: " << index << " not found in: " << Expr(node);
         size_t level = std::distance(levels.begin(), it);
 
-        seq = Index::make(node->name, node->type.format, level);
+        seq = Index::make(node->name, node->type, level);
     }
 };
 
@@ -109,7 +109,7 @@ bool is_dense(const Seq &seq) {
 
         void visit(const Index *node) override {
             dense =
-                node->format.levels[node->level].format == LevelFormat::Dense;
+                node->type.format.levels[node->level].format == LevelFormat::Dense;
         }
 
         void visit(const Intersect *node) override {
@@ -168,7 +168,8 @@ Seq build_seq(const std::string &index, const Expr &expr) {
     BuildSeq builder(index);
     expr.accept(&builder);
     // TODO: break this out into a simplify or optimize pass?
-    return simplify_seq(builder.seq);
+    //return simplify_seq(builder.seq);
+    return builder.seq;
 }
 
 } // namespace

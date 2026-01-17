@@ -123,6 +123,16 @@ std::ostream &operator<<(std::ostream &os, const llir::lStmt &lstmt) {
     return os;
 }
 
+std::ostream &operator<<(std::ostream &os, llir::lType &ltype) {
+    if (ltype.defined()) {
+        Printer printer(os);
+        printer.print(ltype);
+    } else {
+        os << "(undef-ltype)";
+    }
+    return os;
+}
+
 void Printer::print(const Expr &expr) {
     ScopedValue<bool> old(implicit_parens, false);
     expr.accept(this);
@@ -192,12 +202,12 @@ void Printer::print_no_parens(const Seq &seq) {
 }
 
 void Printer::visit(const Index *node) {
-    os << node->format.levels[node->level].index;
+    os << node->type.format.levels[node->level].index;
     os << "_" << node->tensor;
     // Print dependency
     if (node->level != 0) {
         os << "[";
-        os << node->format.levels[node->level - 1].index;
+        os << node->type.format.levels[node->level - 1].index;
         os << "]";
     }
 }
@@ -302,7 +312,7 @@ void Printer::print(const llir::lType &ltype) { ltype.accept(this); }
 void Printer::visit(const llir::Generic_t *node) { os << node->name; }
 
 void Printer::visit(const llir::Int_t *node) {
-    os << "int" << node->bits << "_t";
+    os << "int" << std::to_string(node->bits) << "_t";
 }
 
 void Printer::visit(const llir::Float_t *node) {
@@ -330,6 +340,41 @@ void Printer::visit(const llir::Ptr_t *node) {
     os << "*";
 }
 
+void Printer::visit(const llir::Tuple_t *node) {
+    os << "tuple<";
+    for (size_t i = 0, e = node->types.size(); i < e; i++) {
+        if (i > 0) {
+            os << ", ";
+        }
+        print(node->types[i]);
+    }
+    os << ">";
+}
+
+void Printer::visit(const llir::Struct_t *node) {
+    if (!node->generics.empty()) {
+        os << "template<";
+        bool first = true;
+        for (const auto &g : node->generics) {
+            if (!first) {
+                os << ", ";
+            }
+            first = false;
+            os << "typename " << g;
+        }
+        os << ">\n";
+    }
+    os << "struct " << node->name << " {\n";
+    indent();
+    for (const auto &field : node->fields) {
+        print_indent();
+        print(field.second);
+        os << " " << field.first << ";\n";
+    }
+    dedent();
+    os << "};\n";
+}
+
 void Printer::print(const llir::lExpr &lexpr) {
     ScopedValue<bool> old(implicit_parens, false);
     lexpr.accept(this);
@@ -340,52 +385,88 @@ void Printer::print_no_parens(const llir::lExpr &lexpr) {
     lexpr.accept(this);
 }
 
-void Printer::visit(const llir::lBinOp *node) {
-    open();
-    print(node->a);
-    switch (node->op) {
+bool is_infix_op(const llir::lBinOp::Op op) {
+    switch (op) {
+    case llir::lBinOp::And:
+    case llir::lBinOp::Add:
+    case llir::lBinOp::Div:
+    case llir::lBinOp::Eq:
+    case llir::lBinOp::Leq:
+    case llir::lBinOp::Lt:
+    case llir::lBinOp::Mul:
+    case llir::lBinOp::Or:
+    case llir::lBinOp::Sub:
+        return true;
+    default: {
+        return false;
+    }
+    }
+}
+
+std::string get_op_string(const llir::lBinOp::Op op) {
+    switch (op) {
     case llir::lBinOp::And: {
-        os << " && ";
+        return " && ";
         break;
     }
     case llir::lBinOp::Add: {
-        os << " + ";
+        return " + ";
         break;
     }
     case llir::lBinOp::Div: {
-        os << " / ";
+        return " / ";
         break;
     }
     case llir::lBinOp::Eq: {
-        os << " == ";
+        return " == ";
         break;
     }
     case llir::lBinOp::Leq: {
-        os << " <= ";
+        return " <= ";
         break;
     }
     case llir::lBinOp::Lt: {
-        os << " < ";
+        return " < ";
         break;
     }
     case llir::lBinOp::Mul: {
-        os << " * ";
+        return " * ";
         break;
     }
     case llir::lBinOp::Or: {
-        os << " || ";
+        return " || ";
         break;
     }
     case llir::lBinOp::Sub: {
-        os << " - ";
+        return " - ";
         break;
     }
     default: {
         internal_error << "Unknown lBinOp::Op in printing.";
     }
     }
-    print(node->b);
-    close();
+}
+
+void Printer::visit(const llir::lBinOp *node) {
+    if (is_infix_op(node->op)) {
+        open();
+        print(node->a);
+        os << get_op_string(node->op);
+        print(node->b);
+        close();
+    } else if (node->op == llir::lBinOp::Load) {
+        print(node->a);
+        os << "[";
+        print_no_parens(node->b);
+        os << "]";
+    } else {
+        // prefix notation
+        os << get_op_string(node->op) << "(";
+        print_no_parens(node->a);
+        os << ", ";
+        print_no_parens(node->b);
+        os << ")";
+    }
 }
 
 void Printer::visit(const llir::lConst *node) {
@@ -393,14 +474,56 @@ void Printer::visit(const llir::lConst *node) {
     std::visit([&](auto &&v) { os << v; }, node->value);
 }
 
-void Printer::visit(const llir::lLoad *node) {
-    print(node->var);
+void Printer::visit(const llir::lBuild *node) {
+    // TODO: fix this to match C++!
+    open();
+    print(node->type);
+    os << "(";
+    for (size_t i = 0, e = node->values.size(); i < e; i++) {
+        if (i > 0) {
+            os << ", ";
+        }
+        print_no_parens(node->values[i]);
+    }
+    os << ")";
+}
+
+void Printer::visit(const llir::lFieldAccess *node) {
+    node->object.accept(this);
+    os << ".";
+    node->field.accept(this);
+}
+
+void Printer::visit(const llir::lArrayAccess *node) {
+    node->array.accept(this);
     os << "[";
-    print_no_parens(node->idx);
+    node->index.accept(this);
     os << "]";
 }
 
+void Printer::visit(const llir::lPtrAccess *node) {
+    node->ptr.accept(this);
+    os << "->";
+    node->index.accept(this);
+}
+
 void Printer::visit(const llir::lVar *node) { os << node->name; }
+
+void Printer::visit(const llir::lFunctionCall *node) {
+    os << node->function_name << "(";
+    for (size_t i = 0, e = node->args.size(); i < e; i++) {
+        if (i > 0) {
+            os << ", ";
+        }
+        print_no_parens(node->args[i]);
+    }
+    os << ")";
+}
+
+void Printer::visit(const llir::lIncrement *node) {
+    print_no_parens(node->var);
+    os << "++";
+}
 
 void Printer::print(const llir::lStmt &lstmt) { lstmt.accept(this); }
 
@@ -453,14 +576,9 @@ void Printer::visit(const llir::Sequence *node) {
 
 void Printer::visit(const llir::Store *node) {
     print_indent();
-    os << node->name;
-    if (node->index.defined()) {
-        os << "[";
-        print_no_parens(node->index);
-        os << "]";
-    }
+    print_no_parens(node->var);
     os << " = ";
-    print_no_parens(node->expr);
+    print_no_parens(node->value);
     os << ";\n";
 }
 
@@ -469,6 +587,39 @@ void Printer::visit(const llir::While *node) {
     os << "while (";
     print_no_parens(node->cond);
     os << "){\n";
+    indent();
+    print(node->body);
+    dedent();
+    print_indent();
+    os << "}\n";
+}
+
+void Printer::visit(const llir::BaseExpr *node) { 
+    print_indent();
+    print(node->expr); 
+
+    os << ";\n";
+}
+
+void Printer::visit(const llir::Break *node) {
+    print_indent();
+    os << "break";
+    os << ";\n";
+}
+
+void Printer::visit(const llir::For *node) {
+    print_indent();
+    os << "for (";
+    print(node->type);
+    os << " ";
+    os << node->name;
+    os << " = ";
+    print_no_parens(node->init);
+    os << "; ";
+    print_no_parens(node->end);
+    os << "; ";
+    print_no_parens(node->update);
+    os << ") {\n";
     indent();
     print(node->body);
     dedent();

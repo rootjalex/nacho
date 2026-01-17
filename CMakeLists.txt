@@ -62,12 +62,17 @@ target_sources(
     src/Compile.cpp
     src/Format.cpp
     src/Frontend.cpp
+    src/GeneratePartition.cpp
     src/Mutator.cpp
     src/Printer.cpp
     src/Seq.cpp
     src/Visitor.cpp
     src/llir/Function.cpp
     src/llir/LLIR.cpp
+    src/backend/compile.cpp
+    src/backend/partition.cpp
+    src/backend/tensor.cpp
+    src/backend/compute.cpp
 )
 
 target_sources(
@@ -79,6 +84,7 @@ target_sources(
     include/CIN.h
     include/Compile.h
     include/Frontend.h
+    include/GeneratePartition.h
     include/IntrusivePtr.h
     include/IRFwdDecl.h
     include/IRHandle.h
@@ -93,6 +99,10 @@ target_sources(
     include/Visitor.h
     include/llir/Function.h
     include/llir/LLIR.h
+    include/backend/partition.h
+    include/backend/compile.h
+    include/backend/tensor.h
+    include/backend/compute.h
 )
 
 if (nacho_ENABLE_WARNINGS)

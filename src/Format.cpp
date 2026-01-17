@@ -7,10 +7,6 @@
 
 namespace nacho {
 
-namespace {
-
-using OrderMap = std::unordered_map<std::string, size_t>;
-
 // Map index -> position for fast lookup
 OrderMap index_order_map(const std::vector<Level> &levels) {
     OrderMap pos;
@@ -19,6 +15,9 @@ OrderMap index_order_map(const std::vector<Level> &levels) {
     }
     return pos;
 }
+namespace {
+
+
 
 std::set<std::string> extract_indices(const std::set<Level> &S) {
     std::set<std::string> out;
@@ -153,12 +152,53 @@ make_format(const Format &a, const Format &b,
 
 } // namespace
 
+int Format::get_prev_sparse_level(int curr_level) const {
+    for (int i = curr_level - 1; i >= 0; --i) {
+        if (is_sparse_format(levels[i].format)) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+int Format::get_next_sparse_level(int curr_level) const {
+    for (size_t i = curr_level + 1; i < levels.size(); ++i) {
+        if (is_sparse_format(levels[i].format)) {
+            return static_cast<int>(i);
+        }
+    }
+    return static_cast<int>(levels.size());
+}
+
+int Format::get_last_sparse_level() const {
+    for (int i = static_cast<int>(levels.size()) - 1; i >= 0; --i) {
+        if (is_sparse_format(levels[i].format)) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+int Format::get_level_order(const std::string &idx) const {
+    for (size_t i = 0; i < levels.size(); ++i) {
+        if (levels[i].index == idx) {
+            return static_cast<int>(i);
+        }
+    }
+    return -1;
+}
+
 LevelFormat Format::lvlfmt_of(const std::string &idx) const {
     auto all = get_all_levels();
     auto it = std::find_if(all.begin(), all.end(),
                            [&](const Level &lv) { return lv.index == idx; });
     internal_assert(it != all.end());
     return it->format;
+}
+
+bool Format::level_exists(const std::string &idx) const {
+    return std::any_of(levels.begin(), levels.end(),
+                       [&](const Level &lvl) { return lvl.index == idx; });
 }
 
 bool Format::is_bc_lvl(const std::string &idx) const {

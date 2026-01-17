@@ -9,10 +9,11 @@ namespace llir {
 
 // Represents a callable (host | device) function.
 // Should be able to represent basically any C++ function.
-struct Function {
+struct Function : lStmtNode<Function> {
     std::vector<std::string> generics;
 
     enum Attribute {
+        global,
         device,
         inline_,
         host,
@@ -34,7 +35,9 @@ struct Function {
 
     lStmt body;
 
-    void print(std::ostream &os) const;
+    static lStmt make(std::vector<std::string> generics, std::vector<Attribute> attributes, std::vector<Argument> args, lType ret_type, std::string name, lStmt body);
+
+    static const lStmtEnum node_type = lStmtEnum::Function;
 };
 
 } // namespace llir

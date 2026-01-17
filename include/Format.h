@@ -9,8 +9,12 @@ namespace nacho {
 enum class LevelFormat {
     Dense,
     Compressed,
-    // TODO: Coordinate, Hash, etc
+    // TODO: Coordinate, Hash, etc (Change below function too when adding more sparse types)
 };
+
+inline bool is_sparse_format(const LevelFormat lvl_fmt) {
+    return lvl_fmt == LevelFormat::Compressed;
+}
 
 struct Level {
     std::string index;
@@ -27,7 +31,8 @@ struct Level {
         return index == other.index && format == other.format;
     }
 };
-
+using OrderMap = std::unordered_map<std::string, size_t>;
+OrderMap index_order_map(const std::vector<Level> &levels);
 struct Format {
     std::vector<Level> levels;
     std::set<Level> bc_levels;
@@ -49,9 +54,13 @@ struct Format {
             return copy;
         }
     }
+    int get_prev_sparse_level(int curr_level) const;   
+    int get_next_sparse_level(int curr_level) const;
+    int get_last_sparse_level() const;
+    int get_level_order(const std::string &idx) const;
 
     LevelFormat lvlfmt_of(const std::string &idx) const;
-
+    bool level_exists(const std::string &idx) const;
     bool is_bc_lvl(const std::string &idx) const;
 };
 

@@ -18,19 +18,19 @@ struct lStmt;
 
 // Types (for declarations)
 // TODO: make this complete
-enum class lTypeEnum {
-    Generic_t,
-    Float_t,
-    Int_t,
-    Ptr_t,
-};
+enum class lTypeEnum { Generic_t, Float_t, Int_t, Ptr_t, Tuple_t, Struct_t };
 
 // Expressions
 enum class lExprEnum {
     lBinOp,
     lConst,
     lVar,
-    lLoad,
+    lBuild,
+    lArrayAccess,
+    lFieldAccess,
+    lPtrAccess,
+    lFunctionCall,
+    lIncrement
 };
 
 // Statements
@@ -41,6 +41,10 @@ enum class lStmtEnum {
     Sequence,
     Store,
     While,
+    Function,
+    BaseExpr,
+    Break,
+    For
 };
 
 using IRlTypeNode = IRNode<lType, lTypeEnum>;
@@ -108,6 +112,9 @@ struct lExpr : public IRHandle<IRlExprNode> {
     const BaselExprNode *get() const { return (const BaselExprNode *)ptr; }
 
     // TODO: implement copy/move semantics!
+
+    // Overloads a[b] operation.
+    lExpr operator[](const lExpr &idx);
 };
 
 // template <typename T>
@@ -180,6 +187,26 @@ struct Ptr_t : lTypeNode<Ptr_t> {
     static const lTypeEnum node_type = lTypeEnum::Ptr_t;
 };
 
+struct Tuple_t : lTypeNode<Tuple_t> {
+    std::vector<lType> types;
+
+    static lType make(std::vector<lType> types);
+
+    static const lTypeEnum node_type = lTypeEnum::Tuple_t;
+};
+
+struct Struct_t : lTypeNode<Struct_t> {
+    std::string name;
+    std::vector<std::string> generics;
+    std::vector<std::pair<std::string, lType>> fields;
+
+    static lType make(std::string name,
+                      std::vector<std::pair<std::string, lType>> fields,
+                      std::vector<std::string> generics);
+
+    static const lTypeEnum node_type = lTypeEnum::Struct_t;
+};
+
 struct lBinOp : lExprNode<lBinOp> {
     enum Op {
         And,
@@ -187,6 +214,7 @@ struct lBinOp : lExprNode<lBinOp> {
         Div,
         Eq,
         Leq,
+        Load,
         Lt,
         Mul,
         Or,
@@ -207,23 +235,52 @@ lExpr operator-(lExpr a, lExpr b);
 lExpr operator*(lExpr a, lExpr b);
 lExpr operator/(lExpr a, lExpr b);
 lExpr operator<(lExpr a, lExpr b);
+lExpr operator>(lExpr a, lExpr b);
 lExpr operator<=(lExpr a, lExpr b);
+lExpr operator>=(lExpr a, lExpr b);
+lExpr operator&&(lExpr a, lExpr b);
 
 struct lConst : lExprNode<lConst> {
-    std::variant<int64_t, uint64_t, double> value;
+    std::variant<int64_t, uint64_t, double, bool> value;
 
-    static lExpr make(std::variant<int64_t, uint64_t, double> value);
+    static lExpr make(std::variant<int64_t, uint64_t, double, bool> value);
 
     static const lExprEnum node_type = lExprEnum::lConst;
 };
 
-struct lLoad : lExprNode<lLoad> {
-    lExpr var;
-    lExpr idx;
+struct lBuild : lExprNode<lBuild> {
+    std::vector<lExpr> values;
 
-    static lExpr make(lExpr var, lExpr idx);
+    static lExpr make(lType type, std::vector<lExpr> values);
 
-    static const lExprEnum node_type = lExprEnum::lLoad;
+    static const lExprEnum node_type = lExprEnum::lBuild;
+};
+
+struct lArrayAccess : lExprNode<lArrayAccess> {
+    lExpr array;
+    lExpr index;
+
+    static lExpr make(lExpr array, lExpr index);
+
+    static const lExprEnum node_type = lExprEnum::lArrayAccess;
+};
+
+struct lFieldAccess : lExprNode<lFieldAccess> {
+    lExpr object;
+    lExpr field;
+
+    static lExpr make(lExpr object, lExpr field);
+
+    static const lExprEnum node_type = lExprEnum::lFieldAccess;
+};
+
+struct lPtrAccess : lExprNode<lPtrAccess> {
+    lExpr ptr;
+    lExpr index;
+
+    static lExpr make(lExpr ptr, lExpr index);
+
+    static const lExprEnum node_type = lExprEnum::lPtrAccess;
 };
 
 struct lVar : lExprNode<lVar> {
@@ -232,6 +289,23 @@ struct lVar : lExprNode<lVar> {
     static lExpr make(lType type, std::string name);
 
     static const lExprEnum node_type = lExprEnum::lVar;
+};
+
+struct lFunctionCall : lExprNode<lFunctionCall> {
+    std::string function_name;
+    std::vector<lExpr> args;
+
+    static lExpr make(std::string function_name, std::vector<lExpr> args);
+
+    static const lExprEnum node_type = lExprEnum::lFunctionCall;
+};
+
+struct lIncrement : lExprNode<lIncrement> {
+    lExpr var;
+
+    static lExpr make(lExpr var);
+
+    static const lExprEnum node_type = lExprEnum::lIncrement;
 };
 
 struct Declare : lStmtNode<Declare> {
@@ -263,6 +337,12 @@ struct Return : lStmtNode<Return> {
     static const lStmtEnum node_type = lStmtEnum::Return;
 };
 
+struct Break : lStmtNode<Break> {
+    static lStmt make();
+
+    static const lStmtEnum node_type = lStmtEnum::Break;
+};
+
 struct Sequence : lStmtNode<Sequence> {
     std::vector<lStmt> stmts;
 
@@ -272,13 +352,10 @@ struct Sequence : lStmtNode<Sequence> {
 };
 
 struct Store : lStmtNode<Store> {
-    std::string name;
-    // TODO: handle more general write locations (e.g., field writes).
-    lExpr index; // possibly empty
-    lExpr expr;
+    lExpr var;
+    lExpr value;
 
-    static lStmt make(std::string name, lExpr expr);
-    static lStmt make(std::string name, lExpr index, lExpr expr);
+    static lStmt make(lExpr var, lExpr value);
 
     static const lStmtEnum node_type = lStmtEnum::Store;
 };
@@ -290,6 +367,26 @@ struct While : lStmtNode<While> {
     static lStmt make(lExpr cond, lStmt body);
 
     static const lStmtEnum node_type = lStmtEnum::While;
+};
+
+struct BaseExpr : lStmtNode<BaseExpr> {
+    lExpr expr;
+    static lStmt make(lExpr expr);
+
+    static const lStmtEnum node_type = lStmtEnum::BaseExpr;
+};
+
+struct For : lStmtNode<For> {
+    lType type;
+    std::string name;
+    lExpr init;
+    lExpr end;
+    lExpr update;
+    lStmt body;
+
+    static lStmt make(lType type, std::string name, lExpr init, lExpr end, lExpr update, lStmt body);
+
+    static const lStmtEnum node_type = lStmtEnum::For;
 };
 
 } // namespace llir

@@ -38,12 +38,19 @@ struct Generic_t;
 struct Int_t;
 struct Float_t;
 struct Ptr_t;
+struct Tuple_t;
+struct Struct_t;
 
 struct lExpr;
 struct lBinOp;
 struct lConst;
-struct lLoad;
+struct lBuild;
+struct lArrayAccess;
+struct lFieldAccess;
+struct lPtrAccess;
 struct lVar;
+struct lFunctionCall;
+struct lIncrement;
 
 struct lStmt;
 struct Declare;
@@ -52,8 +59,10 @@ struct Return;
 struct Sequence;
 struct Store;
 struct While;
-
+struct For;
 struct Function;
+struct BaseExpr;
+struct Break;
 
 } // namespace llir
 

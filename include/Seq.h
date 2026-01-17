@@ -25,6 +25,8 @@ using IRSeqNode = IRNode<Seq, SeqEnum>;
 struct BaseSeqNode : public IRSeqNode {
     BaseSeqNode(SeqEnum t) : IRSeqNode(t) {}
     virtual Seq mutate_Seq(Mutator *m) const = 0;
+
+    bool is_sparse;
 };
 
 template <typename T>
@@ -66,10 +68,10 @@ Seq SeqNode<T>::mutate_Seq(Mutator *m) const {
 
 struct Index : SeqNode<Index> {
     std::string tensor;
-    Format format;
+    TensorType type;
     size_t level;
 
-    static Seq make(std::string tensor, Format format, size_t level);
+    static Seq make(std::string tensor, TensorType type, size_t level);
 
     static const SeqEnum node_type = SeqEnum::Index;
 };
