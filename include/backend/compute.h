@@ -10,12 +10,12 @@ namespace nacho {
 namespace backend {
 
     struct ComputeFunctionLowerer {
-        std::vector<TensorLowerer> operand_tensors;
+        std::map<std::string, TensorLowerer> operand_tensors;
         TensorLowerer result_tensor;
         std::vector<CIN> forall_list;
         CIN cin;
 
-        ComputeFunctionLowerer(const std::vector<TensorLowerer> &operand_tensors, const TensorLowerer &result_tensor, const std::vector<CIN> &forall_list, const CIN &cin)
+        ComputeFunctionLowerer(const std::map<std::string, TensorLowerer> &operand_tensors, const TensorLowerer &result_tensor, const std::vector<CIN> &forall_list, const CIN &cin)
             : operand_tensors(operand_tensors), result_tensor(result_tensor), forall_list(forall_list), cin(cin) {}
 
         inline std::string get_all_loops_string() {

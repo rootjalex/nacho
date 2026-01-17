@@ -8,20 +8,21 @@
 #include "backend/tensor.h"
 #include "backend/compute.h"
 #include "Printer.h"
+#include <map>
 
 namespace nacho {
 namespace backend {
 
     CINLowerer::CINLowerer(CIN cin, std::ostream &os) : cin(std::move(cin)), printer(os) {
         struct TensorVisitor : Visitor {
-            std::vector<TensorLowerer> &operand_tensors;
+            std::map<std::string, TensorLowerer> &operand_tensors;
             TensorLowerer &result_tensor;
-            TensorVisitor(std::vector<TensorLowerer> &operand_tensors, TensorLowerer &result_tensor)
+            TensorVisitor(std::map<std::string, TensorLowerer> &operand_tensors, TensorLowerer &result_tensor)
                 : operand_tensors(operand_tensors), result_tensor(result_tensor) {}
 
             void add_tensor(std::string str, TensorType type) {
                 TensorLowerer lowerer(str, type);
-                operand_tensors.push_back(lowerer);
+                operand_tensors[str] = lowerer;
             }
 
             void visit(const cTensor *node) override {
@@ -84,19 +85,19 @@ namespace backend {
     // lower_struct_definitions loweres all the initial struct definitions for the program
     // this includes tensor struct definitions for both the operand and result tensors
     void CINLowerer::lower_struct_definitions() {
-        for (auto &lowerer : operand_tensors) {
-            printer.print(lowerer.lower_tensor_struct_definition());
-            printer.print(lowerer.lower_tensor_index_definition());
+        for (auto it : operand_tensors) {
+            printer.print(it.second.lower_tensor_struct_definition());
+            printer.print(it.second.lower_tensor_index_definition());
         }
         printer.print(result_tensor.lower_tensor_struct_definition());
     }
 
     void CINLowerer::lower_work_functions() {
         auto loop_order = get_loop_order();
-        for (auto &lowerer : operand_tensors) {
+        for (auto it : operand_tensors) {
 
             for (int i=0; i<loop_order.size(); i++) {
-                auto work_function = lowerer.lower_work_function(loop_order, i);
+                auto work_function = it.second.lower_work_function(loop_order, i);
                 printer.print(work_function);
             }
             

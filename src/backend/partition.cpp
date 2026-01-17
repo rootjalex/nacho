@@ -28,14 +28,14 @@ namespace backend {
 
 
 
-        for(auto tensor: operand_tensors) {
+        for(auto it: operand_tensors) {
             args.emplace_back(llir::Function::Argument{
-                .mutating = false, .type = llir::Generic_t::make(tensor.get_struct_name()+"<index_t, value_t>"), .name = tensor.tensor_name
+                .mutating = false, .type = llir::Generic_t::make(it.second.get_struct_name()+"<index_t, value_t>"), .name = it.second.tensor_name
             });
         }
-        for(auto tensor:operand_tensors) {
+        for(auto it:operand_tensors) {
             args.emplace_back(llir::Function::Argument{
-                .mutating = true, .type = llir::Ptr_t::make(llir::Generic_t::make(tensor.get_index_struct_name()+"<index_t, value_t>")), .name = "partitions_"+tensor.tensor_name
+                .mutating = true, .type = llir::Ptr_t::make(llir::Generic_t::make(it.second.get_index_struct_name()+"<index_t, value_t>")), .name = "partitions_"+it.second.tensor_name
             });
         }
 
@@ -77,7 +77,8 @@ namespace backend {
 
         // block_stmts for if count == 0 case
         std::vector<llir::lStmt> block_stmts;
-        for(auto tensor: operand_tensors) {
+        for(auto it: operand_tensors) {
+            auto tensor = it.second;
             for(int i=0; i< tensor.tensor_type.format.levels.size(); i++) {
                 std::string name = tensor.tensor_type.format.levels[i].index;
                 if(is_sparse_format(tensor.tensor_type.format.levels[i].format)) {
@@ -119,7 +120,8 @@ namespace backend {
 
         // block_stmts for if count >= total_work case
         block_stmts = std::vector<llir::lStmt>{};
-        for(auto tensor: operand_tensors) {
+        for(auto it: operand_tensors) {
+            auto tensor = it.second;
             for(int i=0; i< tensor.tensor_type.format.levels.size(); i++) {
                 std::string field_name = tensor.tensor_type.format.levels[i].index;
                 std::string field_max_value = tensor.get_size_field_name(field_name);
@@ -154,8 +156,8 @@ namespace backend {
         );
         llir::lExpr total_work_expr = llir::lFieldAccess::make(
             llir::lVar::make(
-                llir::Ptr_t::make(llir::Generic_t::make(operand_tensors[0].get_struct_name())),
-                operand_tensors[0].tensor_name
+                llir::Ptr_t::make(llir::Generic_t::make(operand_tensors.begin()->second.get_struct_name())),
+                operand_tensors.begin()->second.tensor_name
             ),
             llir::lVar::make(
                 index_t,
@@ -163,14 +165,14 @@ namespace backend {
             )
         );
 
-        for(int i=1; i<operand_tensors.size(); i++) {
+        for(auto it : operand_tensors) {
             total_work_expr = llir::lBinOp::make(
                 llir::lBinOp::Add,
                 total_work_expr,
                 llir::lFieldAccess::make(
                     llir::lVar::make(
-                        llir::Ptr_t::make(llir::Generic_t::make(operand_tensors[i].get_struct_name())),
-                        operand_tensors[i].tensor_name
+                        llir::Ptr_t::make(llir::Generic_t::make(it.second.get_struct_name())),
+                        it.second.tensor_name
                     ),
                     llir::lVar::make(
                         index_t,
@@ -212,21 +214,21 @@ namespace backend {
 
 
         for(int i=0;i<forall_list.size();i++) {
-            CIN forall = forall_list[i];
-            std::string forall_idx = forall.as<Forall>()->idx;
-            
+            const Forall* forall = forall_list[i].as<Forall>();
+            std::string forall_idx = forall->idx;
+
             std::vector<TensorLowerer> tensors_with_curr_dim;
             std::vector<TensorLowerer> tensors_with_curr_dim_sparse;
-            for(auto tensor : operand_tensors) {
-                if(tensor.tensor_type.format.level_exists(forall_idx)){
-                    tensors_with_curr_dim.push_back(tensor);
-                    if(is_sparse_format(tensor.tensor_type.format.lvlfmt_of(forall_idx))) {
-                        tensors_with_curr_dim_sparse.push_back(tensor);
+            for(auto it : operand_tensors) {
+                if(it.second.tensor_type.format.level_exists(forall_idx)){
+                    tensors_with_curr_dim.push_back(it.second);
+                    if(is_sparse_format(it.second.tensor_type.format.lvlfmt_of(forall_idx))) {
+                        tensors_with_curr_dim_sparse.push_back(it.second);
                     }
                 } 
             }
 
-            // internal_assert(tensors_with_curr_dim.size() > 0);
+            
 
             llir::lExpr start_var = llir::lVar::make(index_t, "start_"+forall_idx);
             llir::lExpr end_var = llir::lVar::make(index_t, "end_"+forall_idx);
@@ -447,8 +449,8 @@ namespace backend {
                 )
             );
 
-            for(auto tensor : operand_tensors) {
-
+            for(auto it : operand_tensors) {
+                TensorLowerer tensor = it.second;
                 std::vector<llir::lExpr> work_args;
                 work_args.emplace_back(llir::lVar::make(llir::Generic_t::make(tensor.get_struct_name()), tensor.tensor_name));
                 for(int j=0;j<i;j++){
@@ -478,22 +480,22 @@ namespace backend {
                     }
                 }
 
+                // pass broadcast sizes for all dimensions after current forall which are not present in the tensor
                 for(int j=i+1;j<forall_list.size();j++){
                     std::string forall_j_idx = forall_list[j].as<Forall>()->idx;
                     if(!tensor.tensor_type.format.level_exists(forall_j_idx)) {
-                        // pass end of the dimension for all foralls after current forall
-
+                        
                         auto it = std::find_if(operand_tensors.begin(), operand_tensors.end(), [&](const auto& op_tensor) {
-                            return op_tensor.tensor_type.format.level_exists(forall_j_idx);
+                            return op_tensor.second.tensor_type.format.level_exists(forall_j_idx);
                         });
                         internal_assert(it != operand_tensors.end()) << "Expected operand tensor to exist";
 
                         work_args.emplace_back(
                             llir::lFieldAccess::make(
-                                llir::lVar::make(llir::Generic_t::make(it->get_struct_name()), it->tensor_name),
+                                llir::lVar::make(llir::Generic_t::make(it->second.get_struct_name()), it->second.tensor_name),
                                 llir::lVar::make(
                                     index_t,
-                                    it->get_size_field_name(forall_j_idx)
+                                    it->second.get_size_field_name(forall_j_idx)
                                 )
                             )
                         );
@@ -518,7 +520,8 @@ namespace backend {
 
             // store calculated paritions into partition struct if needed partition is found.
             std::vector<llir::lStmt> store_partition_stmts;
-            for(auto tensor : operand_tensors) {
+            for(auto it : operand_tensors) {
+                TensorLowerer tensor = it.second;
                 if(tensor.tensor_type.format.level_exists(forall_idx)) {
                     bool is_sparse = is_sparse_format(tensor.tensor_type.format.lvlfmt_of(forall_idx));
                     store_partition_stmts.emplace_back(
@@ -564,7 +567,7 @@ namespace backend {
                         llir::lBinOp::make(
                             llir::lBinOp::Leq,
                             total_work_var,
-                            llir::lVar::make(index_t, "count")
+                            llir::lVar::make(index_t, "rem_count")
                         ),
                         llir::Sequence::make({
                             llir::Store::make(

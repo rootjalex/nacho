@@ -7,6 +7,7 @@
 #include "Type.h"
 #include "backend/tensor.h"
 #include <string>
+#include <map>
 
 
 namespace nacho {
@@ -17,7 +18,7 @@ namespace backend {
             CIN cin;
             Printer printer;
             TensorLowerer result_tensor;
-            std::vector<TensorLowerer> operand_tensors;
+            std::map<std::string, TensorLowerer> operand_tensors;
             CINLowerer(CIN cin, std::ostream &os);
 
             std::vector<std::string> get_loop_order();
