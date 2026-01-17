@@ -6,6 +6,7 @@
 #include "Format.h"
 #include "Type.h"
 #include "backend/tensor.h"
+#include "backend/compute.h"
 #include "Printer.h"
 
 namespace nacho {
@@ -77,7 +78,7 @@ namespace backend {
     void CINLowerer::lower_cin() {
         this->lower_struct_definitions();
         this->lower_work_functions();
-        //this->lower_partition_function();
+        this->lower_innermost_sparse_intersection();
     }
 
     // lower_struct_definitions loweres all the initial struct definitions for the program
@@ -102,12 +103,17 @@ namespace backend {
         }
     }
 
-    void CINLowerer::lower_partition_function() {
+    void CINLowerer::lower_innermost_sparse_intersection() {
         internal_assert(is_innermost_sparse_intersection()) << "CIN which are not innermost sparse intersection are not supported";
 
         PartitionFunctionLowerer partition_lowerer(operand_tensors, get_forall_list());
 
-        printer.print(partition_lowerer.lower_innermost_sparse_intersection());
+        printer.print(partition_lowerer.lower_partition_kernel_for_innermost_sparse_intersection());
+
+        ComputeFunctionLowerer compute_lowerer(operand_tensors, result_tensor, get_forall_list(), cin);
+        printer.print(compute_lowerer.lower_result_per_thread_count_struct());
+        printer.print(compute_lowerer.lower_precompute_function_for_innermost_sparse_intersection());
+        printer.print(compute_lowerer.lower_compute_function_for_innermost_sparse_intersection());
     }
 
     // Check if the CIN represents an innermost sparse intersection

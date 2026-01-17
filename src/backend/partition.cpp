@@ -8,7 +8,7 @@
 namespace nacho {
 namespace backend {
 
-    llir::lStmt PartitionFunctionLowerer::lower_innermost_sparse_intersection() {
+    llir::lStmt PartitionFunctionLowerer::lower_partition_kernel_for_innermost_sparse_intersection() {
 
         llir::lType index_t = llir::Generic_t::make("index_t");
         llir::lType value_t = llir::Generic_t::make("value_t");

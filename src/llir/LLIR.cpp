@@ -181,6 +181,13 @@ lExpr lFunctionCall::make(std::string function_name, std::vector<lExpr> args) {
     return node;
 }
 
+lExpr lIncrement::make(lExpr var) {
+    internal_assert(var.defined()) << "Undefined var in lIncrement::make()";
+    lIncrement *node = new lIncrement;
+    node->var = std::move(var);
+    return node;
+}
+
 lStmt Declare::make(lType type, std::string name, lExpr init) {
     internal_assert(!name.empty()) << "Cannot make Declare with empty name.";
     internal_assert(init.defined())
@@ -256,6 +263,24 @@ lStmt BaseExpr::make(lExpr expr) {
 
 lStmt Break::make() {
     Break *node = new Break;
+    return node;
+}
+
+lStmt For::make(lType type, std::string name, lExpr init, lExpr end, lExpr update, lStmt body) {
+    internal_assert(type.defined()) << "Undefined type in For::make()";
+    internal_assert(!name.empty()) << "Empty name in For::make()";
+    internal_assert(init.defined()) << "Undefined init in For::make()";
+    internal_assert(end.defined()) << "Undefined end in For::make()";
+    internal_assert(update.defined()) << "Undefined update in For::make()";
+    internal_assert(body.defined()) << "Undefined body in For::make()";
+
+    For *node = new For;
+    node->type = std::move(type);
+    node->name = std::move(name);
+    node->init = std::move(init);
+    node->end = std::move(end);
+    node->update = std::move(update);
+    node->body = std::move(body);
     return node;
 }
 

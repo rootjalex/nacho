@@ -24,7 +24,7 @@ namespace backend {
             std::vector<CIN> get_forall_list();
             void lower_cin();
             void lower_struct_definitions();
-            void lower_partition_function();
+            void lower_innermost_sparse_intersection();
             void lower_work_functions();
             // is_innermost_sparse_intersection checks if the given CIN represents an innermost sparse intersection. 
             // this also returns true if the CIN does not have any sparse intersection.

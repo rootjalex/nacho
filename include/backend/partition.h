@@ -25,7 +25,7 @@ struct PartitionFunctionLowerer {
     inline std::string get_partition_function_name() {
         return  "partition_" + get_partition_all_loops_string() + "_kernel";
     }
-    llir::lStmt lower_innermost_sparse_intersection();
+    llir::lStmt lower_partition_kernel_for_innermost_sparse_intersection();
 
 };
 

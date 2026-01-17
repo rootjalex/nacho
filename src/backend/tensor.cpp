@@ -64,7 +64,7 @@ namespace backend {
     llir::lExpr TensorLowerer::get_offset_expression_for_next_sparse(
         int dim_level_start, int dim_level_end, bool upper_bound, bool use_field_access, llir::lExpr field_access_var) {
             llir::lType index_t = llir::Generic_t::make("index_t");
-
+            //std::cout<<"dim_level_start: "<<dim_level_start<<", dim_level_end: "<<dim_level_end<<std::endl;
             if(dim_level_end<0) {
                 return llir::lConst::make((int64_t)0);
             }
@@ -281,7 +281,7 @@ namespace backend {
 
         // Body of the Work Function has to traverse down the sparse dimensions from the last sparse dimension
         //  to calculate the number of non zeros that are being iterated on 
-
+        //std::cout<<"last_level: "<<last_level<<", last_sparse_level: "<<last_sparse_level<<std::endl;
         llir::lExpr count_expr;
         // We need to iterate on all the nonzeros if last_level == -1
        if(last_level == -1) {
@@ -356,7 +356,7 @@ namespace backend {
                         llir::lConst::make((int64_t)0);
                 }
             } else {
-                start_expr = get_offset_expression_for_next_sparse(0, last_level, false);
+                start_expr = get_offset_expression_for_next_sparse(last_sparse_level, last_level, false);
             }
 
             end_expr = get_offset_expression_for_next_sparse(last_sparse_level, last_level, true);

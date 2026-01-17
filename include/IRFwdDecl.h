@@ -50,6 +50,7 @@ struct lFieldAccess;
 struct lPtrAccess;
 struct lVar;
 struct lFunctionCall;
+struct lIncrement;
 
 struct lStmt;
 struct Declare;
@@ -58,6 +59,7 @@ struct Return;
 struct Sequence;
 struct Store;
 struct While;
+struct For;
 struct Function;
 struct BaseExpr;
 struct Break;

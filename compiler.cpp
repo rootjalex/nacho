@@ -63,16 +63,44 @@ void test() {
     std::cout << compile_to_cin(z_ij) << "\n";
     nacho::backend::CINLowerer(compile_to_cin(z_ij), std::cout).lower_cin();
 
-    z_ij = (a_ij + b_ij) * (c_ij + d_ij);
-    std::cout << z_ij << "\n";
-    std::cout << compile_to_cin(z_ij) << "\n";
-    nacho::backend::CINLowerer(compile_to_cin(z_ij), std::cout).lower_cin();
-    std::cout << "\n\n";
+    // z_ij = (a_ij + b_ij) * (c_ij + d_ij);
+    // std::cout << z_ij << "\n";
+    // std::cout << compile_to_cin(z_ij) << "\n";
+    // nacho::backend::CINLowerer(compile_to_cin(z_ij), std::cout).lower_cin();
+    // std::cout << "\n\n";
 
-    Expr z = (a_i + b_i + c_i) * d_i;
-    std::cout << z << "\n";
-    std::cout << compile_to_cin(z) << "\n";
-    nacho::backend::CINLowerer(compile_to_cin(z), std::cout).lower_cin();
+    // Expr z = (a_i + b_i + c_i) * d_i;
+    // std::cout << z << "\n";
+    // std::cout << compile_to_cin(z) << "\n";
+    // nacho::backend::CINLowerer(compile_to_cin(z), std::cout).lower_cin();
+
+    Format sdssds = Format::ordered({
+        {"i", LevelFormat::Compressed},
+        {"j", LevelFormat::Dense},
+        {"k", LevelFormat::Compressed},
+        {"l", LevelFormat::Compressed},
+        {"m", LevelFormat::Dense},
+        {"n", LevelFormat::Compressed}
+    });
+
+    Format ssds = Format::ordered({
+        {"i", LevelFormat::Compressed},
+        {"k", LevelFormat::Compressed},
+        {"l", LevelFormat::Dense},
+        {"n", LevelFormat::Compressed}
+    });
+
+    TensorType ssds_f32 = TensorType(ssds, dType::Float32); 
+    TensorType sdssds_f32 = TensorType(sdssds, dType::Float32);
+
+    Expr A_ijklmn = Tensor::make(sdssds_f32, "A");
+    Expr B_ikln = Tensor::make(ssds_f32, "B");
+
+    Expr C_ijklmn = A_ijklmn + B_ikln;
+    std::cout << C_ijklmn << "\n";
+    std::cout << compile_to_cin(C_ijklmn) << "\n";
+    nacho::backend::CINLowerer(compile_to_cin(C_ijklmn), std::cout).lower_cin();
+    std::cout << "\n\n";
 }
 
 void test_vec() {
@@ -294,7 +322,7 @@ int main(int argc, char **argv) {
     // test_format_inf();
      //test_vec();
      //spgemm();
-    sss_s_s();
+    //sss_s_s();
     // make_binary_search();
     //make_binary_partition();
 

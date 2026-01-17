@@ -128,6 +128,10 @@ void Visitor::visit(const llir::lFunctionCall *node) {
     }
 }
 
+void Visitor::visit(const llir::lIncrement *node) {
+    node->var.accept(this);
+}
+
 void Visitor::visit(const llir::Declare *node) { node->init.accept(this); }
 
 void Visitor::visit(const llir::IfElse *node) {
@@ -167,5 +171,13 @@ void Visitor::visit(const llir::Function *node) {
 void Visitor::visit(const llir::BaseExpr *node) { node->expr.accept(this); }
 
 void Visitor::visit(const llir::Break *node) { (void)node; }
+
+void Visitor::visit(const llir::For *node) {
+    node->type.accept(this);
+    node->init.accept(this);
+    node->end.accept(this);
+    node->update.accept(this);
+    node->body.accept(this);
+}
 
 } // namespace nacho

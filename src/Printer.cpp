@@ -520,6 +520,11 @@ void Printer::visit(const llir::lFunctionCall *node) {
     os << ")";
 }
 
+void Printer::visit(const llir::lIncrement *node) {
+    print_no_parens(node->var);
+    os << "++";
+}
+
 void Printer::print(const llir::lStmt &lstmt) { lstmt.accept(this); }
 
 void Printer::visit(const llir::Declare *node) {
@@ -600,6 +605,26 @@ void Printer::visit(const llir::Break *node) {
     print_indent();
     os << "break";
     os << ";\n";
+}
+
+void Printer::visit(const llir::For *node) {
+    print_indent();
+    os << "for (";
+    print(node->type);
+    os << " ";
+    os << node->name;
+    os << " = ";
+    print_no_parens(node->init);
+    os << "; ";
+    print_no_parens(node->end);
+    os << "; ";
+    print_no_parens(node->update);
+    os << ") {\n";
+    indent();
+    print(node->body);
+    dedent();
+    print_indent();
+    os << "}\n";
 }
 
 } // namespace nacho

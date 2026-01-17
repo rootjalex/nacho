@@ -29,7 +29,8 @@ enum class lExprEnum {
     lArrayAccess,
     lFieldAccess,
     lPtrAccess,
-    lFunctionCall
+    lFunctionCall,
+    lIncrement
 };
 
 // Statements
@@ -42,7 +43,8 @@ enum class lStmtEnum {
     While,
     Function,
     BaseExpr,
-    Break
+    Break,
+    For
 };
 
 using IRlTypeNode = IRNode<lType, lTypeEnum>;
@@ -298,6 +300,14 @@ struct lFunctionCall : lExprNode<lFunctionCall> {
     static const lExprEnum node_type = lExprEnum::lFunctionCall;
 };
 
+struct lIncrement : lExprNode<lIncrement> {
+    lExpr var;
+
+    static lExpr make(lExpr var);
+
+    static const lExprEnum node_type = lExprEnum::lIncrement;
+};
+
 struct Declare : lStmtNode<Declare> {
     lType type;
     std::string name;
@@ -364,6 +374,19 @@ struct BaseExpr : lStmtNode<BaseExpr> {
     static lStmt make(lExpr expr);
 
     static const lStmtEnum node_type = lStmtEnum::BaseExpr;
+};
+
+struct For : lStmtNode<For> {
+    lType type;
+    std::string name;
+    lExpr init;
+    lExpr end;
+    lExpr update;
+    lStmt body;
+
+    static lStmt make(lType type, std::string name, lExpr init, lExpr end, lExpr update, lStmt body);
+
+    static const lStmtEnum node_type = lStmtEnum::For;
 };
 
 } // namespace llir
