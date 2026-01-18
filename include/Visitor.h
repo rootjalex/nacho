@@ -13,6 +13,7 @@ struct Visitor {
     virtual void visit(const Tensor *);
 
     // Seq
+    virtual void visit(const Empty *);
     virtual void visit(const Index *);
     virtual void visit(const Intersect *);
     virtual void visit(const Union *);

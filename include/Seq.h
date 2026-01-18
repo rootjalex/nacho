@@ -18,6 +18,7 @@ namespace nacho {
 struct Seq;
 
 enum class SeqEnum {
+    Empty,
     Index,
     Intersect,
     Union,
@@ -70,6 +71,14 @@ template <typename T>
 Seq SeqNode<T>::mutate_Seq(Mutator *m) const {
     return m->visit((const T *)this);
 }
+
+// Only used in lattice construction (simplification)
+struct Empty : SeqNode<Empty> {
+    // is_sparse -> Empty, !is_sparse -> Full
+    static Seq make(bool is_sparse);
+
+    static const SeqEnum node_type = SeqEnum::Empty;
+};
 
 struct Index : SeqNode<Index> {
     std::string tensor;

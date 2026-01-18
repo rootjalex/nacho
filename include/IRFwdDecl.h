@@ -14,6 +14,7 @@ struct Sum;
 struct Tensor;
 
 struct Seq;
+struct Empty;
 struct Index;
 struct Intersect;
 struct Union;

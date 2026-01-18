@@ -2,6 +2,7 @@
 
 // Temporary, for make_binary_search example
 #include "GeneratePartition.h"
+#include "Lattice.h"
 #include "llir/Function.h"
 #include "llir/LLIR.h"
 
@@ -243,6 +244,89 @@ void test_format_inf() {
     std::cout << "\n\n";
 }
 
+void test_lattice() {
+    std::cout << "Lattice test\n";
+    Format sparse = Format::ordered({
+        {"i", LevelFormat::Compressed},
+    });
+
+    Format dense = Format::ordered({
+        {"i", LevelFormat::Dense},
+    });
+
+    TensorType sparse_f32 = TensorType(sparse, dType::Float32);
+    TensorType dense_f32 = TensorType(dense, dType::Float32);
+
+    Seq i_a = Index::make("a", sparse_f32, 0);
+    Seq i_b = Index::make("b", sparse_f32, 0);
+    Seq i_c = Index::make("c", sparse_f32, 0);
+    Seq i_d = Index::make("d", dense_f32, 0);
+
+    std::cout << "ALL SPARSE LATTICE TESTS\n";
+    {
+        Seq seq = Union::make(i_a, i_b);
+        Lattice lattice = Lattice::build(seq);
+        lattice.dump(std::cout);
+    }
+
+    {
+        Seq seq = Union::make(i_a, i_b);
+        seq = Union::make(seq, i_c);
+        Lattice lattice = Lattice::build(seq);
+        lattice.dump(std::cout);
+    }
+
+    {
+        Seq seq = Union::make(i_a, i_b);
+        seq = Intersect::make(seq, i_c);
+        Lattice lattice = Lattice::build(seq);
+        lattice.dump(std::cout);
+    }
+
+    {
+        Seq seq = Intersect::make(i_a, i_b);
+        seq = Union::make(seq, i_c);
+        Lattice lattice = Lattice::build(seq);
+        lattice.dump(std::cout);
+    }
+
+    {
+        Seq seq = Intersect::make(i_a, i_b);
+        seq = Intersect::make(seq, i_c);
+        Lattice lattice = Lattice::build(seq);
+        lattice.dump(std::cout);
+    }
+
+    std::cout << "ONE DENSE LATTICE TESTS\n";
+    {
+        Seq seq = Union::make(i_a, i_b);
+        seq = Union::make(seq, i_d);
+        Lattice lattice = Lattice::build(seq);
+        lattice.dump(std::cout);
+    }
+
+    {
+        Seq seq = Union::make(i_a, i_b);
+        seq = Intersect::make(seq, i_d);
+        Lattice lattice = Lattice::build(seq);
+        lattice.dump(std::cout);
+    }
+
+    {
+        Seq seq = Intersect::make(i_a, i_d);
+        seq = Union::make(seq, i_c);
+        Lattice lattice = Lattice::build(seq);
+        lattice.dump(std::cout);
+    }
+
+    {
+        Seq seq = Intersect::make(i_a, i_d);
+        seq = Intersect::make(seq, i_c);
+        Lattice lattice = Lattice::build(seq);
+        lattice.dump(std::cout);
+    }
+}
+
 // void make_binary_search() {
 //     llir::Function func;
 //     func.generics.push_back("index_t");
@@ -318,13 +402,14 @@ void test_format_inf() {
 
 // TODO: write a parser.
 int main(int argc, char **argv) {
-    test();
+    // test();
     // test_format_inf();
-     //test_vec();
-     //spgemm();
-    //sss_s_s();
+    // test_vec();
+    // spgemm();
+    // sss_s_s();
     // make_binary_search();
-    //make_binary_partition();
+    // make_binary_partition();
+    test_lattice();
 
     return 0;
 }
