@@ -65,6 +65,7 @@ struct Printer : public Visitor {
     virtual void visit(const llir::lBinOp *) override;
     virtual void visit(const llir::lConst *) override;
     virtual void visit(const llir::lBuild *) override;
+    virtual void visit(const llir::lSelect *) override;
     virtual void visit(const llir::lArrayAccess *) override;
     virtual void visit(const llir::lFieldAccess *) override;
     virtual void visit(const llir::lPtrAccess *) override;

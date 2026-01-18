@@ -46,6 +46,7 @@ struct lExpr;
 struct lBinOp;
 struct lConst;
 struct lBuild;
+struct lSelect;
 struct lArrayAccess;
 struct lFieldAccess;
 struct lPtrAccess;

@@ -107,6 +107,12 @@ void Visitor::visit(const llir::lBuild *node) {
     }
 }
 
+void Visitor::visit(const llir::lSelect *node) {
+    node->cond.accept(this);
+    node->tval.accept(this);
+    node->fval.accept(this);
+}
+
 void Visitor::visit(const llir::lArrayAccess *node) {
     node->array.accept(this);
     node->index.accept(this);
@@ -175,10 +181,14 @@ void Visitor::visit(const llir::BaseExpr *node) { node->expr.accept(this); }
 void Visitor::visit(const llir::Break *node) { (void)node; }
 
 void Visitor::visit(const llir::For *node) {
-    node->type.accept(this);
-    node->init.accept(this);
-    node->end.accept(this);
-    node->update.accept(this);
+    if (node->type.defined()) {
+        node->type.accept(this);
+    }
+    if (node->init.defined()) {
+        node->init.accept(this);
+    }
+    node->cond.accept(this);
+    node->inc.accept(this);
     node->body.accept(this);
 }
 

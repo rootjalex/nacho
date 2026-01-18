@@ -26,6 +26,7 @@ enum class lExprEnum {
     lConst,
     lVar,
     lBuild,
+    lSelect,
     lArrayAccess,
     lFieldAccess,
     lPtrAccess,
@@ -238,6 +239,7 @@ lExpr operator<(lExpr a, lExpr b);
 lExpr operator>(lExpr a, lExpr b);
 lExpr operator<=(lExpr a, lExpr b);
 lExpr operator>=(lExpr a, lExpr b);
+lExpr operator==(lExpr a, lExpr b);
 lExpr operator&&(lExpr a, lExpr b);
 
 struct lConst : lExprNode<lConst> {
@@ -254,6 +256,15 @@ struct lBuild : lExprNode<lBuild> {
     static lExpr make(lType type, std::vector<lExpr> values);
 
     static const lExprEnum node_type = lExprEnum::lBuild;
+};
+
+struct lSelect : lExprNode<lSelect> {
+    // (cond ? tval : fval)
+    lExpr cond, tval, fval;
+
+    static lExpr make(lExpr cond, lExpr tval, lExpr fval);
+
+    static const lExprEnum node_type = lExprEnum::lSelect;
 };
 
 struct lArrayAccess : lExprNode<lArrayAccess> {
@@ -377,14 +388,18 @@ struct BaseExpr : lStmtNode<BaseExpr> {
 };
 
 struct For : lStmtNode<For> {
+    // for ((`type` `name` = `init`)? ; `cond`; `name` += `inc`) { `body`
+    // }
     lType type;
     std::string name;
     lExpr init;
-    lExpr end;
-    lExpr update;
+    lExpr cond;
+    lExpr inc;
     lStmt body;
 
-    static lStmt make(lType type, std::string name, lExpr init, lExpr end, lExpr update, lStmt body);
+    static lStmt make(lType type, std::string name, lExpr init, lExpr cond,
+                      lExpr inc, lStmt body);
+    static lStmt make(std::string name, lExpr cond, lExpr inc, lStmt body);
 
     static const lStmtEnum node_type = lStmtEnum::For;
 };

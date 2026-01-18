@@ -1,11 +1,16 @@
 #pragma once
 
-#include "IRFwdDecl.h"
 #include "CIN.h"
+#include "Equality.h"
+#include "IRFwdDecl.h"
+#include "Lattice.h"
+#include "Seq.h"
+
 #include "backend/tensor.h"
 #include "backend/partition.h"
 #include <numeric>
 #include <map>
+
 namespace nacho {
 namespace backend {
 
@@ -14,9 +19,15 @@ namespace backend {
         TensorLowerer result_tensor;
         std::vector<CIN> forall_list;
         CIN cin;
+        // Memoized lattices, used for both compute and precompute.
+        std::map<Seq, Lattice, SeqLessThan> lattices;
 
-        ComputeFunctionLowerer(const std::map<std::string, TensorLowerer> &operand_tensors, const TensorLowerer &result_tensor, const std::vector<CIN> &forall_list, const CIN &cin)
-            : operand_tensors(operand_tensors), result_tensor(result_tensor), forall_list(forall_list), cin(cin) {}
+        ComputeFunctionLowerer(
+            const std::map<std::string, TensorLowerer> &operand_tensors,
+            const TensorLowerer &result_tensor,
+            const std::vector<CIN> &forall_list, const CIN &cin)
+            : operand_tensors(operand_tensors), result_tensor(result_tensor),
+              forall_list(forall_list), cin(cin) {}
 
         inline std::string get_all_loops_string() {
             std::string all_loops_string = std::accumulate(forall_list.begin(), forall_list.end(), std::string(""),
@@ -55,6 +66,10 @@ namespace backend {
         llir::lStmt lower_precompute_function_for_innermost_sparse_intersection();
 
         llir::lStmt lower_compute_function_for_innermost_sparse_intersection();
+
+        llir::lStmt lower_loop(CIN loop,
+                               const std::set<Seq, SeqLessThan> &defined,
+                               bool is_precompute);
 
         void add_common_function_body_for_initialization(std::vector<llir::lStmt>& stmts);
 

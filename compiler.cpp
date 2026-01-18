@@ -51,9 +51,10 @@ void test() {
     std::cout << compile_to_cin(z_ij) << "\n";
     std::cout << "Debug\n";
     nacho::backend::CINLowerer(compile_to_cin(z_ij), std::cout).lower_cin();
+    return;
+
     std::cout << "Debug\n";
     Expr z_i = sum("i", z_ij);
-
     std::cout << z_i << "\n";
     std::cout << compile_to_cin(z_i) << "\n";
     nacho::backend::CINLowerer(compile_to_cin(z_ij), std::cout).lower_cin();
@@ -299,6 +300,16 @@ void test_lattice() {
 
     std::cout << "ONE DENSE LATTICE TESTS\n";
     {
+        Seq seq = Intersect::make(i_a, i_d);
+        Lattice lattice = Lattice::build(seq);
+        lattice.dump(std::cout);
+    }
+    {
+        Seq seq = Union::make(i_a, i_d);
+        Lattice lattice = Lattice::build(seq);
+        lattice.dump(std::cout);
+    }
+    {
         Seq seq = Union::make(i_a, i_b);
         seq = Union::make(seq, i_d);
         Lattice lattice = Lattice::build(seq);
@@ -402,14 +413,14 @@ void test_lattice() {
 
 // TODO: write a parser.
 int main(int argc, char **argv) {
-    // test();
+    test();
     // test_format_inf();
     // test_vec();
     // spgemm();
     // sss_s_s();
     // make_binary_search();
     // make_binary_partition();
-    test_lattice();
+    // test_lattice();
 
     return 0;
 }
