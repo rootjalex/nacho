@@ -77,6 +77,31 @@ namespace nacho {
                     return llir::Generic_t::make("value_t");
             }
         }
+
+        inline std::string get_start_name(const int level) const {
+            return "start_" + tensor_name + "_" +
+                   tensor_type.format.levels[level].index;
+        }
+
+        inline std::string get_stop_name(const int level) const {
+            return "stop_" + tensor_name + "_" +
+                   tensor_type.format.levels[level].index;
+        }
+
+        inline std::string get_idx_name(const int level) const {
+            return "idx_" + tensor_name + "_" +
+                   tensor_type.format.levels[level].index;
+        }
+
+        inline std::string get_end_name(const int level) const {
+            return "end_" + tensor_name + "_" +
+                   tensor_type.format.levels[level].index;
+        }
+
+        // Uses iterators
+        // inline llir::lExpr get_bound(const int level,
+        //                              const llir::lType &index_t,
+        //                              const bool upper_bound);
     };
 }
 }

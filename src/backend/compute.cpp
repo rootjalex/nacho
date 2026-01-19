@@ -333,36 +333,22 @@ llir::lStmt ComputeFunctionLowerer::lower_loop(
         const Index *idx = i.as<Index>();
         internal_assert(idx) << i;
 
-        // TODO: use get_iterator_name() and  get_end_iterator_name() if I can
-        // figure out how to get the tensor.
+        TensorLowerer tlower(idx->tensor, idx->type);
+
         auto get_idx = [&](int level) {
-            return llir::lVar::make(index_t,
-                                    "idx_" + idx->tensor + "_" +
-                                        idx->type.format.levels[level].index);
+            return llir::lVar::make(index_t, tlower.get_idx_name(level));
         };
 
         auto get_end = [&](int level) {
-            return llir::lVar::make(index_t,
-                                    "end_" + idx->tensor + "_" +
-                                        idx->type.format.levels[level].index);
-        };
-
-        // TODO: standardize this somewhere.
-        auto get_start_name = [&](int level) {
-            return "start_" + idx->tensor + "_" +
-                   idx->type.format.levels[level].index;
-        };
-        auto get_stop_name = [&](int level) {
-            return "stop_" + idx->tensor + "_" +
-                   idx->type.format.levels[level].index;
+            return llir::lVar::make(index_t, tlower.get_end_name(level));
         };
 
         auto get_start = [&](int level) {
-            return llir::lVar::make(index_t, get_start_name(level));
+            return llir::lVar::make(index_t, tlower.get_start_name(level));
         };
 
         auto get_stop = [&](int level) {
-            return llir::lVar::make(index_t, get_stop_name(level));
+            return llir::lVar::make(index_t, tlower.get_stop_name(level));
         };
 
         llir::lExpr pidx = get_idx(idx->level);
@@ -405,14 +391,15 @@ llir::lStmt ComputeFunctionLowerer::lower_loop(
                 llir::lVar::make(index_t, "<TODO: LOAD END FROM TENSOR>"));
         }
 
-        stmts.push_back(llir::Declare::make(index_t, get_start_name(idx->level),
-                                            start_value));
+        stmts.push_back(llir::Declare::make(
+            index_t, tlower.get_start_name(idx->level), start_value));
         // This is const.
-        stmts.push_back(llir::Declare::make(index_t, get_stop_name(idx->level),
-                                            stop_value));
+        stmts.push_back(llir::Declare::make(
+            index_t, tlower.get_stop_name(idx->level), stop_value));
 
-        lExprPair p = {llir::lVar::make(index_t, get_start_name(idx->level)),
-                       llir::lVar::make(index_t, get_stop_name(idx->level))};
+        lExprPair p = {
+            llir::lVar::make(index_t, tlower.get_start_name(idx->level)),
+            llir::lVar::make(index_t, tlower.get_stop_name(idx->level))};
         imap[i] = std::move(p);
     }
 
