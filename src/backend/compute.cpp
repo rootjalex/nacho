@@ -356,8 +356,8 @@ llir::lStmt ComputeFunctionLowerer::lower_loop(
             std::function<llir::lExpr(int, bool)> get_condition =
                 [&](int level, bool end) -> llir::lExpr {
                 internal_assert(level >= 0) << level;
-                llir::lExpr val = end ? get_idx(level) : get_end(level);
-                llir::lExpr extrema = end ? get_stop(level) : get_iter(level);
+                llir::lExpr val = get_iter(level);
+                llir::lExpr extrema = end ? get_end(level) : get_idx(level);
                 llir::lExpr cond = val == extrema;
                 if (level == 0) {
                     return cond;
