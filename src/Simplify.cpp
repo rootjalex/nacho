@@ -196,6 +196,128 @@ struct Simplify : public SimplifySeq {
     std::set<Seq, SeqLessThan> defined;
 };
 
+// The intersection/union of dense iterators is a single dense iterator.
+struct RemoveDenseCoiteration : public Mutator {
+    std::vector<Seq> locators;
+
+    template <typename T>
+    Seq handle(const T *node) {
+        // Recurse on the children first.
+        Seq rec = Mutator::visit(node);
+        if (node->is_sparse) {
+            return rec;
+        }
+        // Is a dense op.
+
+        node = rec.as<T>();
+        internal_assert(node) << rec;
+        const Seq &a = node->a;
+        const Seq &b = node->b;
+
+        const Index *ia = a.as<Index>();
+        const Index *ib = b.as<Index>();
+
+        bool removed_a = false;
+        bool removed_b = false;
+
+        // If a is a dense iterator and b is dense,
+        // then locate into a.
+        if (ia && !ia->is_sparse && !b.get()->is_sparse) {
+            locators.push_back(a);
+            removed_a = true;
+        }
+
+        // Likewise, if b is a dense iterator and a is dense,
+        // then locate into b.
+        if (ib && !ib->is_sparse && !a.get()->is_sparse) {
+            locators.push_back(b);
+            removed_b = true;
+        }
+
+        // If we removed both, return a Universe.
+        if (removed_a && removed_b) {
+            return Universe::make(ia->type.format.levels[ia->level].index);
+        } else if (removed_a) {
+            return b;
+        } else if (removed_b) {
+            return a;
+        }
+
+        // Also perform Universe simplification
+        if (a.is<Universe>() && b.is<Universe>()) {
+            return a;
+        }
+
+        // Nothing to be done.
+        return rec;
+    }
+
+    Seq visit(const Intersect *node) override { return handle(node); }
+
+    Seq visit(const Union *node) override { return handle(node); }
+};
+
+// Remove dense iterators when intersected with a sparse iterator.
+struct RemoveDenseLocators : public SimplifySeq {
+    using SimplifySeq::visit;
+
+    std::vector<Seq> &locators;
+    bool in_sparse_intersection = false;
+
+    RemoveDenseLocators(std::vector<Seq> &locators) : locators(locators) {}
+
+    Seq visit(const Index *node) override {
+        if (in_sparse_intersection && !node->is_sparse) {
+            locators.push_back(node);
+            // make this sparse so it doesn't propagate fullness up!
+            return Empty::make(true);
+        }
+        return node;
+    }
+
+    Seq visit(const Intersect *node) override {
+        if (in_sparse_intersection) {
+            // Already removing dense iterators, keep going.
+            return Mutator::visit(node);
+        }
+        bool a_sparse = node->a.get()->is_sparse;
+        bool b_sparse = node->b.get()->is_sparse;
+
+        Seq a, b;
+
+        if (a_sparse && !b_sparse) {
+            // b is dense under sparse shadow
+            a = mutate(node->a);
+            in_sparse_intersection = true;
+            b = mutate(node->b);
+            in_sparse_intersection = false;
+        } else if (b_sparse && !a_sparse) {
+            // a is dense under sparse shadow
+            in_sparse_intersection = true;
+            a = mutate(node->a);
+            in_sparse_intersection = false;
+            b = mutate(node->b);
+        } else {
+            // both sparse or both dense: normal recursion
+            a = mutate(node->a);
+            b = mutate(node->b);
+        }
+
+        // Simplifications
+        if (a.is<Empty>() || a.is<Universe>()) {
+            return b;
+        } else if (b.is<Empty>() || b.is<Universe>()) {
+            return a;
+        }
+
+        if (a.same_as(node->a) && b.same_as(node->b)) {
+            return node;
+        }
+
+        return Intersect::make(a, b);
+    }
+};
+
 } // namespace
 
 CIN simplify(const std::set<Seq, SeqLessThan> &defined, const CIN &cin) {
@@ -206,6 +328,20 @@ Seq remove_and_simplify(const Seq &orig, const Seq &remove) {
     Seq repl = Empty::make(remove.get()->is_sparse);
     RemoveAndSimplify mutator(remove, std::move(repl));
     return mutator.mutate(orig);
+}
+
+std::pair<Seq, std::vector<Seq>> remove_locators(const Seq &seq) {
+    // First remove dense coiteration (turns into Universe with locators)
+    RemoveDenseCoiteration rm_dense;
+    Seq ret = rm_dense.mutate(seq);
+
+    std::vector<Seq> locators = std::move(rm_dense.locators);
+    // Then remove any dense iterators that are intersected with sparse
+    // iterators.
+    RemoveDenseLocators rm_locators(locators);
+    ret = rm_locators.mutate(ret);
+
+    return {ret, locators};
 }
 
 } // namespace nacho

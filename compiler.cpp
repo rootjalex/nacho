@@ -3,6 +3,7 @@
 // Temporary, for make_binary_search example
 #include "GeneratePartition.h"
 #include "Lattice.h"
+#include "Simplify.h"
 #include "llir/Function.h"
 #include "llir/LLIR.h"
 
@@ -50,6 +51,7 @@ void test() {
     std::cout << z_ij << "\n";
     std::cout << compile_to_cin(z_ij) << "\n";
     std::cout << "Debug\n";
+    std::cout << compile_to_cin(z_ij) << "\n";
     nacho::backend::CINLowerer(compile_to_cin(z_ij), std::cout).lower_cin();
     return;
 
@@ -338,6 +340,64 @@ void test_lattice() {
     }
 }
 
+void test_locator_optimization() {
+    std::cout << "Locator test\n";
+    Format sparse = Format::ordered({
+        {"i", LevelFormat::Compressed},
+    });
+
+    Format dense = Format::ordered({
+        {"i", LevelFormat::Dense},
+    });
+
+    TensorType sparse_f32 = TensorType(sparse, dType::Float32);
+    TensorType dense_f32 = TensorType(dense, dType::Float32);
+
+    Seq i_a = Index::make("a", sparse_f32, 0);
+    Seq i_b = Index::make("b", sparse_f32, 0);
+    Seq i_c = Index::make("c", sparse_f32, 0);
+    Seq i_d = Index::make("d", dense_f32, 0);
+    Seq i_e = Index::make("e", dense_f32, 0);
+
+    std::cout << "a, b, c are sparse, d, e are dense.\n";
+
+    auto check = [](const Seq &seq) {
+        std::cout << "\n";
+        auto [simpl, locs] = remove_locators(seq);
+        std::cout << seq << " -> " << simpl << std::endl;
+        std::cout << "with locators:\n";
+        for (const auto &l : locs) {
+            std::cout << "  " << l << std::endl;
+        }
+    };
+
+    Seq seq = Union::make(i_a, i_b);
+    check(seq);
+
+    seq = Union::make(seq, i_c);
+    check(seq);
+
+    seq = Union::make(i_d, i_e);
+    check(seq);
+
+    seq = Union::make(i_a, i_d);
+    check(seq);
+
+    seq = Intersect::make(i_d, i_e);
+    check(seq);
+
+    seq = Intersect::make(i_a, i_d);
+    check(seq);
+
+    seq = Union::make(i_a, i_d);
+    seq = Intersect::make(seq, i_b);
+    check(seq);
+
+    seq = Union::make(i_e, i_d);
+    seq = Intersect::make(seq, i_b);
+    check(seq);
+}
+
 // void make_binary_search() {
 //     llir::Function func;
 //     func.generics.push_back("index_t");
@@ -421,6 +481,7 @@ int main(int argc, char **argv) {
     // make_binary_search();
     // make_binary_partition();
     // test_lattice();
+    // test_locator_optimization();
 
     return 0;
 }

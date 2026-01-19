@@ -278,6 +278,13 @@ std::vector<Seq> indexes(const Seq &seq) {
                 visited.insert(node);
             }
         }
+
+        void visit(const Universe *node) override {
+            if (!visited.count(node)) {
+                indexes.push_back(node);
+                visited.insert(node);
+            }
+        }
     };
     GetIndexes getter;
     seq.accept(&getter);
@@ -299,7 +306,15 @@ llir::lStmt ComputeFunctionLowerer::lower_loop(
         internal_error << "TODO: handle Accumulate in lowering compute loop.\n";
     }
     internal_assert(forall) << "Expected Forall in lower_loop: " << loop;
-    const Seq &seq = forall->seq;
+
+    // Two optimizations:
+    // 1. The intersection/union of dense iterators is a single dense iterator.
+    // 2. Remove dense iterators when intersected with a sparse iterator.
+    // TODO: the Universes inserted here breaks a lot of assumptions,
+    // And breaks partitioning. Need to fix this earlier in the pipeline.
+    // auto [seq, locators] = remove_locators(forall->seq);
+    // TODO: handle locators!
+    const auto &seq = forall->seq;
 
     // Check if seq is in lattices, if it is, use that lattice, otherwise
     // build it.
@@ -389,9 +404,7 @@ llir::lStmt ComputeFunctionLowerer::lower_loop(
         stmts.push_back(llir::Declare::make(
             index_t, tlower.get_stop_name(idx->level), stop_value));
 
-        lExprPair p = {
-            llir::lVar::make(index_t, tlower.get_iter_name(idx->level)),
-            llir::lVar::make(index_t, tlower.get_stop_name(idx->level))};
+        lExprPair p = {get_iter(idx->level), get_stop(idx->level)};
         imap[i] = std::move(p);
     }
 
