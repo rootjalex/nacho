@@ -120,7 +120,6 @@ void Visitor::visit(const llir::lArrayAccess *node) {
 
 void Visitor::visit(const llir::lFieldAccess *node) {
     node->object.accept(this);
-    node->field.accept(this);
 }
 
 void Visitor::visit(const llir::lPtrAccess *node) {

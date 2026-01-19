@@ -509,9 +509,8 @@ void Printer::visit(const llir::lSelect *node) {
 }
 
 void Printer::visit(const llir::lFieldAccess *node) {
-    node->object.accept(this);
-    os << ".";
-    node->field.accept(this);
+    print(node->object);
+    os << "." << node->field;
 }
 
 void Printer::visit(const llir::lArrayAccess *node) {

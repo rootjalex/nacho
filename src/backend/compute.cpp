@@ -62,10 +62,8 @@ void ComputeFunctionLowerer::add_common_function_body_for_initialization(
                             llir::Ptr_t::make(llir::Generic_t::make(
                                 tensor.get_index_struct_name())),
                             "partitions_" + tensor.tensor_name),
-                        llir::lVar::make(
-                            index_t,
-                            level.index +
-                                (is_sparse_format(level.format) ? "_p" : ""))),
+                        level.index +
+                            (is_sparse_format(level.format) ? "_p" : "")),
                     thread_id_var)));
             stmts.emplace_back(llir::Declare::make(
                 index_t, get_end_iterator_name(tensor, level.index),
@@ -76,11 +74,9 @@ void ComputeFunctionLowerer::add_common_function_body_for_initialization(
                             llir::Ptr_t::make(llir::Generic_t::make(
                                 tensor.get_struct_name())),
                             tensor.tensor_name),
-                        llir::lVar::make(
-                            index_t,
-                            is_sparse_format(level.format)
-                                ? tensor.get_length_field_name(level.index)
-                                : tensor.get_size_field_name(level.index))),
+                        is_sparse_format(level.format)
+                            ? tensor.get_length_field_name(level.index)
+                            : tensor.get_size_field_name(level.index)),
                     llir::lConst::make((int64_t)1))));
             stmts.emplace_back(llir::IfElse::make(
                 llir::lBinOp::make(
@@ -101,11 +97,8 @@ void ComputeFunctionLowerer::add_common_function_body_for_initialization(
                                 llir::Ptr_t::make(llir::Generic_t::make(
                                     tensor.get_index_struct_name())),
                                 "partitions_" + tensor.tensor_name),
-                            llir::lVar::make(index_t,
-                                             level.index +
-                                                 (is_sparse_format(level.format)
-                                                      ? "_p"
-                                                      : ""))),
+                            level.index +
+                                (is_sparse_format(level.format) ? "_p" : "")),
                         llir::lBinOp::make(llir::lBinOp::Add, thread_id_var,
                                            llir::lConst::make((int64_t)1)))),
                 nullptr));
@@ -201,8 +194,7 @@ llir::lStmt ComputeFunctionLowerer::
                         llir::lVar::make(
                             llir::Generic_t::make(get_counts_struct_name()),
                             "count_offsets"),
-                        llir::lVar::make(index_t,
-                                         get_counts_field_name(index))),
+                        get_counts_field_name(index)),
                     llir::lVar::make(index_t, "thread_id")),
                 llir::lVar::make(index_t, "count_" + index)));
         }
@@ -343,8 +335,8 @@ llir::lStmt ComputeFunctionLowerer::lower_loop(
             return llir::lVar::make(index_t, tlower.get_end_name(level));
         };
 
-        auto get_start = [&](int level) {
-            return llir::lVar::make(index_t, tlower.get_start_name(level));
+        auto get_iter = [&](int level) {
+            return llir::lVar::make(index_t, tlower.get_iter_name(level));
         };
 
         auto get_stop = [&](int level) {
@@ -365,7 +357,7 @@ llir::lStmt ComputeFunctionLowerer::lower_loop(
                 [&](int level, bool end) -> llir::lExpr {
                 internal_assert(level >= 0) << level;
                 llir::lExpr val = end ? get_idx(level) : get_end(level);
-                llir::lExpr extrema = end ? get_start(level) : get_stop(level);
+                llir::lExpr extrema = end ? get_stop(level) : get_iter(level);
                 llir::lExpr cond = val == extrema;
                 if (level == 0) {
                     return cond;
@@ -392,13 +384,13 @@ llir::lStmt ComputeFunctionLowerer::lower_loop(
         }
 
         stmts.push_back(llir::Declare::make(
-            index_t, tlower.get_start_name(idx->level), start_value));
+            index_t, tlower.get_iter_name(idx->level), start_value));
         // This is const.
         stmts.push_back(llir::Declare::make(
             index_t, tlower.get_stop_name(idx->level), stop_value));
 
         lExprPair p = {
-            llir::lVar::make(index_t, tlower.get_start_name(idx->level)),
+            llir::lVar::make(index_t, tlower.get_iter_name(idx->level)),
             llir::lVar::make(index_t, tlower.get_stop_name(idx->level))};
         imap[i] = std::move(p);
     }
@@ -458,8 +450,9 @@ llir::lStmt ComputeFunctionLowerer::lower_loop(
             for (const auto &term : as) {
                 const Index *idx = term.as<Index>();
                 internal_assert(idx) << term;
-                llir::lExpr idx_expr =
-                    llir::lVar::make(index_t, idx->tensor + "_" + forall->idx);
+                llir::lExpr idx_expr = llir::lVar::make(
+                    index_t, TensorLowerer(idx->tensor, idx->type)
+                                 .get_coord_name(idx->level));
                 llir::lExpr sub = var == idx_expr;
 
                 if (cond.defined()) {
@@ -476,6 +469,7 @@ llir::lStmt ComputeFunctionLowerer::lower_loop(
             const llir::lVar *start = iters[0].first.as<llir::lVar>();
             static const llir::lExpr _1 = llir::lConst::make(1);
             auto body = make_body(is[0]);
+            // TODO: load index if sparse iterator
             return llir::For::make(start->name, std::move(cond), _1,
                                    std::move(body));
         } else {

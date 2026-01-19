@@ -78,8 +78,8 @@ namespace nacho {
             }
         }
 
-        inline std::string get_start_name(const int level) const {
-            return "start_" + tensor_name + "_" +
+        inline std::string get_iter_name(const int level) const {
+            return "iter_" + tensor_name + "_" +
                    tensor_type.format.levels[level].index;
         }
 
@@ -98,10 +98,9 @@ namespace nacho {
                    tensor_type.format.levels[level].index;
         }
 
-        // Uses iterators
-        // inline llir::lExpr get_bound(const int level,
-        //                              const llir::lType &index_t,
-        //                              const bool upper_bound);
+        inline std::string get_coord_name(const int level) const {
+            return tensor_name + "_" + tensor_type.format.levels[level].index;
+        }
     };
 }
 }

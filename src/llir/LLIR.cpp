@@ -161,8 +161,8 @@ lExpr lArrayAccess::make(lExpr array, lExpr index) {
     return node;
 }
 
-lExpr lFieldAccess::make(lExpr object, lExpr field) {
-    internal_assert(object.defined() && field.defined())
+lExpr lFieldAccess::make(lExpr object, std::string field) {
+    internal_assert(object.defined() && !field.empty())
         << "lFieldAccess of undefined: " << object << " . " << field;
     lFieldAccess *node = new lFieldAccess;
     node->object = std::move(object);

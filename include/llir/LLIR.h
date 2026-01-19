@@ -278,9 +278,9 @@ struct lArrayAccess : lExprNode<lArrayAccess> {
 
 struct lFieldAccess : lExprNode<lFieldAccess> {
     lExpr object;
-    lExpr field;
+    std::string field;
 
-    static lExpr make(lExpr object, lExpr field);
+    static lExpr make(lExpr object, std::string field);
 
     static const lExprEnum node_type = lExprEnum::lFieldAccess;
 };
