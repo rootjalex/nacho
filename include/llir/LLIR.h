@@ -45,7 +45,8 @@ enum class lStmtEnum {
     Function,
     BaseExpr,
     Break,
-    For
+    For,
+    Accumulate
 };
 
 using IRlTypeNode = IRNode<lType, lTypeEnum>;
@@ -217,6 +218,7 @@ struct lBinOp : lExprNode<lBinOp> {
         Leq,
         Load,
         Lt,
+        Min,
         Mul,
         Or,
         Sub,
@@ -402,6 +404,16 @@ struct For : lStmtNode<For> {
     static lStmt make(std::string name, lExpr cond, lExpr inc, lStmt body);
 
     static const lStmtEnum node_type = lStmtEnum::For;
+};
+
+struct Accumulate : lStmtNode<Accumulate> {
+    // var += value;
+    lExpr var;
+    lExpr value;
+
+    static lStmt make(lExpr var, lExpr value);
+
+    static const lStmtEnum node_type = lStmtEnum::Accumulate;
 };
 
 } // namespace llir

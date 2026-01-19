@@ -191,4 +191,9 @@ void Visitor::visit(const llir::For *node) {
     node->body.accept(this);
 }
 
+void Visitor::visit(const llir::Accumulate *node) {
+    node->var.accept(this);
+    node->value.accept(this);
+}
+
 } // namespace nacho

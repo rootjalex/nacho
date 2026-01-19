@@ -372,7 +372,7 @@ llir::lStmt ComputeFunctionLowerer::lower_loop(
             llir::lExpr start_cond = get_condition(idx->level - 1, false);
             start_value = llir::lSelect::make(
                 std::move(start_cond), pidx,
-                llir::lVar::make(index_t, "<TODO: LOAD START FROM TENSOR>"));
+                tlower.get_bound(idx->level, index_t, /*upper_bound=*/false));
 
             // For the stop, if all previous iterators are at their respective
             // ends, then use this stop, otherwise get the iterator from the
@@ -380,7 +380,7 @@ llir::lStmt ComputeFunctionLowerer::lower_loop(
             llir::lExpr stop_cond = get_condition(idx->level - 1, true);
             stop_value = llir::lSelect::make(
                 std::move(stop_cond), pend,
-                llir::lVar::make(index_t, "<TODO: LOAD END FROM TENSOR>"));
+                tlower.get_bound(idx->level, index_t, /*upper_bound=*/true));
         }
 
         stmts.push_back(llir::Declare::make(
@@ -464,6 +464,40 @@ llir::lStmt ComputeFunctionLowerer::lower_loop(
             return cond;
         };
 
+        auto make_evals = [&](const Seq &a) {
+            auto as = indexes(a);
+            std::vector<llir::lStmt> stmts;
+            llir::lExpr value;
+            for (const auto &term : as) {
+                const Index *idx = term.as<Index>();
+                internal_assert(idx) << term;
+                TensorLowerer tlower(idx->tensor, idx->type);
+                stmts.push_back(tlower.make_eval(idx->level, index_t));
+                if (!value.defined()) {
+                    value = tlower.get_coord_var(idx->level, index_t);
+                } else {
+                    value = llir::lBinOp::make(
+                        llir::lBinOp::Min,
+                        tlower.get_coord_var(idx->level, index_t),
+                        std::move(value));
+                }
+            }
+            stmts.push_back(
+                llir::Declare::make(index_t, forall->idx, std::move(value)));
+            return stmts;
+        };
+
+        auto make_incs = [&](const Seq &a, std::vector<llir::lStmt> &stmts) {
+            auto as = indexes(a);
+
+            for (const auto &term : as) {
+                const Index *idx = term.as<Index>();
+                internal_assert(idx) << term;
+                TensorLowerer tlower(idx->tensor, idx->type);
+                stmts.push_back(tlower.make_inc(idx->level, index_t));
+            }
+        };
+
         if (iters.size() == 1) {
             // For loop!
             const llir::lVar *start = iters[0].first.as<llir::lVar>();
@@ -487,9 +521,14 @@ llir::lStmt ComputeFunctionLowerer::lower_loop(
                                           build_ifelse(count + 1));
             };
 
-            // TODO: prologue of loading values!
-            auto body = build_ifelse(0);
-            // TODO: increment!
+            // Prologue (evaluate)
+            auto stmts = make_evals(s);
+            // Execute
+            stmts.push_back(build_ifelse(0));
+            // Epilogue (incrments!)
+            make_incs(s, stmts);
+
+            auto body = llir::Sequence::make(std::move(stmts));
 
             return llir::While::make(std::move(cond), std::move(body));
         }

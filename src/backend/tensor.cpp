@@ -9,7 +9,7 @@
 namespace nacho {
 namespace backend {
 
-llir::lType TensorLowerer::lower_tensor_struct_definition() {
+llir::lType TensorLowerer::lower_tensor_struct_definition() const {
     llir::lType index_t = llir::Generic_t::make("index_t");
     llir::lType value_t = llir::Generic_t::make("value_t");
     std::vector<std::string> generics = {"index_t", "value_t"};

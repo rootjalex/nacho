@@ -111,7 +111,7 @@ lExpr operator>=(lExpr a, lExpr b) {
 }
 
 lExpr operator==(lExpr a, lExpr b) {
-    return lBinOp::make(lBinOp::Eq, std::move(b), std::move(a));
+    return lBinOp::make(lBinOp::Eq, std::move(a), std::move(b));
 }
 
 lExpr operator&&(lExpr a, lExpr b) {
@@ -317,6 +317,17 @@ lStmt For::make(std::string name, lExpr cond, lExpr inc, lStmt body) {
     node->cond = std::move(cond);
     node->inc = std::move(inc);
     node->body = std::move(body);
+    return node;
+}
+
+lStmt Accumulate::make(lExpr var, lExpr value) {
+    internal_assert(var.defined())
+        << "Cannot make Accumulate with undefined var";
+    internal_assert(value.defined())
+        << "Cannot make Accumulate with undefined value";
+    Accumulate *node = new Accumulate;
+    node->var = std::move(var);
+    node->value = std::move(value);
     return node;
 }
 

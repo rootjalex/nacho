@@ -437,6 +437,10 @@ std::string get_op_string(const llir::lBinOp::Op op) {
         return " < ";
         break;
     }
+    case llir::lBinOp::Min: {
+        return "min";
+        break;
+    }
     case llir::lBinOp::Mul: {
         return " * ";
         break;
@@ -648,6 +652,14 @@ void Printer::visit(const llir::For *node) {
     dedent();
     print_indent();
     os << "}\n";
+}
+
+void Printer::visit(const llir::Accumulate *node) {
+    print_indent();
+    print_no_parens(node->var);
+    os << " += ";
+    print(node->value);
+    os << ";\n";
 }
 
 } // namespace nacho

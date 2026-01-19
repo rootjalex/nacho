@@ -65,6 +65,7 @@ struct For;
 struct Function;
 struct BaseExpr;
 struct Break;
+struct Accumulate;
 
 } // namespace llir
 
