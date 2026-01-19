@@ -51,7 +51,6 @@ void test() {
     std::cout << z_ij << "\n";
     std::cout << compile_to_cin(z_ij) << "\n";
     std::cout << "Debug\n";
-    std::cout << compile_to_cin(z_ij) << "\n";
     nacho::backend::CINLowerer(compile_to_cin(z_ij), std::cout).lower_cin();
     return;
 
