@@ -201,6 +201,14 @@ void Printer::print_no_parens(const Seq &seq) {
     seq.accept(this);
 }
 
+void Printer::visit(const Empty *node) {
+    if (node->is_sparse) {
+        os << "E";
+    } else {
+        os << "F";
+    }
+}
+
 void Printer::visit(const Index *node) {
     os << node->type.format.levels[node->level].index;
     os << "_" << node->tensor;

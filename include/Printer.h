@@ -33,6 +33,7 @@ struct Printer : public Visitor {
 
     virtual void print(const Seq &);
     virtual void print_no_parens(const Seq &);
+    virtual void visit(const Empty *) override;
     virtual void visit(const Index *) override;
     virtual void visit(const Intersect *) override;
     virtual void visit(const Union *) override;

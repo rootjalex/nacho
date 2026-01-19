@@ -25,6 +25,8 @@ void Visitor::visit(const Sum *node) { node->a.accept(this); }
 
 void Visitor::visit(const Tensor *node) { (void)node; }
 
+void Visitor::visit(const Empty *node) { (void)node; }
+
 void Visitor::visit(const Index *node) { (void)node; }
 
 void Visitor::visit(const Intersect *node) {

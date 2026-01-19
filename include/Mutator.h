@@ -14,7 +14,8 @@ struct Mutator {
     virtual Expr visit(const Sum *);
     virtual Expr visit(const Tensor *);
 
-    Seq mutate(const Seq &);
+    virtual Seq mutate(const Seq &);
+    virtual Seq visit(const Empty *);
     virtual Seq visit(const Index *);
     virtual Seq visit(const Intersect *);
     virtual Seq visit(const Union *);

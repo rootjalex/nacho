@@ -36,6 +36,8 @@ Seq Mutator::mutate(const Seq &seq) {
     return seq.defined() ? seq.get()->mutate_Seq(this) : Seq();
 }
 
+Seq Mutator::visit(const Empty *node) { return node; }
+
 Seq Mutator::visit(const Index *node) { return node; }
 
 Seq Mutator::visit(const Intersect *node) { return mutate_binop<Seq>(node); }

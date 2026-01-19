@@ -4,6 +4,13 @@
 
 namespace nacho {
 
+Seq Empty::make(bool is_sparse) {
+    // TODO: statically allocate two and return base on is_sparse
+    Empty *node = new Empty;
+    node->is_sparse = is_sparse;
+    return node;
+}
+
 Seq Index::make(std::string tensor, TensorType type, size_t level) {
     internal_assert(!tensor.empty()) << "Index with empty tensor";
     internal_assert(level < type.format.levels.size())

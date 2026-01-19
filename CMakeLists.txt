@@ -60,9 +60,11 @@ target_sources(
     PRIVATE
     src/CIN.cpp
     src/Compile.cpp
+    src/Equality.cpp
     src/Format.cpp
     src/Frontend.cpp
     src/GeneratePartition.cpp
+    src/Lattice.cpp
     src/Mutator.cpp
     src/Printer.cpp
     src/Seq.cpp
@@ -83,12 +85,15 @@ target_sources(
     FILES
     include/CIN.h
     include/Compile.h
+    include/Equality.h
+    include/Format.h
     include/Frontend.h
     include/GeneratePartition.h
     include/IntrusivePtr.h
     include/IRFwdDecl.h
     include/IRHandle.h
     include/IRNode.h
+    include/Lattice.h
     include/Mutator.h
     include/Nacho.h
     include/Printer.h
