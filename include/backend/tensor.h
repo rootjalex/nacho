@@ -145,7 +145,7 @@ namespace nacho {
 
         llir::lExpr get_offset(const int level,
                                const llir::lType &index_t) const {
-            llir::lExpr coord = get_coord_var(level, index_t);
+            llir::lExpr coord = get_iter_var(level, index_t);
             if (is_sparse(level) || level == 0) {
                 return coord;
             }
@@ -184,6 +184,11 @@ namespace nacho {
             return llir::lVar::make(index_t, get_coord_name(level));
         }
 
+        llir::lExpr get_iter_var(const int level,
+                                 const llir::lType &index_t) const {
+            return llir::lVar::make(index_t, get_iter_name(level));
+        }
+
         llir::lExpr get_coord(const int level,
                               const llir::lType &index_t) const {
             llir::lExpr iter = llir::lVar::make(index_t, get_iter_name(level));
@@ -204,7 +209,7 @@ namespace nacho {
 
         llir::lStmt make_inc(const int level,
                              const llir::lType &index_t) const {
-            llir::lExpr iter = llir::lVar::make(index_t, get_iter_name(level));
+            llir::lExpr iter = get_iter_var(level, index_t);
             llir::lExpr crd = get_coord_var(level, index_t);
             // Dense always increments, sparse increments if at the lowest
             // value.
