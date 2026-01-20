@@ -68,6 +68,7 @@ target_sources(
     src/Mutator.cpp
     src/Printer.cpp
     src/Seq.cpp
+    src/Simplify.cpp
     src/Visitor.cpp
     src/llir/Function.cpp
     src/llir/LLIR.cpp
@@ -100,6 +101,7 @@ target_sources(
     include/RefCount.h
     include/Scope.h
     include/Seq.h
+    include/Simplify.h
     include/Type.h
     include/Visitor.h
     include/llir/Function.h

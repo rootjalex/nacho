@@ -437,6 +437,10 @@ std::string get_op_string(const llir::lBinOp::Op op) {
         return " < ";
         break;
     }
+    case llir::lBinOp::Min: {
+        return "min";
+        break;
+    }
     case llir::lBinOp::Mul: {
         return " * ";
         break;
@@ -494,12 +498,23 @@ void Printer::visit(const llir::lBuild *node) {
         print_no_parens(node->values[i]);
     }
     os << ")";
+    close();
+}
+
+void Printer::visit(const llir::lSelect *node) {
+    // TODO: fix this to match C++!
+    open();
+    print(node->cond);
+    os << " ? ";
+    print(node->tval);
+    os << " : ";
+    print(node->fval);
+    close();
 }
 
 void Printer::visit(const llir::lFieldAccess *node) {
-    node->object.accept(this);
-    os << ".";
-    node->field.accept(this);
+    print(node->object);
+    os << "." << node->field;
 }
 
 void Printer::visit(const llir::lArrayAccess *node) {
@@ -594,7 +609,7 @@ void Printer::visit(const llir::While *node) {
     print_indent();
     os << "while (";
     print_no_parens(node->cond);
-    os << "){\n";
+    os << ") {\n";
     indent();
     print(node->body);
     dedent();
@@ -618,21 +633,33 @@ void Printer::visit(const llir::Break *node) {
 void Printer::visit(const llir::For *node) {
     print_indent();
     os << "for (";
-    print(node->type);
-    os << " ";
-    os << node->name;
-    os << " = ";
-    print_no_parens(node->init);
+    if (node->type.defined()) {
+        internal_assert(node->init.defined());
+        print(node->type);
+        os << " ";
+        os << node->name;
+        os << " = ";
+        print_no_parens(node->init);
+    }
     os << "; ";
-    print_no_parens(node->end);
+    print_no_parens(node->cond);
     os << "; ";
-    print_no_parens(node->update);
+    os << node->name << " += ";
+    print_no_parens(node->inc);
     os << ") {\n";
     indent();
     print(node->body);
     dedent();
     print_indent();
     os << "}\n";
+}
+
+void Printer::visit(const llir::Accumulate *node) {
+    print_indent();
+    print_no_parens(node->var);
+    os << " += ";
+    print(node->value);
+    os << ";\n";
 }
 
 } // namespace nacho

@@ -46,6 +46,7 @@ struct lExpr;
 struct lBinOp;
 struct lConst;
 struct lBuild;
+struct lSelect;
 struct lArrayAccess;
 struct lFieldAccess;
 struct lPtrAccess;
@@ -64,6 +65,7 @@ struct For;
 struct Function;
 struct BaseExpr;
 struct Break;
+struct Accumulate;
 
 } // namespace llir
 

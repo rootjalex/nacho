@@ -41,6 +41,7 @@ struct Visitor {
     virtual void visit(const llir::lBinOp *);
     virtual void visit(const llir::lConst *);
     virtual void visit(const llir::lBuild *);
+    virtual void visit(const llir::lSelect *);
     virtual void visit(const llir::lArrayAccess *);
     virtual void visit(const llir::lFieldAccess *);
     virtual void visit(const llir::lPtrAccess *);
@@ -57,6 +58,7 @@ struct Visitor {
     virtual void visit(const llir::BaseExpr *node);
     virtual void visit(const llir::Break *node);
     virtual void visit(const llir::For *node);
+    virtual void visit(const llir::Accumulate *node);
 };
 
 #define RESTRICT_VISITOR(IRNODE)                                               \

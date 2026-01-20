@@ -14,6 +14,7 @@ struct Lattice {
     std::vector<Seq> topological_order() const;
 
     // Also in topologically sorted order
+    // Does not include Empty/Full.
     std::vector<Seq> sub_points(const Seq &seq) const;
 
     void dump(std::ostream &os) const;

@@ -3,6 +3,7 @@
 // Temporary, for make_binary_search example
 #include "GeneratePartition.h"
 #include "Lattice.h"
+#include "Simplify.h"
 #include "llir/Function.h"
 #include "llir/LLIR.h"
 
@@ -51,9 +52,10 @@ void test() {
     std::cout << compile_to_cin(z_ij) << "\n";
     std::cout << "Debug\n";
     nacho::backend::CINLowerer(compile_to_cin(z_ij), std::cout).lower_cin();
+    return;
+
     std::cout << "Debug\n";
     Expr z_i = sum("i", z_ij);
-
     std::cout << z_i << "\n";
     std::cout << compile_to_cin(z_i) << "\n";
     nacho::backend::CINLowerer(compile_to_cin(z_ij), std::cout).lower_cin();
@@ -299,6 +301,16 @@ void test_lattice() {
 
     std::cout << "ONE DENSE LATTICE TESTS\n";
     {
+        Seq seq = Intersect::make(i_a, i_d);
+        Lattice lattice = Lattice::build(seq);
+        lattice.dump(std::cout);
+    }
+    {
+        Seq seq = Union::make(i_a, i_d);
+        Lattice lattice = Lattice::build(seq);
+        lattice.dump(std::cout);
+    }
+    {
         Seq seq = Union::make(i_a, i_b);
         seq = Union::make(seq, i_d);
         Lattice lattice = Lattice::build(seq);
@@ -325,6 +337,77 @@ void test_lattice() {
         Lattice lattice = Lattice::build(seq);
         lattice.dump(std::cout);
     }
+}
+
+void test_locator_optimization() {
+    std::cout << "Locator test\n";
+    Format sparse = Format::ordered({
+        {"i", LevelFormat::Compressed},
+    });
+
+    Format dense = Format::ordered({
+        {"i", LevelFormat::Dense},
+    });
+
+    TensorType sparse_f32 = TensorType(sparse, dType::Float32);
+    TensorType dense_f32 = TensorType(dense, dType::Float32);
+
+    Seq i_a = Index::make("a", sparse_f32, 0);
+    Seq i_b = Index::make("b", sparse_f32, 0);
+    Seq i_c = Index::make("c", sparse_f32, 0);
+    Seq i_d = Index::make("d", dense_f32, 0);
+    Seq i_e = Index::make("e", dense_f32, 0);
+
+    std::cout << "a, b, c are sparse, d, e are dense.\n";
+
+    auto print_list = [](std::ostream &os, const std::vector<Seq> &seqs) {
+        bool first = true;
+        os << "{";
+        for (const auto &s : seqs) {
+            if (!first) {
+                os << ", ";
+            }
+            first = false;
+            os << s;
+        }
+        os << "}";
+    };
+
+    auto check = [&print_list](const Seq &seq) {
+        std::cout << "\n";
+        auto [iters, locs] = partition_iterators_locators(seq);
+        std::cout << seq << " -> iterators: ";
+        print_list(std::cout, iters);
+        std::cout << " with locators: ";
+        print_list(std::cout, locs);
+        std::cout << std::endl;
+    };
+
+    Seq seq = Union::make(i_a, i_b);
+    check(seq);
+
+    seq = Union::make(seq, i_c);
+    check(seq);
+
+    seq = Union::make(i_d, i_e);
+    check(seq);
+
+    seq = Union::make(i_a, i_d);
+    check(seq);
+
+    seq = Intersect::make(i_d, i_e);
+    check(seq);
+
+    seq = Intersect::make(i_a, i_d);
+    check(seq);
+
+    seq = Union::make(i_a, i_d);
+    seq = Intersect::make(seq, i_b);
+    check(seq);
+
+    seq = Union::make(i_e, i_d);
+    seq = Intersect::make(seq, i_b);
+    check(seq);
 }
 
 // void make_binary_search() {
@@ -402,14 +485,15 @@ void test_lattice() {
 
 // TODO: write a parser.
 int main(int argc, char **argv) {
-    // test();
+    test();
     // test_format_inf();
     // test_vec();
     // spgemm();
     // sss_s_s();
     // make_binary_search();
     // make_binary_partition();
-    test_lattice();
+    // test_lattice();
+    // test_locator_optimization();
 
     return 0;
 }

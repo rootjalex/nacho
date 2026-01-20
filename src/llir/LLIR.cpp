@@ -110,6 +110,10 @@ lExpr operator>=(lExpr a, lExpr b) {
     return lBinOp::make(lBinOp::Leq, std::move(b), std::move(a));
 }
 
+lExpr operator==(lExpr a, lExpr b) {
+    return lBinOp::make(lBinOp::Eq, std::move(a), std::move(b));
+}
+
 lExpr operator&&(lExpr a, lExpr b) {
     return lBinOp::make(lBinOp::And, std::move(a), std::move(b));
 }
@@ -133,6 +137,21 @@ lExpr lBuild::make(lType type, std::vector<lExpr> values) {
     return node;
 }
 
+lExpr lSelect::make(lExpr cond, lExpr tval, lExpr fval) {
+    internal_assert(cond.defined()) << "lSelect with undefined cond";
+    internal_assert(tval.defined()) << "lSelect with undefined tval";
+    internal_assert(fval.defined()) << "lSelect with undefined fval";
+
+    lSelect *node = new lSelect;
+    // TODO: define lType::type()
+    // TODO: assert tval and fval have equal types.
+    // node->type = tval.type();
+    node->cond = std::move(cond);
+    node->tval = std::move(tval);
+    node->fval = std::move(fval);
+    return node;
+}
+
 lExpr lArrayAccess::make(lExpr array, lExpr index) {
     internal_assert(array.defined() && index.defined())
         << "lArrayAccess of undefined: " << array << " [ " << index << " ]";
@@ -142,8 +161,8 @@ lExpr lArrayAccess::make(lExpr array, lExpr index) {
     return node;
 }
 
-lExpr lFieldAccess::make(lExpr object, lExpr field) {
-    internal_assert(object.defined() && field.defined())
+lExpr lFieldAccess::make(lExpr object, std::string field) {
+    internal_assert(object.defined() && !field.empty())
         << "lFieldAccess of undefined: " << object << " . " << field;
     lFieldAccess *node = new lFieldAccess;
     node->object = std::move(object);
@@ -266,21 +285,49 @@ lStmt Break::make() {
     return node;
 }
 
-lStmt For::make(lType type, std::string name, lExpr init, lExpr end, lExpr update, lStmt body) {
+lStmt For::make(lType type, std::string name, lExpr init, lExpr cond, lExpr inc,
+                lStmt body) {
     internal_assert(type.defined()) << "Undefined type in For::make()";
     internal_assert(!name.empty()) << "Empty name in For::make()";
     internal_assert(init.defined()) << "Undefined init in For::make()";
-    internal_assert(end.defined()) << "Undefined end in For::make()";
-    internal_assert(update.defined()) << "Undefined update in For::make()";
+    internal_assert(cond.defined()) << "Undefined cond in For::make()";
+    internal_assert(inc.defined()) << "Undefined inc in For::make()";
     internal_assert(body.defined()) << "Undefined body in For::make()";
 
     For *node = new For;
     node->type = std::move(type);
     node->name = std::move(name);
     node->init = std::move(init);
-    node->end = std::move(end);
-    node->update = std::move(update);
+    node->cond = std::move(cond);
+    node->inc = std::move(inc);
     node->body = std::move(body);
+    return node;
+}
+
+lStmt For::make(std::string name, lExpr cond, lExpr inc, lStmt body) {
+    internal_assert(!name.empty()) << "Empty name in For::make()";
+    internal_assert(cond.defined()) << "Undefined cond in For::make()";
+    internal_assert(inc.defined()) << "Undefined inc in For::make()";
+    internal_assert(body.defined()) << "Undefined body in For::make()";
+
+    For *node = new For;
+    node->type = lType(); // undefined!
+    node->name = std::move(name);
+    node->init = lExpr(); // undefined!
+    node->cond = std::move(cond);
+    node->inc = std::move(inc);
+    node->body = std::move(body);
+    return node;
+}
+
+lStmt Accumulate::make(lExpr var, lExpr value) {
+    internal_assert(var.defined())
+        << "Cannot make Accumulate with undefined var";
+    internal_assert(value.defined())
+        << "Cannot make Accumulate with undefined value";
+    Accumulate *node = new Accumulate;
+    node->var = std::move(var);
+    node->value = std::move(value);
     return node;
 }
 
