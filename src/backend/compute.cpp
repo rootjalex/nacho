@@ -268,29 +268,6 @@ llir::lStmt ComputeFunctionLowerer::
                                 std::move(body));
 }
 
-std::vector<Seq> indexes(const Seq &seq) {
-    struct GetIndexes : public Visitor {
-        std::vector<Seq> indexes;
-        std::set<Seq, SeqLessThan> visited;
-        void visit(const Index *node) override {
-            if (!visited.count(node)) {
-                indexes.push_back(node);
-                visited.insert(node);
-            }
-        }
-
-        void visit(const Universe *node) override {
-            if (!visited.count(node)) {
-                indexes.push_back(node);
-                visited.insert(node);
-            }
-        }
-    };
-    GetIndexes getter;
-    seq.accept(&getter);
-    return getter.indexes;
-}
-
 llir::lStmt ComputeFunctionLowerer::lower_loop(
     CIN loop, const std::set<Seq, SeqLessThan> &defined, bool is_precompute) {
 

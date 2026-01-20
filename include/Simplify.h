@@ -15,6 +15,11 @@ CIN simplify(const std::set<Seq, SeqLessThan> &defined, const CIN &cin);
 Seq remove_and_simplify(const Seq &orig, const Seq &remove);
 
 // Remove locators from a Seq expression.
-std::pair<Seq, std::vector<Seq>> remove_locators(const Seq &seq);
+std::pair<std::vector<Seq>, std::vector<Seq>>
+partition_iterators_locators(const Seq &seq);
+
+// Just a helper function
+// Gathers all `Index`s
+std::vector<Seq> indexes(const Seq &seq);
 
 } // namespace nacho

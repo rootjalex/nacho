@@ -87,23 +87,6 @@ struct Simplify : public SimplifySeq {
         return node;
     }
 
-    // TODO: dedup with indexes() in compute.cpp
-    std::vector<Seq> indexes(const Seq &seq) {
-        struct GetIndexes : public Visitor {
-            std::vector<Seq> indexes;
-            std::set<Seq, SeqLessThan> visited;
-            void visit(const Index *node) override {
-                if (!visited.count(node)) {
-                    indexes.push_back(node);
-                    visited.insert(node);
-                }
-            }
-        };
-        GetIndexes getter;
-        seq.accept(&getter);
-        return getter.indexes;
-    }
-
     CIN visit(const Forall *node) override {
         Seq seq = mutate(node->seq);
 
@@ -330,7 +313,8 @@ Seq remove_and_simplify(const Seq &orig, const Seq &remove) {
     return mutator.mutate(orig);
 }
 
-std::pair<Seq, std::vector<Seq>> remove_locators(const Seq &seq) {
+std::pair<std::vector<Seq>, std::vector<Seq>>
+partition_iterators_locators(const Seq &seq) {
     // First remove dense coiteration (turns into Universe with locators)
     RemoveDenseCoiteration rm_dense;
     Seq ret = rm_dense.mutate(seq);
@@ -341,7 +325,26 @@ std::pair<Seq, std::vector<Seq>> remove_locators(const Seq &seq) {
     RemoveDenseLocators rm_locators(locators);
     ret = rm_locators.mutate(ret);
 
-    return {ret, locators};
+    // Get any iterators that are left.
+    std::vector<Seq> iterators = indexes(ret);
+
+    return {iterators, locators};
+}
+
+std::vector<Seq> indexes(const Seq &seq) {
+    struct GetIndexes : public Visitor {
+        std::vector<Seq> indexes;
+        std::set<Seq, SeqLessThan> visited;
+        void visit(const Index *node) override {
+            if (!visited.count(node)) {
+                indexes.push_back(node);
+                visited.insert(node);
+            }
+        }
+    };
+    GetIndexes getter;
+    seq.accept(&getter);
+    return getter.indexes;
 }
 
 } // namespace nacho

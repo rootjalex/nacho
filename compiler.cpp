@@ -360,14 +360,27 @@ void test_locator_optimization() {
 
     std::cout << "a, b, c are sparse, d, e are dense.\n";
 
-    auto check = [](const Seq &seq) {
-        std::cout << "\n";
-        auto [simpl, locs] = remove_locators(seq);
-        std::cout << seq << " -> " << simpl << std::endl;
-        std::cout << "with locators:\n";
-        for (const auto &l : locs) {
-            std::cout << "  " << l << std::endl;
+    auto print_list = [](std::ostream &os, const std::vector<Seq> &seqs) {
+        bool first = true;
+        os << "{";
+        for (const auto &s : seqs) {
+            if (!first) {
+                os << ", ";
+            }
+            first = false;
+            os << s;
         }
+        os << "}";
+    };
+
+    auto check = [&print_list](const Seq &seq) {
+        std::cout << "\n";
+        auto [iters, locs] = partition_iterators_locators(seq);
+        std::cout << seq << " -> iterators: ";
+        print_list(std::cout, iters);
+        std::cout << " with locators: ";
+        print_list(std::cout, locs);
+        std::cout << std::endl;
     };
 
     Seq seq = Union::make(i_a, i_b);
