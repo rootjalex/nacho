@@ -36,8 +36,8 @@ void test() {
     std::cout << dcsr_lowered << "\n";
 
 
-    Expr a_ij = Tensor::make(csr_f32, "a");
-    Expr b_ij = Tensor::make(csr_f32, "b");
+    Expr a_ij = Tensor::make(dcsr_f32, "a");
+    Expr b_ij = Tensor::make(dcsr_f32, "b");
     Expr c_ij = Tensor::make(csr_f32, "c");
     Expr d_ij = Tensor::make(csr_f32, "d");
 
@@ -47,6 +47,16 @@ void test() {
     Expr d_i = Tensor::make(s_f32, "d_vec");
 
     Expr z_ij = a_ij + b_ij;
+
+    std::cout << z_ij << "\n";
+    std::cout << compile_to_cin(z_ij) << "\n";
+    std::cout << "Debug\n";
+    nacho::backend::CINLowerer(compile_to_cin(z_ij), std::cout).lower_cin();
+
+    a_ij = Tensor::make(csr_f32, "a");
+    b_ij = Tensor::make(csr_f32, "b");
+
+    z_ij = a_ij + b_ij;
 
     std::cout << z_ij << "\n";
     std::cout << compile_to_cin(z_ij) << "\n";

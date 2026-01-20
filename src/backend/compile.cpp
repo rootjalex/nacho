@@ -87,7 +87,7 @@ namespace backend {
     void CINLowerer::lower_struct_definitions() {
         for (auto it : operand_tensors) {
             printer.print(it.second.lower_tensor_struct_definition());
-            printer.print(it.second.lower_tensor_index_definition());
+            // printer.print(it.second.lower_tensor_index_definition());
         }
         printer.print(result_tensor.lower_tensor_struct_definition());
     }
@@ -109,6 +109,7 @@ namespace backend {
 
         PartitionFunctionLowerer partition_lowerer(operand_tensors, get_forall_list());
 
+        printer.print(partition_lowerer.lower_partition_struct_definition());
         printer.print(partition_lowerer.lower_partition_kernel_for_innermost_sparse_intersection());
 
         ComputeFunctionLowerer compute_lowerer(operand_tensors, result_tensor, get_forall_list(), cin);

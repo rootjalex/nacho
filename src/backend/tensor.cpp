@@ -15,7 +15,7 @@ llir::lType TensorLowerer::lower_tensor_struct_definition() const {
     std::vector<std::string> generics = {"index_t", "value_t"};
     std::vector<std::pair<std::string, llir::lType>> data_fields;
     data_fields.emplace_back("nnz", index_t);
-    data_fields.emplace_back("values", llir::Ptr_t::make(value_t));
+    data_fields.emplace_back(get_values_field_name(), llir::Ptr_t::make(value_t));
     for (int i = tensor_type.format.levels.size() - 1; i >= 0; i--) {
         auto index = tensor_type.format.levels[i].index;
 

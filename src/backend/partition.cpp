@@ -4,6 +4,7 @@
 #include "CIN.h"
 #include "llir/LLIR.h"
 #include "llir/Function.h"
+#include "Simplify.h"
 #include <numeric>
 namespace nacho {
 namespace backend {
@@ -282,6 +283,23 @@ namespace backend {
             )
         );
 
+        auto last_forall = forall_list.back().as<Forall>();
+        std::vector<Seq> locators = get_dense_locators(last_forall->seq);
+
+        // included tensors are the tensors which are included in the work
+        // calculation.
+        std::map<std::string, TensorLowerer> included_tensors;
+        for(const auto &loc : locators) {
+            const auto *index = loc.as<Index>();
+            if (!index){
+                internal_assert(false) << "Expected Index node in locator sequence: " << loc;
+            }
+            for(const auto &it : operand_tensors) {
+                if (it.second.tensor_name == index->tensor) {
+                    included_tensors[it.second.tensor_name] = it.second;
+                }
+            }
+        }
 
         for(int i=0;i<forall_list.size();i++) {
             const Forall* forall = forall_list[i].as<Forall>();

@@ -331,6 +331,13 @@ partition_iterators_locators(const Seq &seq) {
     return {iterators, locators};
 }
 
+std::vector<Seq> get_dense_locators(const Seq &seq) {
+    std::vector<Seq> locators;
+    RemoveDenseLocators rm_locators(locators);
+    rm_locators.mutate(seq);
+    return locators;
+}
+
 std::vector<Seq> indexes(const Seq &seq) {
     struct GetIndexes : public Visitor {
         std::vector<Seq> indexes;

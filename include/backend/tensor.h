@@ -25,6 +25,10 @@ namespace nacho {
             return tensor_name + "_tensor_index";
         }
 
+        inline std::string get_values_field_name() const {
+            return "values";
+        }
+        
         inline std::string
         get_indices_field_name(const std::string &index) const {
             return "dim_" + index + "_indices";
