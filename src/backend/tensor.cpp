@@ -67,7 +67,7 @@ llir::lType TensorLowerer::lower_tensor_struct_definition() const {
 // k+1
 llir::lExpr TensorLowerer::get_offset_expression_for_next_sparse(
     int dim_level_start, int dim_level_end, bool upper_bound,
-    bool use_field_access, llir::lExpr field_access_var) {
+    bool use_dim_vars, std::vector<llir::lExpr> dim_vars) {
     static llir::lType index_t = llir::Generic_t::make("index_t");
     // std::cout<<"dim_level_start: "<<dim_level_start<<", dim_level_end:
     // "<<dim_level_end<<std::endl;
@@ -90,10 +90,8 @@ llir::lExpr TensorLowerer::get_offset_expression_for_next_sparse(
     llir::lExpr ip_expr = llir::lConst::make((int64_t)0);
     if (is_start_dim_sparse) {
         ip_expr =
-            use_field_access
-                ? llir::lFieldAccess::make(
-                      field_access_var,
-                      tensor_type.format.levels[dim_level_start].index + "_p")
+            use_dim_vars
+                ? dim_vars[dim_level_start]
                 : llir::lVar::make(
                       index_t,
                       tensor_type.format.levels[dim_level_start].index + "_p");
@@ -114,9 +112,8 @@ llir::lExpr TensorLowerer::get_offset_expression_for_next_sparse(
          i <= dim_level_end; i++) {
 
         llir::lExpr dense_expr =
-            use_field_access
-                ? llir::lFieldAccess::make(field_access_var,
-                                           tensor_type.format.levels[i].index)
+            use_dim_vars
+                ? dim_vars[i]
                 : llir::lVar::make(index_t, tensor_type.format.levels[i].index);
         if (i == dim_level_end && upper_bound) {
             dense_expr = llir::lBinOp::make(llir::lBinOp::Add, dense_expr,
