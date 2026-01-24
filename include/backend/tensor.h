@@ -25,6 +25,10 @@ namespace nacho {
             return tensor_name + "_tensor_index";
         }
 
+        inline std::string get_values_field_name() const {
+            return "values";
+        }
+        
         inline std::string
         get_indices_field_name(const std::string &index) const {
             return "dim_" + index + "_indices";
@@ -80,8 +84,7 @@ namespace nacho {
 
         llir::lExpr get_offset_expression_for_next_sparse(
             int dim_level_start, int dim_level_end, bool upper_bound,
-            bool use_field_access = false,
-            llir::lExpr field_access_var = nullptr);
+            bool use_dim_vars = false, std::vector<llir::lExpr> dim_vars = {});
 
         // Lower the tensor index definition to LLIR.
         // This struct defines an object to specify the values of different

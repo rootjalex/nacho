@@ -71,7 +71,10 @@ namespace backend {
                                const std::set<Seq, SeqLessThan> &defined,
                                bool is_precompute);
 
+        llir::lStmt lower_assign_statement(CIN assign, bool is_precompute);
+
         void add_common_function_body_for_initialization(std::vector<llir::lStmt>& stmts);
+
 
     };
 
