@@ -82,16 +82,32 @@ lExpr operator+(lExpr a, lExpr b) {
     return lBinOp::make(lBinOp::Add, std::move(a), std::move(b));
 }
 
+lExpr operator+(lExpr a, int32_t b) {
+    return lBinOp::make(lBinOp::Add, std::move(a), lConst::make(b));
+}
+
 lExpr operator-(lExpr a, lExpr b) {
     return lBinOp::make(lBinOp::Sub, std::move(a), std::move(b));
+}
+
+lExpr operator-(lExpr a, int32_t b) {
+    return lBinOp::make(lBinOp::Sub, std::move(a), lConst::make(b));
 }
 
 lExpr operator*(lExpr a, lExpr b) {
     return lBinOp::make(lBinOp::Mul, std::move(a), std::move(b));
 }
 
+lExpr operator*(lExpr a, int32_t b) {
+    return lBinOp::make(lBinOp::Mul, std::move(a), lConst::make(b));
+}
+
 lExpr operator/(lExpr a, lExpr b){
     return lBinOp::make(lBinOp::Div, std::move(a), std::move(b));
+}
+
+lExpr operator/(lExpr a, int32_t b) {
+    return lBinOp::make(lBinOp::Div, std::move(a), lConst::make(b));
 }
 
 lExpr operator<(lExpr a, lExpr b) {

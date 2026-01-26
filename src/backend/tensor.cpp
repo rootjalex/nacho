@@ -403,13 +403,9 @@ TensorLowerer::lower_work_function(std::vector<std::string> loop_order,
                 tensor_type.format.get_next_sparse_level(next_sparse_level);
 
             // end_expr needs upper_bound so wee need to add `1`.
-            end_expr = llir::lBinOp::make(
-                llir::lBinOp::Add,
-                llir::lVar::make(
-                    index_t,
-                    tensor_type.format.levels[last_sparse_level].index +
-                        "_p_end"),
-                llir::lConst::make((int)1));
+            end_expr = llir::lVar::make(
+                index_t, tensor_type.format.levels[last_sparse_level].index +
+                            "_p_end");
             start_expr = llir::lVar::make(
                 index_t, tensor_type.format.levels[last_sparse_level].index +
                              "_p_start");

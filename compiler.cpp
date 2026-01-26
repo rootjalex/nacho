@@ -48,10 +48,10 @@ void test() {
 
     Expr z_ij = a_ij + b_ij;
 
-    std::cout << z_ij << "\n";
-    std::cout << compile_to_cin(z_ij) << "\n";
-    std::cout << "Debug\n";
-    nacho::backend::CINLowerer(compile_to_cin(z_ij), std::cout).lower_cin();
+    // std::cout << z_ij << "\n";
+    // std::cout << compile_to_cin(z_ij) << "\n";
+    // std::cout << "Debug\n";
+    // nacho::backend::CINLowerer(compile_to_cin(z_ij), std::cout).lower_cin();
 
     a_ij = Tensor::make(csr_f32, "a");
     b_ij = Tensor::make(csr_f32, "b");

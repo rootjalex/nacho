@@ -236,6 +236,10 @@ struct lBinOp : lExprNode<lBinOp> {
 lExpr operator+(lExpr a, lExpr b);
 lExpr operator-(lExpr a, lExpr b);
 lExpr operator*(lExpr a, lExpr b);
+lExpr operator+(lExpr a, int32_t b);
+lExpr operator-(lExpr a, int32_t b);
+lExpr operator*(lExpr a, int32_t b);
+lExpr operator/(lExpr a, int32_t b);
 lExpr operator/(lExpr a, lExpr b);
 lExpr operator<(lExpr a, lExpr b);
 lExpr operator>(lExpr a, lExpr b);
