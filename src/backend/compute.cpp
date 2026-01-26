@@ -25,13 +25,14 @@ llir::lType ComputeFunctionLowerer::lower_result_per_thread_count_struct() {
                                 std::move(generics));
 }
 
-void ComputeFunctionLowerer::add_common_function_body_for_initialization(
+void ComputeFunctionLowerer::add_partition_assignments(
     std::vector<llir::lStmt> &stmts) {
     llir::lType index_t = llir::Generic_t::make("index_t");
     llir::lType value_t = llir::Generic_t::make("value_t");
     // int thread_id = blockIdx.x * blockDim.x + threadIdx.x;
+    const llir::lType i32 = llir::Int_t::make(32);
     stmts.emplace_back(llir::Declare::make(
-        llir::Int_t::make(32), "thread_id",
+        i32, "thread_id",
         llir::lBinOp::make(
             llir::lBinOp::Add,
             llir::lBinOp::make(llir::lBinOp::Mul,
@@ -39,78 +40,110 @@ void ComputeFunctionLowerer::add_common_function_body_for_initialization(
                                llir::lVar::make(index_t, "blockDim.x")),
             llir::lVar::make(index_t, "threadIdx.x"))));
 
-    llir::lExpr thread_id_var = llir::lVar::make(index_t, "thread_id");
+    llir::lExpr thread_id_var = llir::lVar::make(i32, "thread_id");
 
-    // Generates the following for all tensors X index combinations
-    // index_t start_B_i = partitions_B.n_p[thread_id];
-    // index_t end_B_i = B.dim_i_length - 1;
-    // if (thread_id < ((gridDim.x * blockDim.x) - 1)) {
-    //     end_B_i = partitions_B.i_p[thread_id + 1];
-    // }
-    // TODO: end_B calculation might need some changing when non lowermost
-    // intersections (see spgemm.cu)
-    for (auto it : operand_tensors) {
-        auto tensor = it.second;
-        for (int j = 0; j < tensor.tensor_type.format.levels.size(); j++) {
-            auto level = tensor.tensor_type.format.levels[j];
+    // TODO: make this const!
+    stmts.emplace_back(
+        llir::Declare::make(i32, "max_thread_id",
+                            llir::lVar::make(index_t, "gridDim.x") *
+                                    llir::lVar::make(index_t, "blockDim.x") -
+                                llir::lConst::make(1)));
 
-            stmts.emplace_back(llir::Declare::make(
-                index_t, get_iterator_name(tensor, level.index),
-                llir::lArrayAccess::make(
-                    llir::lFieldAccess::make(
-                        llir::lVar::make(
-                            llir::Ptr_t::make(llir::Generic_t::make(
-                                tensor.get_index_struct_name())),
-                            "partitions_" + tensor.tensor_name),
-                        level.index +
-                            (is_sparse_format(level.format) ? "_p" : "")),
-                    thread_id_var)));
-            stmts.emplace_back(llir::Declare::make(
-                index_t, get_end_iterator_name(tensor, level.index),
-                llir::lBinOp::make(
-                    llir::lBinOp::Sub,
-                    llir::lFieldAccess::make(
-                        llir::lVar::make(
-                            llir::Ptr_t::make(llir::Generic_t::make(
-                                tensor.get_struct_name())),
-                            tensor.tensor_name),
-                        is_sparse_format(level.format)
-                            ? tensor.get_length_field_name(level.index)
-                            : tensor.get_size_field_name(level.index)),
-                    llir::lConst::make((int64_t)1))));
-            stmts.emplace_back(llir::IfElse::make(
-                llir::lBinOp::make(
-                    llir::lBinOp::Lt, thread_id_var,
-                    llir::lBinOp::make(
-                        llir::lBinOp::Sub,
-                        llir::lBinOp::make(
-                            llir::lBinOp::Mul,
-                            llir::lVar::make(index_t, "gridDim.x"),
-                            llir::lVar::make(index_t, "blockDim.x")),
-                        llir::lConst::make((int64_t)1))),
-                llir::Store::make(
-                    llir::lVar::make(
-                        index_t, get_end_iterator_name(tensor, level.index)),
-                    llir::lArrayAccess::make(
-                        llir::lFieldAccess::make(
-                            llir::lVar::make(
-                                llir::Ptr_t::make(llir::Generic_t::make(
-                                    tensor.get_index_struct_name())),
-                                "partitions_" + tensor.tensor_name),
-                            level.index +
-                                (is_sparse_format(level.format) ? "_p" : "")),
-                        llir::lBinOp::make(llir::lBinOp::Add, thread_id_var,
-                                           llir::lConst::make((int64_t)1)))),
-                nullptr));
+    llir::lExpr max_thread_id_var = llir::lVar::make(i32, "max_thread_id");
+
+    CIN loop = cin;
+
+    const std::string partitions_name = get_partition_struct_name();
+    llir::lExpr partitions_var = llir::lVar::make(
+        llir::Generic_t::make(get_partition_struct_name() + "<index_t>"),
+        partitions_name);
+
+    auto add_single_partition_load = [&](const std::string &suffix,
+                                         llir::lExpr maximum_iterator) {
+        // TODO: make const!
+        // index_t start_i = partitions.i[thread_id];
+        llir::lExpr partitions_field =
+            llir::lFieldAccess::make(partitions_var, suffix);
+        stmts.emplace_back(llir::Declare::make(
+            index_t, get_start_name(suffix),
+            llir::lArrayAccess::make(partitions_field, thread_id_var)));
+        // index_t end_i = (thread_id < max_thread_id) ? partitions.i[thread_id
+        // + 1] : iterator_max;
+        llir::lExpr next_partition = llir::lArrayAccess::make(
+            partitions_field, thread_id_var + llir::lConst::make(1));
+        llir::lExpr guarded_end =
+            llir::lSelect::make(thread_id_var < max_thread_id_var,
+                                next_partition, maximum_iterator);
+        stmts.emplace_back(
+            llir::Declare::make(index_t, get_end_name(suffix), guarded_end));
+        return llir::lVar::make(index_t, get_start_name(suffix));
+    };
+
+    auto print_list = [](std::ostream &os, const std::vector<Seq> &seqs) {
+        bool first = true;
+        os << "{";
+        for (const auto &s : seqs) {
+            if (!first) {
+                os << ", ";
+            }
+            first = false;
+            os << s;
         }
-    }
+        os << "}";
+    };
 
-    for (auto it : operand_tensors) {
-        auto last_forall = forall_list[forall_list.size() - 1].as<Forall>();
-        if (it.second.tensor_type.format.level_exists(last_forall->idx)) {
-            stmts.emplace_back(
-                llir::BaseExpr::make(llir::lIncrement::make(llir::lVar::make(
-                    index_t, get_iterator_name(it.second, last_forall->idx)))));
+    auto get_max_iterator = [&](const Index *idx) {
+        TensorLowerer tlow(idx->tensor, idx->type);
+        // TODO: fix this type hack.
+        llir::lExpr tensor = llir::lVar::make(
+            llir::Generic_t::make(tlow.get_struct_name()), tlow.tensor_name);
+        std::string field_name = idx->is_sparse
+                                     ? tlow.get_length_field_name(idx->level)
+                                     : tlow.get_size_field_name(idx->level);
+        return llir::lFieldAccess::make(tensor, field_name) -
+               llir::lConst::make(1);
+    };
+
+    while (const auto *forall = loop.as<Forall>()) {
+        auto [iters, locs] = partition_iterators_locators(forall->seq);
+
+        std::vector<llir::lExpr> iter_vars;
+
+        if (iters.empty()) {
+            // Iterating over the universe!
+            // Need to get the maximum of the universe from one of the locators.
+            internal_assert(!locs.empty()) << forall->seq;
+            const Index *idx = locs[0].as<Index>();
+            internal_assert(idx) << locs[0];
+            // Use `size` for dense, `length` for sparse.
+            internal_assert(!idx->is_sparse) << locs[0];
+            llir::lExpr max_iter = get_max_iterator(idx);
+            llir::lExpr iter_var =
+                add_single_partition_load(forall->idx, max_iter);
+            iter_vars.emplace_back(std::move(iter_var));
+        } else {
+            // For each iterator, construct
+            for (const auto &iter : iters) {
+                const Index *idx = iter.as<Index>();
+                internal_assert(idx) << iter;
+                TensorLowerer tlow(idx->tensor, idx->type);
+                llir::lExpr max_iter = get_max_iterator(idx);
+                std::string suffix = tlow.get_iterator_suffix(idx->level);
+                llir::lExpr iter_var =
+                    add_single_partition_load(suffix, max_iter);
+                iter_vars.emplace_back(std::move(iter_var));
+            }
+        }
+
+        loop = forall->body;
+
+        // Last iterators need to be bumped forward by one!
+        if (!loop.as<Forall>()) {
+            for (const auto &var : iter_vars) {
+                // iter++
+                stmts.push_back(
+                    llir::BaseExpr::make(llir::lIncrement::make(var)));
+            }
         }
     }
     return;
@@ -141,13 +174,13 @@ llir::lStmt ComputeFunctionLowerer::
                                           "<index_t, value_t>"),
             .name = tensor.second.tensor_name});
     }
-    for (auto tensor : operand_tensors) {
-        args.emplace_back(llir::Function::Argument{
-            .mutating = true,
-            .type = llir::Ptr_t::make(llir::Generic_t::make(
-                tensor.second.get_index_struct_name() + "<index_t, value_t>")),
-            .name = "partitions_" + tensor.second.tensor_name});
-    }
+
+    // Add a partitions_{loops} argument type.
+    args.emplace_back(llir::Function::Argument{
+        .mutating = false,
+        .type =
+            llir::Generic_t::make(get_partition_struct_name() + "<index_t>"),
+        .name = "partitions"});
 
     args.emplace_back(llir::Function::Argument{
         .mutating = true,
@@ -160,7 +193,7 @@ llir::lStmt ComputeFunctionLowerer::
     std::vector<llir::lStmt> stmts;
 
     // Add common initialization statements
-    add_common_function_body_for_initialization(stmts);
+    add_partition_assignments(stmts);
 
     // index_t count = thread_id * per_thread_work;
     stmts.emplace_back(llir::Declare::make(
@@ -233,13 +266,13 @@ llir::lStmt ComputeFunctionLowerer::
                                           "<index_t, value_t>"),
             .name = tensor.second.tensor_name});
     }
-    for (auto tensor : operand_tensors) {
-        args.emplace_back(llir::Function::Argument{
-            .mutating = true,
-            .type = llir::Ptr_t::make(llir::Generic_t::make(
-                tensor.second.get_index_struct_name() + "<index_t, value_t>")),
-            .name = "partitions_" + tensor.second.tensor_name});
-    }
+
+    // Add partition argument.
+    args.emplace_back(llir::Function::Argument{
+        .mutating = false,
+        .type =
+            llir::Generic_t::make(get_partition_struct_name() + "<index_t>"),
+        .name = "partitions"});
 
     args.emplace_back(llir::Function::Argument{
         .mutating = false,
@@ -258,7 +291,7 @@ llir::lStmt ComputeFunctionLowerer::
     std::vector<llir::lStmt> stmts;
 
     // Add common initialization statements
-    add_common_function_body_for_initialization(stmts);
+    add_partition_assignments(stmts);
 
     for (int i = 0; i < result_tensor.tensor_type.format.levels.size(); i++) {
         auto index = result_tensor.tensor_type.format.levels[i].index;

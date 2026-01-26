@@ -44,6 +44,11 @@ namespace nacho {
             return "dim_" + index + "_length";
         }
 
+        inline std::string get_length_field_name(const int level) const {
+            return get_length_field_name(
+                tensor_type.format.levels[level].index);
+        }
+
         inline std::string
         get_offsets_field_name(const std::string &index) const {
             return "dim_" + index + "_offsets";
@@ -65,6 +70,15 @@ namespace nacho {
         inline std::string
         get_work_function_name(const std::string &index) const {
             return "work_" + tensor_name + "_dim_" + index;
+        }
+
+        inline std::string get_iterator_suffix(const int level) const {
+            // TODO: standardize the "_p" stuff somewhere.
+            return tensor_name + "_" + tensor_type.format.levels[level].index +
+                   (tensor_type.format.levels[level].format ==
+                            LevelFormat::Compressed
+                        ? "_p"
+                        : "");
         }
 
         llir::lType lower_tensor_struct_definition() const;
