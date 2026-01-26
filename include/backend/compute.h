@@ -77,6 +77,7 @@ namespace backend {
 
         llir::lStmt lower_loop(CIN loop,
                                const std::set<Seq, SeqLessThan> &defined,
+                               const std::set<Seq, SeqLessThan> &lookups,
                                bool is_precompute);
 
         llir::lStmt lower_assign_statement(CIN assign, bool is_precompute);

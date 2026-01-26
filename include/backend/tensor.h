@@ -35,8 +35,7 @@ namespace nacho {
         }
 
         inline std::string get_indices_field_name(const int level) const {
-            return get_indices_field_name(
-                tensor_type.format.levels[level].index);
+            return get_indices_field_name(level_name(level));
         }
 
         inline std::string
@@ -45,8 +44,7 @@ namespace nacho {
         }
 
         inline std::string get_length_field_name(const int level) const {
-            return get_length_field_name(
-                tensor_type.format.levels[level].index);
+            return get_length_field_name(level_name(level));
         }
 
         inline std::string
@@ -55,8 +53,7 @@ namespace nacho {
         }
 
         inline std::string get_offsets_field_name(const int level) const {
-            return get_offsets_field_name(
-                tensor_type.format.levels[level].index);
+            return get_offsets_field_name(level_name(level));
         }
 
         inline std::string get_size_field_name(const std::string &index) const {
@@ -64,7 +61,7 @@ namespace nacho {
         }
 
         inline std::string get_size_field_name(const int level) const {
-            return get_size_field_name(tensor_type.format.levels[level].index);
+            return get_size_field_name(level_name(level));
         }
 
         inline std::string
@@ -72,13 +69,17 @@ namespace nacho {
             return "work_" + tensor_name + "_dim_" + index;
         }
 
-        inline std::string get_iterator_suffix(const int level) const {
+        inline std::string get_type_suffix(const int level) const {
             // TODO: standardize the "_p" stuff somewhere.
-            return tensor_name + "_" + tensor_type.format.levels[level].index +
-                   (tensor_type.format.levels[level].format ==
-                            LevelFormat::Compressed
-                        ? "_p"
-                        : "");
+            return tensor_type.format.levels[level].format ==
+                           LevelFormat::Compressed
+                       ? "_p"
+                       : "";
+        }
+
+        inline std::string get_iterator_suffix(const int level) const {
+            return tensor_name + "_" + level_name(level) +
+                   get_type_suffix(level);
         }
 
         llir::lType lower_tensor_struct_definition() const;
@@ -120,29 +121,31 @@ namespace nacho {
             return is_sparse_format(tensor_type.format.levels[level].format);
         }
 
+        inline std::string level_name(const int level) const {
+            return tensor_type.format.levels[level].index;
+        }
+
         inline std::string get_iter_name(const int level) const {
-            return "iter_" + tensor_name + "_" +
-                   tensor_type.format.levels[level].index +
-                   (is_sparse(level) ? "p" : "");
+            return "iter_" + tensor_name + "_" + level_name(level) +
+                   get_type_suffix(level);
         }
 
         inline std::string get_stop_name(const int level) const {
-            return "stop_" + tensor_name + "_" +
-                   tensor_type.format.levels[level].index;
+            return "stop_" + tensor_name + "_" + level_name(level);
         }
 
-        inline std::string get_idx_name(const int level) const {
-            return "idx_" + tensor_name + "_" +
-                   tensor_type.format.levels[level].index;
+        inline std::string get_start_name(const int level) const {
+            return "start_" + tensor_name + "_" + level_name(level) +
+                   get_type_suffix(level);
         }
 
         inline std::string get_end_name(const int level) const {
-            return "end_" + tensor_name + "_" +
-                   tensor_type.format.levels[level].index;
+            return "end_" + tensor_name + "_" + level_name(level) +
+                   get_type_suffix(level);
         }
 
         inline std::string get_coord_name(const int level) const {
-            return tensor_name + "_" + tensor_type.format.levels[level].index;
+            return tensor_name + "_" + level_name(level);
         }
 
         llir::lExpr get_tensor_expr() const {
@@ -232,9 +235,7 @@ namespace nacho {
             // value.
             llir::lExpr value =
                 is_sparse(level)
-                    ? (crd ==
-                       llir::lVar::make(index_t,
-                                        tensor_type.format.levels[level].index))
+                    ? (crd == llir::lVar::make(index_t, level_name(level)))
                     : llir::lConst::make(1);
             return llir::Accumulate::make(std::move(iter), std::move(value));
         }
