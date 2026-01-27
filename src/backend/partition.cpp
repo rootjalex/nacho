@@ -649,8 +649,25 @@ namespace backend {
                                 current_dim_level - 1, true, true,
                                 dim_vars_for_offset_expression)] - 1));
 
-        llir::lExpr tensor1_position_var_expr = tensor1_position_var_start + (tensor1_position_var_end - tensor1_position_var_start + 1)/2;
-        llir::lExpr tensor2_position_var_expr = tensor2_position_var_start + (rem_count_var - (tensor1_position_var - tensor1_position_var_start)/2);
+        stmts.emplace_back(
+            llir::Declare::make(
+                index_t,
+                "start_j",
+                tensor1_position_var_start
+            )
+        );
+        stmts.emplace_back(
+            llir::Declare::make(
+                index_t,
+                "end_j",
+                tensor1_position_var_end
+            )
+        );
+        llir::lExpr start_j = llir::lVar::make(index_t, "start_j");
+        llir::lExpr end_j = llir::lVar::make(index_t, "end_j");
+
+        llir::lExpr tensor1_position_var_expr = start_j + (end_j - start_j + 1)/2;
+        llir::lExpr tensor2_position_var_expr = tensor2_position_var_start + (rem_count_var - (tensor1_position_var - tensor1_position_var_start));
         stmts.emplace_back(
             llir::Declare::make(
                 index_t,
@@ -687,23 +704,23 @@ namespace backend {
                 tensor2_position_var_start < tensor2_position_var && (tensor1_position_var+1) <= tensor1_position_var_end &&
                     tensor1.get_indices_field(forall_idx)[tensor1_position_var+1] < tensor2.get_indices_field(forall_idx)[tensor2_position_var],
                 llir::Store::make(
-                    tensor1_position_var_start,
+                    start_j,
                     tensor1_position_var + 1
                 ),
                 llir::IfElse::make(
                     tensor1_position_var_start < tensor1_position_var && (tensor2_position_var+1) <= tensor2_position_var_end &&
                         tensor2.get_indices_field(forall_idx)[tensor2_position_var+1] < tensor1.get_indices_field(forall_idx)[tensor1_position_var],
                     llir::Store::make(
-                        tensor1_position_var_end,
+                        end_j,
                         tensor1_position_var - 1
                     ),
                     llir::Sequence::make({
                         llir::Store::make(
-                            tensor1_position_var_start,
+                            start_j,
                             tensor1_position_var
                         ),
                         llir::Store::make(
-                            tensor1_position_var_end,
+                            end_j,
                             tensor1_position_var
                         )
                     })
@@ -720,11 +737,11 @@ namespace backend {
                 llir::IfElse::make(
                     tensor2_position_var_end < tensor2_position_var,
                     llir::Store::make(
-                        tensor1_position_var_start,
+                        start_j,
                         tensor1_position_var + 1
                     ),
                     llir::Store::make(
-                    tensor1_position_var_end,
+                    end_j,
                     tensor1_position_var - 1
                     )
                 )
@@ -733,7 +750,7 @@ namespace backend {
 
         stmts.emplace_back(
             llir::While::make(
-                tensor1_position_var < tensor1_position_var_end,
+                start_j < end_j,
                 llir::Sequence::make(std::move(binary_search_stmts))
             )
         );
