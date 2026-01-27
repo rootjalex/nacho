@@ -27,11 +27,16 @@ void test() {
     Format s = Format::ordered({
         {"i", LevelFormat::Compressed}
     });
-   
+
+    Format d = Format::ordered({
+        {"i", LevelFormat::Dense}
+    });
 
     TensorType csr_f32 = TensorType(csr, dType::Float32);
     TensorType dcsr_f32 = TensorType(dcsr, dType::Float32);
     TensorType s_f32 = TensorType(s, dType::Float32);
+    TensorType d_f32 = TensorType(d, dType::Float32);
+
     auto dcsr_lowered = nacho::backend::TensorLowerer("dcsr", dcsr_f32).lower_tensor_struct_definition();
     std::cout << dcsr_lowered << "\n";
 
@@ -43,8 +48,8 @@ void test() {
 
     Expr a_i = Tensor::make(s_f32, "a_vec");
     Expr b_i = Tensor::make(s_f32, "b_vec");
-    Expr c_i = Tensor::make(s_f32, "c_vec");
-    Expr d_i = Tensor::make(s_f32, "d_vec");
+    Expr c_i = Tensor::make(d_f32, "c_vec");
+    Expr d_i = Tensor::make(d_f32, "d_vec");
 
     Expr z_ij = a_ij + b_ij;
 
@@ -53,11 +58,19 @@ void test() {
     // std::cout << "Debug\n";
     // nacho::backend::CINLowerer(compile_to_cin(z_ij), std::cout).lower_cin();
 
+    {
+        Expr z_i = a_i * c_i;
+        std::cout << z_i << "\n";
+        std::cout << compile_to_cin(z_i) << "\n";
+        std::cout << "Debug\n";
+        nacho::backend::CINLowerer(compile_to_cin(z_i), std::cout).lower_cin();
+    }
+
     a_ij = Tensor::make(csr_f32, "a");
     b_ij = Tensor::make(csr_f32, "b");
 
     z_ij = a_ij + b_ij;
-
+    Expr z_i = a_i * b_i;
     std::cout << z_ij << "\n";
     std::cout << compile_to_cin(z_ij) << "\n";
     std::cout << "Debug\n";
@@ -65,7 +78,7 @@ void test() {
     return;
 
     std::cout << "Debug\n";
-    Expr z_i = sum("i", z_ij);
+    z_i = sum("i", z_ij);
     std::cout << z_i << "\n";
     std::cout << compile_to_cin(z_i) << "\n";
     nacho::backend::CINLowerer(compile_to_cin(z_ij), std::cout).lower_cin();
