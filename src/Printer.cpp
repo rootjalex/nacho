@@ -399,6 +399,7 @@ bool is_infix_op(const llir::lBinOp::Op op) {
     case llir::lBinOp::Add:
     case llir::lBinOp::Div:
     case llir::lBinOp::Eq:
+    case llir::lBinOp::Neq:
     case llir::lBinOp::Leq:
     case llir::lBinOp::Lt:
     case llir::lBinOp::Mul:
@@ -429,6 +430,10 @@ std::string get_op_string(const llir::lBinOp::Op op) {
         return " == ";
         break;
     }
+    case llir::lBinOp::Neq: {
+        return " != ";
+        break;
+    }
     case llir::lBinOp::Leq: {
         return " <= ";
         break;
@@ -439,6 +444,10 @@ std::string get_op_string(const llir::lBinOp::Op op) {
     }
     case llir::lBinOp::Min: {
         return "min";
+        break;
+    }
+    case llir::lBinOp::Max: {
+        return "max";
         break;
     }
     case llir::lBinOp::Mul: {

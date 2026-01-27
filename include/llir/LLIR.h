@@ -215,10 +215,12 @@ struct lBinOp : lExprNode<lBinOp> {
         Add,
         Div,
         Eq,
+        Neq,
         Leq,
         Load,
         Lt,
         Min,
+        Max,
         Mul,
         Or,
         Sub,
@@ -247,6 +249,7 @@ lExpr operator<=(lExpr a, lExpr b);
 lExpr operator>=(lExpr a, lExpr b);
 lExpr operator==(lExpr a, lExpr b);
 lExpr operator&&(lExpr a, lExpr b);
+lExpr operator!=(lExpr a, lExpr b);
 
 struct lConst : lExprNode<lConst> {
     std::variant<int64_t, uint64_t, double, bool> value;
