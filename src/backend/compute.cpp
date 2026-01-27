@@ -78,19 +78,6 @@ void ComputeFunctionLowerer::add_partition_assignments(
         return llir::lVar::make(index_t, get_start_name(suffix));
     };
 
-    auto print_list = [](std::ostream &os, const std::vector<Seq> &seqs) {
-        bool first = true;
-        os << "{";
-        for (const auto &s : seqs) {
-            if (!first) {
-                os << ", ";
-            }
-            first = false;
-            os << s;
-        }
-        os << "}";
-    };
-
     auto get_max_iterator = [&](const Index *idx) {
         TensorLowerer tlow(idx->tensor, idx->type);
         // TODO: fix this type hack.
