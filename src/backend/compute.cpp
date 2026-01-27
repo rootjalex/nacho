@@ -852,7 +852,7 @@ llir::lStmt ComputeFunctionLowerer::lower_loop(
             if( body.defined()) {
                 body = llir::Sequence::make({std::move(body), make_body(s, assign_indices_stmt)});
             } else {
-                body = make_body(s);
+                body = make_body(s, assign_indices_stmt);
             }
             
             // TODO: load index if sparse iterator
