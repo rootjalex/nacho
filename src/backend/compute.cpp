@@ -630,7 +630,7 @@ llir::lStmt ComputeFunctionLowerer::lower_loop(
             return llir::lStmt();
         };
 
-        auto make_body = [&](const Seq &a) {
+        auto make_body = [&](const Seq &a, llir::lStmt &assign_indices_stmt) {
             // Do NOT change this to partition_iterators_locators, body
             // needs all defined.
             auto as = indexes(a);
@@ -665,6 +665,11 @@ llir::lStmt ComputeFunctionLowerer::lower_loop(
                 }
             } else {
                 body = lower_assign_statement(cin, is_precompute);
+            }
+
+            if(assign_indices_stmt.defined()){
+                body = llir::Sequence::make(
+                    {assign_indices_stmt, std::move(body)});
             }
 
             if (seq.get()->is_sparse) {
@@ -781,6 +786,13 @@ llir::lStmt ComputeFunctionLowerer::lower_loop(
             return llir::lStmt();
         };
 
+
+        llir::lStmt assign_indices_stmt;
+        // Store the index value in the result
+        if(!is_precompute){
+            assign_indices_stmt = make_assign_indices(llir::lVar::make(index_t, forall->idx));
+        }
+
         if (iters.size() == 0) {
             // For loop (dense)!
             static const llir::lExpr _1 = llir::lConst::make(1);
@@ -803,7 +815,7 @@ llir::lStmt ComputeFunctionLowerer::lower_loop(
                 }
             }
 
-            llir::lStmt body = make_body(s);
+            llir::lStmt body = make_body(s, assign_indices_stmt);
 
             if (const auto *as_seq = body.as<llir::Sequence>()) {
                 stmts.insert(stmts.end(), as_seq->stmts.begin(),
@@ -835,13 +847,10 @@ llir::lStmt ComputeFunctionLowerer::lower_loop(
             // Store the index value in the result
             if(!is_precompute) {
                 body = llir::Declare::make(index_t, forall->idx, tlower.get_coord(index->level, index_t));
-                body =  llir::Sequence::make({std::move(body), make_assign_indices(
-                    llir::lVar::make(index_t, forall->idx)
-                )});
             }
 
             if( body.defined()) {
-                body = llir::Sequence::make({std::move(body), make_body(s)});
+                body = llir::Sequence::make({std::move(body), make_body(s, assign_indices_stmt)});
             } else {
                 body = make_body(s);
             }
@@ -858,7 +867,7 @@ llir::lStmt ComputeFunctionLowerer::lower_loop(
                 if (count >= cases.size()) {
                     return llir::lStmt();
                 }
-                llir::lStmt b = make_body(cases[count]);
+                llir::lStmt b = make_body(cases[count], assign_indices_stmt);
                 internal_assert(b.defined());
                 if (cases.size() == 1 &&
                     std::get<0>(partition_iterators_locators(cases[0]))
@@ -874,13 +883,6 @@ llir::lStmt ComputeFunctionLowerer::lower_loop(
             // Prologue (evaluate)
             auto stmts = make_evals(s);
 
-            // Store the index value in the result
-            if(!is_precompute){
-                auto stmt = make_assign_indices(llir::lVar::make(index_t, forall->idx));
-                if(stmt.defined()) {
-                    stmts.push_back(std::move(stmt));
-                }
-            }
             // Execute
             stmts.push_back(build_ifelse(0));
             // Epilogue (incrments!)
