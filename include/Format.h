@@ -60,6 +60,7 @@ struct Format {
     int get_level_order(const std::string &idx) const;
 
     LevelFormat lvlfmt_of(const std::string &idx) const;
+    bool is_sparse(const std::string &idx) const;
     bool level_exists(const std::string &idx) const;
     bool is_bc_lvl(const std::string &idx) const;
 };

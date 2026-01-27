@@ -28,10 +28,24 @@ namespace nacho {
         inline std::string get_values_field_name() const {
             return "values";
         }
+
+        inline llir::lExpr get_values_field() const {
+            return llir::lFieldAccess::make(
+                llir::lVar::make(llir::Generic_t::make(get_struct_name()), tensor_name),
+                get_values_field_name()
+            );
+        }
         
         inline std::string
         get_indices_field_name(const std::string &index) const {
             return "dim_" + index + "_indices";
+        }
+
+        inline llir::lExpr get_indices_field(const std::string &index) const {
+            return llir::lFieldAccess::make(
+                llir::lVar::make(llir::Generic_t::make(get_struct_name()), tensor_name),
+                get_indices_field_name(index)
+            );
         }
 
         inline std::string get_indices_field_name(const int level) const {
@@ -39,9 +53,24 @@ namespace nacho {
                 tensor_type.format.levels[level].index);
         }
 
+        inline llir::lExpr get_indices_field(const int level) const {
+            return llir::lFieldAccess::make(
+                llir::lVar::make(llir::Generic_t::make(get_struct_name()), tensor_name),
+                get_indices_field_name(level)
+            );
+        }
+
+
         inline std::string
         get_length_field_name(const std::string &index) const {
             return "dim_" + index + "_length";
+        }
+
+        inline llir::lExpr get_length_field(const std::string &index) const {
+            return llir::lFieldAccess::make(
+                llir::lVar::make(llir::Generic_t::make(get_struct_name()), tensor_name),
+                get_length_field_name(index)
+            );
         }
 
         inline std::string
@@ -49,17 +78,45 @@ namespace nacho {
             return "dim_" + index + "_offsets";
         }
 
+        inline llir::lExpr get_offsets_field(const std::string &index) const {
+            return llir::lFieldAccess::make(
+                llir::lVar::make(llir::Generic_t::make(get_struct_name()), tensor_name),
+                get_offsets_field_name(index)
+            );
+        }
+
         inline std::string get_offsets_field_name(const int level) const {
             return get_offsets_field_name(
                 tensor_type.format.levels[level].index);
+        }
+
+        inline llir::lExpr get_offsets_field(const int level) const {
+            return llir::lFieldAccess::make(
+                llir::lVar::make(llir::Generic_t::make(get_struct_name()), tensor_name),
+                get_offsets_field_name(level)
+            );
         }
 
         inline std::string get_size_field_name(const std::string &index) const {
             return "dim_" + index + "_size";
         }
 
+        inline llir::lExpr get_size_field(const std::string &index) const {
+            return llir::lFieldAccess::make(
+                llir::lVar::make(llir::Generic_t::make(get_struct_name()), tensor_name),
+                get_size_field_name(index)
+            );
+        }
+
         inline std::string get_size_field_name(const int level) const {
             return get_size_field_name(tensor_type.format.levels[level].index);
+        }
+
+        inline llir::lExpr get_size_field(const int level) const {
+            return llir::lFieldAccess::make(
+                llir::lVar::make(llir::Generic_t::make(get_struct_name()), tensor_name),
+                get_size_field_name(level)
+            );
         }
 
         inline std::string

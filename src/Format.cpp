@@ -196,6 +196,10 @@ LevelFormat Format::lvlfmt_of(const std::string &idx) const {
     return it->format;
 }
 
+bool Format::is_sparse(const std::string &idx) const {
+    return is_sparse_format(lvlfmt_of(idx));
+}
+
 bool Format::level_exists(const std::string &idx) const {
     return std::any_of(levels.begin(), levels.end(),
                        [&](const Level &lvl) { return lvl.index == idx; });
