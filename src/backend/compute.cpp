@@ -669,7 +669,7 @@ llir::lStmt ComputeFunctionLowerer::lower_loop(
 
             if(assign_indices_stmt.defined()){
                 body = llir::Sequence::make(
-                    {std::move(assign_indices_stmt), std::move(body)});
+                    {assign_indices_stmt, std::move(body)});
             }
 
             if (seq.get()->is_sparse) {
