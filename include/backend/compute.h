@@ -61,6 +61,14 @@ namespace backend {
             return  "compute_" + get_all_loops_string() + "_kernel";
         }
 
+        inline std::string get_start_name(const std::string &suffix) const {
+            return "start_" + suffix;
+        }
+
+        inline std::string get_end_name(const std::string &suffix) const {
+            return "end_" + suffix;
+        }
+
         llir::lType lower_result_per_thread_count_struct();
 
         llir::lStmt lower_precompute_function_for_innermost_sparse_intersection();
@@ -69,13 +77,24 @@ namespace backend {
 
         llir::lStmt lower_loop(CIN loop,
                                const std::set<Seq, SeqLessThan> &defined,
+                               const std::set<Seq, SeqLessThan> &lookups,
                                bool is_precompute);
 
         llir::lStmt lower_assign_statement(CIN assign, bool is_precompute);
 
-        void add_common_function_body_for_initialization(std::vector<llir::lStmt>& stmts);
+        void add_partition_assignments(std::vector<llir::lStmt> &stmts);
 
-
+        // TODO: deduplicate with
+        // PartitionFunctionLowerer::get_partition_struct_name()
+        inline std::string get_partition_struct_name() const {
+            std::string partition_argtype_name = "partition_";
+            CIN strip_idxs = cin;
+            while (const auto *forall = strip_idxs.as<Forall>()) {
+                partition_argtype_name += forall->idx;
+                strip_idxs = forall->body;
+            }
+            return partition_argtype_name;
+        }
     };
 
 } // namespace backend
