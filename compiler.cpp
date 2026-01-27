@@ -63,8 +63,8 @@ void test() {
 
     z_ij = a_ij + b_ij;
     Expr z_i = a_i * b_i;
-    std::cout << z_ij << "\n";
-    std::cout << compile_to_cin(z_ij) << "\n";
+    std::cout << z_i << "\n";
+    std::cout << compile_to_cin(z_i) << "\n";
     std::cout << "Debug\n";
     nacho::backend::CINLowerer(compile_to_cin(z_ij), std::cout).lower_cin();
     return;
