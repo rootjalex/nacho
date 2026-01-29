@@ -463,6 +463,10 @@ namespace backend {
             return lower_trivial_partition_loop(loop_index, is_last_loop);
         }   
 
+        //TODO: Special Case - not last loop but included tensor size == 1 and the tensor is sparse
+
+        //TODO: Special Case - not last loop but all included tensors are dense and there is no sparse dim in both the tensors below this loop
+
         llir::lExpr start_var = llir::lVar::make(index_t, "start_"+forall_idx);
         llir::lExpr end_var = llir::lVar::make(index_t, "end_"+forall_idx);
         llir::lExpr mid_var = llir::lVar::make(index_t, "mid_"+forall_idx);

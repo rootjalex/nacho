@@ -3,6 +3,7 @@
 #include "CIN.h"
 #include "Type.h"
 #include "llir/LLIR.h"
+#include <numeric>
 
 namespace nacho {
     namespace backend {
@@ -75,6 +76,13 @@ namespace nacho {
             );
         }
 
+        inline llir::lExpr get_length_field(const int level) const {
+            return llir::lFieldAccess::make(
+                llir::lVar::make(llir::Generic_t::make(get_struct_name()), tensor_name),
+                get_length_field_name(level)
+            );
+        }
+
         inline std::string
         get_offsets_field_name(const std::string &index) const {
             return "dim_" + index + "_offsets";
@@ -121,7 +129,11 @@ namespace nacho {
         }
 
         inline std::string
-        get_work_function_name(const std::string &index) const {
+        get_work_function_name(std::vector<std::string> loop_order, const std::string &index) const {
+            std::string all_loops_string = std::accumulate(loop_order.begin(), loop_order.end(), std::string(""),
+            [](const std::string &acc, const std::string &c) {
+                return acc + c;
+            });
             return "work_" + tensor_name + "_dim_" + index;
         }
 
@@ -151,6 +163,9 @@ namespace nacho {
         // args are loop_order = [i,j,k,l],target_dim = 2, prev_dim_positions =
         // [12, 32], target_dim_position = 54
         llir::lStmt lower_work_function(std::vector<std::string> loop_order,
+                                        int target_dim);
+
+        llir::lStmt lower_result_work_function(std::vector<std::string> loop_order,
                                         int target_dim);
 
         llir::lExpr get_offset_expression_for_next_sparse(
