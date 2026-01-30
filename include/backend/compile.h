@@ -30,6 +30,8 @@ namespace backend {
             // is_innermost_sparse_intersection checks if the given CIN represents an innermost sparse intersection. 
             // this also returns true if the CIN does not have any sparse intersection.
             bool is_innermost_sparse_intersection();
+            // 
+
         };
 
 

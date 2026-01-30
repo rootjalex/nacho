@@ -156,6 +156,7 @@ TensorLowerer::lower_work_function(std::vector<std::string> loop_order,
             break;
         }
     }
+    int last_level_in_loop_order = last_level_loop_place==-1 ? -1 : order_map[loop_order[last_level_loop_place]];
 
     // checks the loop order is consistent with the tensor format
     auto violates_order = [&](const std::vector<std::string> &loop_order,
@@ -233,7 +234,11 @@ TensorLowerer::lower_work_function(std::vector<std::string> loop_order,
     }
 
     llir::lType ret_type = llir::Generic_t::make("index_t");
-    std::string name = get_work_function_name(loop_order, loop_order[target_dim]);
+    std::string all_loops_string = std::accumulate(loop_order.begin(), loop_order.end(), std::string(""),
+            [](const std::string &acc, const std::string &c) {
+                return acc + c;
+            });
+    std::string name = get_work_function_name(all_loops_string, loop_order[target_dim]);
 
     std::vector<llir::lStmt> stmts;
 
@@ -259,7 +264,7 @@ TensorLowerer::lower_work_function(std::vector<std::string> loop_order,
         // if there is no sparse dimension in the tensor in the given loop order(i.e all dense) just
         // return 1 (The 1 will get multiplied later by sizes of all dense
         // dimensions in the next for loop below)
-        int last_sparse_dim = tensor_type.format.get_prev_sparse_level(order_map[loop_order[last_level_loop_place]]+1);
+        int last_sparse_dim = tensor_type.format.get_prev_sparse_level(last_level_in_loop_order + 1);
         if (last_sparse_dim == -1) {
             count_expr = llir::lConst::make((int64_t)1);
         } else {
@@ -267,10 +272,16 @@ TensorLowerer::lower_work_function(std::vector<std::string> loop_order,
             count_expr = this->get_length_field(last_sparse_dim);
         }
         for (int i = last_sparse_dim + 1;
-             i <= order_map[loop_order[last_level_loop_place]]; i++) {
+             i <= last_level_in_loop_order; i++) {
             count_expr = count_expr * this->get_size_field(i);
         }
-        stmts.emplace_back(llir::Declare::make(index_t, "count", count_expr));
+        if (!is_result_tensor) {
+            stmts.emplace_back(llir::Declare::make(index_t, "count", count_expr));
+        } else {
+            stmts.emplace_back(llir::Declare::make(
+                index_t, "count",
+                llir::lVar::make(index_t, "T_work_offsets")[count_expr]));
+        }
     } else {
         llir::lExpr start_expr;
         llir::lExpr end_expr;
@@ -308,7 +319,7 @@ TensorLowerer::lower_work_function(std::vector<std::string> loop_order,
                                                          last_level, true);
 
         for (int i = last_level + 1;
-             i < tensor_type.format.get_next_sparse_level(last_sparse_level);
+             i < std::min(tensor_type.format.get_next_sparse_level(last_sparse_level), last_level_in_loop_order + 1);
              i++) {
             start_expr = start_expr * this->get_size_field(i);
             end_expr = end_expr * this->get_size_field(i);
@@ -320,24 +331,24 @@ TensorLowerer::lower_work_function(std::vector<std::string> loop_order,
         // "<<last_sparse_level<<std::endl;
         stmts.emplace_back(llir::Declare::make(
             index_t,
-            next_sparse_level < tensor_type.format.levels.size()
+            next_sparse_level < last_level_in_loop_order + 1
                 ? tensor_type.format.levels[next_sparse_level].index + "_p_end"
                 : "count_end",
-            next_sparse_level < tensor_type.format.levels.size()
+            next_sparse_level < last_level_in_loop_order + 1
                 ? this->get_offsets_field(next_sparse_level)[end_expr]
                 : end_expr));
 
         stmts.emplace_back(llir::Declare::make(
             index_t,
-            next_sparse_level < tensor_type.format.levels.size()
+            next_sparse_level < last_level_in_loop_order + 1
                 ? tensor_type.format.levels[next_sparse_level].index +
                       "_p_start"
                 : "count_start",
-            next_sparse_level < tensor_type.format.levels.size()
+            next_sparse_level < last_level_in_loop_order + 1
                 ? this->get_offsets_field(next_sparse_level)[start_expr]
                 : start_expr));
 
-        while (next_sparse_level < tensor_type.format.levels.size()) {
+        while (next_sparse_level < last_level_in_loop_order + 1) {
             int last_sparse_level = next_sparse_level;
             next_sparse_level =
                 tensor_type.format.get_next_sparse_level(next_sparse_level);
@@ -350,37 +361,41 @@ TensorLowerer::lower_work_function(std::vector<std::string> loop_order,
                 index_t, tensor_type.format.levels[last_sparse_level].index +
                              "_p_start");
 
-            for (int i = last_sparse_level + 1; i < next_sparse_level; i++) {
+            for (int i = last_sparse_level + 1; i < std::min(next_sparse_level, last_level_in_loop_order + 1); i++) {
                 start_expr = start_expr * this->get_size_field(i);
                 end_expr = end_expr * this->get_size_field(i);
             }
 
             stmts.emplace_back(llir::Declare::make(
                 index_t,
-                next_sparse_level < tensor_type.format.levels.size()
+                next_sparse_level < last_level_in_loop_order + 1
                     ? tensor_type.format.levels[next_sparse_level].index +
                           "_p_end"
                     : "count_end",
-                next_sparse_level < tensor_type.format.levels.size()
+                next_sparse_level < last_level_in_loop_order + 1
                     ? this->get_offsets_field(next_sparse_level)[end_expr]
                     : end_expr));
 
             stmts.emplace_back(llir::Declare::make(
                 index_t,
-                next_sparse_level < tensor_type.format.levels.size()
+                next_sparse_level < last_level_in_loop_order + 1
                     ? tensor_type.format.levels[next_sparse_level].index +
                           "_p_start"
                     : "count_start",
-                next_sparse_level < tensor_type.format.levels.size()
+                next_sparse_level < last_level_in_loop_order + 1
                     ? this->get_offsets_field(next_sparse_level)[start_expr]
                     : start_expr));
         }
-        stmts.emplace_back(llir::Declare::make(
-            index_t, "count",
-            llir::lBinOp::make(llir::lBinOp::Sub,
-                               llir::lVar::make(index_t, "count_end"),
-                               llir::lVar::make(index_t, "count_start"))
-
+        if(!is_result_tensor)
+            stmts.emplace_back(llir::Declare::make(
+                index_t, "count",
+                llir::lVar::make(index_t, "count_end") -  llir::lVar::make(index_t, "count_start")
+                ));
+        else 
+            stmts.emplace_back(llir::Declare::make(
+                index_t, "count",
+                llir::lVar::make(index_t, "T_work_offsets")[llir::lVar::make(index_t, "count_end")] -
+                llir::lVar::make(index_t, "T_work_offsets")[llir::lVar::make(index_t, "count_start")]
                 ));
     }
 
@@ -402,6 +417,47 @@ TensorLowerer::lower_work_function(std::vector<std::string> loop_order,
     }
 
     stmts.emplace_back(llir::Return::make(work_expr));
+
+    llir::lStmt body = llir::Sequence::make(std::move(stmts));
+
+    return llir::Function::make(std::move(generics), std::move(attributes),
+                                std::move(args), std::move(ret_type), name,
+                                std::move(body));
+}
+
+
+
+llir::lStmt TensorLowerer::lower_result_work_function(std::vector<std::string> loop_order, int target_dim, int sparse_intersection_dim) {
+    // For result tensor, work is simply the size of the target dimension in
+    // the sparse intersection
+    llir::lType index_t = llir::Generic_t::make("index_t");
+    llir::lType value_t = llir::Generic_t::make("value_t");
+    std::vector<std::string> generics = {"index_t", "value_t"};
+
+    std::vector<llir::Function::Attribute> attributes = {
+        llir::Function::device, llir::Function::inline_};
+
+    std::vector<llir::Function::Argument> args;
+    args.emplace_back(llir::Function::Argument{
+        .mutating = false,
+        .type = llir::Generic_t::make(get_struct_name() + "<index_t, value_t>"),
+        .name = tensor_name});
+
+    llir::lType ret_type = llir::Generic_t::make("index_t");
+
+    std::string all_loops_string = std::accumulate(loop_order.begin(), loop_order.end(), std::string(""),
+        [](const std::string &acc, const std::string &c) {
+            return acc + c;
+        });
+    std::string name = get_work_function_name(all_loops_string, loop_order[target_dim]);
+
+
+
+    std::vector<llir::lStmt> stmts;
+
+    llir::lExpr size_expr = this->get_size_field(sparse_intersection_dim);
+
+    stmts.emplace_back(llir::Return::make(size_expr));
 
     llir::lStmt body = llir::Sequence::make(std::move(stmts));
 

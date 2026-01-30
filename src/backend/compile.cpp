@@ -30,12 +30,12 @@ namespace backend {
             }
 
             void visit(const Accumulate *node) override { 
-                result_tensor = TensorLowerer(node->tensor, node->type);
+                result_tensor = TensorLowerer(node->tensor, node->type, true);
                 node->expr.accept(this); 
             }
 
             void visit(const Assign *node) override { 
-                result_tensor = TensorLowerer(node->tensor, node->type);
+                result_tensor = TensorLowerer(node->tensor, node->type, true);
                 node->expr.accept(this); 
             }
         };
@@ -165,5 +165,7 @@ namespace backend {
         return checker.is_innermost_sparse;
 
     }
+
+
 }
 } // namespace nacho

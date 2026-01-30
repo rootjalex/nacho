@@ -335,7 +335,7 @@ namespace backend {
             }
         }
 
-        return llir::lFunctionCall::make(tensor.get_work_function_name(forall_idx),work_args);
+        return llir::lFunctionCall::make(tensor.get_work_function_name(get_partition_all_loops_string(),forall_idx),work_args);
     };
 
     llir::lStmt PartitionFunctionLowerer::get_statements_to_find_sparse_position(int loop_index, bool is_last_loop, TensorLowerer& tensor, llir::lExpr index_value) {

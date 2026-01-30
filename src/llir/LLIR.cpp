@@ -134,6 +134,10 @@ lExpr operator&&(lExpr a, lExpr b) {
     return lBinOp::make(lBinOp::And, std::move(a), std::move(b));
 }
 
+lExpr operator!=(lExpr a, lExpr b) {
+    return lBinOp::make(lBinOp::Neq, std::move(a), std::move(b));
+}
+
 lExpr lConst::make(std::variant<int64_t, uint64_t, double, bool> value) {
     lConst *node = new lConst;
     // TODO: TYPE
