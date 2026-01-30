@@ -229,9 +229,42 @@ namespace backend {
         );
 
 
+        // When a tensor has a sparse dim at any of the outer loops that are currently being partitioned
+        // Then the corresponding partition for that dimension may not lie exactly on the partition
+        // boundary. In that case the number of tensors to consider in the further loops has a runtime
+        // dependency on whether the partition boundary is aligned with the tensor's sparse dimensions.
+        // We need to generate some additional bookkeeping code to keep track of these tensors.
+        bool need_to_exclude_tensors_at_runtime = false;
+
+        for(auto it : operand_tensors) {
+            auto tensor = it.second.tensor_type.format;
+            // Check if the tensor has a sparse dimension at any level other than the last level
+            if(tensor.get_prev_sparse_level(tensor.levels.size() - 1) != -1) {
+                need_to_exclude_tensors_at_runtime = true;
+                break;
+            }
+        }
+
+
+        // Add bookeeping boolean variables to keep track of what tensors are currently considered
+        // if tensors can get excluded at runtime (if they are already fully inside the partition boundary)
+        if(need_to_exclude_tensors_at_runtime) {
+            for(auto it : operand_tensors) {
+                std::string var_name = "is_" + it.second.tensor_name + "_partitioned";
+                stmts.emplace_back(
+                    llir::Declare::make(
+                        llir::Generic_t::make("bool"),
+                        var_name,
+                        llir::lConst::make(false)
+                    )
+                );
+            }
+        }
+
+
         for(int i=0;i<forall_list.size();i++) {
             stmts.emplace_back(
-                lower_partition_loop(i, i == forall_list.size() - 1)
+                lower_partition_loop(i, i == forall_list.size() - 1, need_to_exclude_tensors_at_runtime)
             );
         }
 
@@ -243,7 +276,7 @@ namespace backend {
         return llir::Function::make(std::move(generics), std::move(attributes), std::move(args), std::move(ret_type), name, std::move(body));
     }
 
-    llir::lStmt PartitionFunctionLowerer::get_store_partition_statements(int loop_index, bool is_last_loop, llir::lExpr index_value) {
+    llir::lStmt PartitionFunctionLowerer::get_store_partition_statements(int loop_index, llir::lExpr index_value, bool need_to_exclude_tensors_at_runtime, bool recalculate_sparse_positions) {
         const Forall* forall = forall_list[loop_index].as<Forall>();
         std::string forall_idx = forall->idx;
         std::vector<llir::lStmt> store_partition_stmts;
@@ -256,9 +289,33 @@ namespace backend {
                     continue;
                 }
                 std::string field_name = tensor.tensor_name + "_" + forall_idx + "_p";
+
+                // If we need to recalculate sparse positions, we add the necessary statements
+                // to find the sparse position for the index_value.
+                if(recalculate_sparse_positions) {
+                    store_partition_stmts.emplace_back(get_statements_to_find_sparse_position(
+                        loop_index,
+                        tensor,
+                        index_value,
+                        need_to_exclude_tensors_at_runtime
+                    ));
+                }
+
                 store_partition_stmts.emplace_back(llir::Store::make(
                     get_partition_struct_current_thread_field(field_name),
                     llir::lVar::make(index_t, field_name)));
+                // Update boolean which specifies whether this tensor will be considered for work in partitioning of next loop.
+                if(need_to_exclude_tensors_at_runtime) {
+                    store_partition_stmts.emplace_back(
+                        llir::Store::make(
+                        tensor_partitioned_vars.at(tensor.tensor_name),
+                        llir::lSelect::make(
+                            tensor_partitioned_vars.at(tensor.tensor_name) || (tensor.get_indices_field(forall_idx)[llir::lVar::make(index_t, tensor.tensor_name + "_" + forall_idx + "_p")] != index_value),
+                            llir::lConst::make(true),
+                            llir::lConst::make(false)
+                        )
+                    ));
+                }
             }
         }
         if(has_dense) {
@@ -268,27 +325,41 @@ namespace backend {
         }
 
         // For tensors that are excluded, if any of them are sparse in this level then their position needs to be calculated and stored too
-        // in the partitions struct.
+        // in the partitions struct based on the finalised index_value.
         for(auto it: operand_tensors) {
-            if(included_tensors.find(it.first) == included_tensors.end()) {
-                TensorLowerer tensor = it.second;
+            TensorLowerer tensor = it.second;
+            // included tensors are already handled above
+            if(included_tensors.find(tensor.tensor_name) == included_tensors.end()) {
                 if(tensor.tensor_type.format.level_exists(forall_idx)) {
                     if(tensor.tensor_type.format.is_sparse(forall_idx)) {
                         store_partition_stmts.emplace_back(
                             get_statements_to_find_sparse_position(
                                 loop_index,
-                                is_last_loop,
                                 tensor,
-                                index_value
+                                index_value,
+                                need_to_exclude_tensors_at_runtime
                             )
                         );
                         std::string field_name = tensor.tensor_name + "_" + forall_idx + "_p";
                         store_partition_stmts.emplace_back(llir::Store::make(
                         get_partition_struct_current_thread_field(field_name),
                         llir::lVar::make(index_t, field_name)));
+                        // Update boolean which specifies whether this tensor will be considered for work in partitioning of next loop.
+                        if(need_to_exclude_tensors_at_runtime) {
+                            store_partition_stmts.emplace_back(
+                                llir::Store::make(
+                                tensor_partitioned_vars.at(tensor.tensor_name),
+                                llir::lSelect::make(
+                                    tensor_partitioned_vars.at(tensor.tensor_name) || (tensor.get_indices_field(forall_idx)[llir::lVar::make(index_t, tensor.tensor_name + "_" + forall_idx + "_p")] != index_value),
+                                    llir::lConst::make(true),
+                                    llir::lConst::make(false)
+                                )
+                            ));
+                        }
                     }
                 }
             }
+        
         }
         return llir::Sequence::make(std::move(store_partition_stmts));
     }
@@ -338,7 +409,7 @@ namespace backend {
         return llir::lFunctionCall::make(tensor.get_work_function_name(get_partition_all_loops_string(),forall_idx),work_args);
     };
 
-    llir::lStmt PartitionFunctionLowerer::get_statements_to_find_sparse_position(int loop_index, bool is_last_loop, TensorLowerer& tensor, llir::lExpr index_value) {
+    llir::lStmt PartitionFunctionLowerer::get_statements_to_find_sparse_position(int loop_index, TensorLowerer& tensor, llir::lExpr index_value, bool need_to_exclude_tensors_at_runtime) {
         const Forall* forall = forall_list[loop_index].as<Forall>();
         std::string forall_idx = forall->idx;
 
@@ -363,27 +434,31 @@ namespace backend {
             );
         }
 
-        stmts.emplace_back(llir::Declare::make(
-            index_t, tensor.tensor_name + "_" + forall_idx + "_p_start",
-                current_dim_level == 0
+        llir::lExpr start_expr = current_dim_level == 0
                     ? llir::lConst::make((int64_t)-1)
                     : tensor.get_offsets_field(forall_idx)[tensor.get_offset_expression_for_next_sparse(
                                 tensor.tensor_type.format
                                     .get_prev_sparse_level(
                                         current_dim_level),
                                 current_dim_level - 1, false, true,
-                                dim_vars_for_offset_expression)] - 1));
-
-        stmts.emplace_back(llir::Declare::make(
-            index_t, tensor.tensor_name + "_" + forall_idx + "_p_end",
-                current_dim_level == 0
+                                dim_vars_for_offset_expression)] - 1;
+                                        
+        llir::lExpr end_expr = current_dim_level == 0
                     ? tensor.get_length_field(forall_idx) -1
                     : tensor.get_offsets_field(forall_idx)[tensor.get_offset_expression_for_next_sparse(
                                 tensor.tensor_type.format
                                     .get_prev_sparse_level(
                                         current_dim_level),
                                 current_dim_level - 1, true, true,
-                                dim_vars_for_offset_expression)] - 1));
+                                dim_vars_for_offset_expression)] - 1;
+
+        stmts.emplace_back(llir::Declare::make(
+            index_t, tensor.tensor_name + "_" + forall_idx + "_p_start",
+            start_expr));
+
+        stmts.emplace_back(llir::Declare::make(
+            index_t, tensor.tensor_name + "_" + forall_idx + "_p_end",
+                end_expr));
 
         llir::lExpr position_var_expr = position_var_start + (position_var_end - position_var_start + 1)/2;
 
@@ -406,30 +481,43 @@ namespace backend {
         binary_search_stmts.emplace_back(llir::IfElse::make(
                     tensor.get_indices_field(forall_idx)[
                     llir::lVar::make(index_t, tensor.tensor_name + "_" +
-                                                    forall_idx + "_p")] <= (is_last_loop? index_value : index_value - 1),
+                                                    forall_idx + "_p")] <= index_value,
             llir::Sequence::make(
                 {llir::Store::make(position_var_start, position_var)}),
             llir::Sequence::make({llir::Store::make(
                 position_var_end,
                 llir::lBinOp::make(llir::lBinOp::Sub, position_var,
                                     llir::lConst::make((int64_t)1)))})));
-
-        stmts.emplace_back(
+        
+        auto search_stms = llir::Sequence::make({
             llir::While::make(
                 position_var_start < position_var_end,
                 llir::Sequence::make(std::move(binary_search_stmts))
-            )
-        );
-        stmts.emplace_back(
+            ),
             llir::Store::make(
                 position_var,
                 position_var_expr
             )
-        );
+        });
+
+        if(need_to_exclude_tensors_at_runtime) {
+            stmts.emplace_back(
+                llir::IfElse::make(
+                    tensor_partitioned_vars.at(tensor.tensor_name),
+                    llir::Store::make(position_var, position_var_end),
+                    search_stms
+                )
+            );
+        } else {
+            stmts.emplace_back(search_stms);
+        }
+        
+        
+        
         return llir::Sequence::make(std::move(stmts));
     }
 
-    llir::lStmt PartitionFunctionLowerer::lower_partition_loop(int loop_index, bool is_last_loop) {
+    llir::lStmt PartitionFunctionLowerer::lower_partition_loop(int loop_index, bool is_last_loop, bool need_to_exclude_tensors_at_runtime) {
         std::vector<llir::lStmt> stmts;
 
         const Forall* forall = forall_list[loop_index].as<Forall>();
@@ -447,25 +535,25 @@ namespace backend {
         }
 
 
-        // Special Case : Can Use normal balanced mergepath to optimize partitioning
+        // Optimization Case : Can Use normal balanced mergepath to optimize partitioning
         // When no dim is sparse the general scheme is best as that will require just 1 binary search.
-        if(included_tensors.size()==2 && tensors_with_curr_dim_sparse.size()==2 && is_last_loop) {
+        if(!need_to_exclude_tensors_at_runtime && included_tensors.size()==2 && tensors_with_curr_dim_sparse.size()==2 && is_last_loop) {
             return lower_mergepath_partition_loop(loop_index, is_last_loop, tensors_with_curr_dim_sparse);
         }
 
-        // Special Case: Can return partitions directly w/o binary search
-        if(included_tensors.size()==1 && is_last_loop) {
+        // Optimization Case: Can return partitions directly w/o binary search
+        if(!need_to_exclude_tensors_at_runtime && included_tensors.size()==1 && is_last_loop) {
             return lower_trivial_partition_loop(loop_index, is_last_loop);
         }
 
-        // Special Case: Can use simple partitioning when no tensor has sparse dim at current level
-        if(tensors_with_curr_dim_sparse.size() == 0 && is_last_loop) {
+        // Optimization Case: Can use simple partitioning when no tensor has sparse dim at current level
+        if(!need_to_exclude_tensors_at_runtime && tensors_with_curr_dim_sparse.size() == 0 && is_last_loop) {
             return lower_trivial_partition_loop(loop_index, is_last_loop);
         }   
 
-        //TODO: Special Case - not last loop but included tensor size == 1 and the tensor is sparse
+        //TODO: Optimization Case - not last loop but included tensor size == 1 and the tensor is sparse
 
-        //TODO: Special Case - not last loop but all included tensors are dense and there is no sparse dim in both the tensors below this loop
+        //TODO: Optimization Case - not last loop but all included tensors are dense and there is no sparse dim in both the tensors below this loop
 
         llir::lExpr start_var = llir::lVar::make(index_t, "start_"+forall_idx);
         llir::lExpr end_var = llir::lVar::make(index_t, "end_"+forall_idx);
@@ -518,7 +606,7 @@ namespace backend {
         // for tensors where forall_idx dim is sparse we need to find the corresponding position
         for(int i=0;i<tensors_with_curr_dim_sparse.size();i++) {
             TensorLowerer tensor = tensors_with_curr_dim_sparse[i];
-            while_stmts.emplace_back(get_statements_to_find_sparse_position(loop_index, is_last_loop, tensor, mid_var));
+            while_stmts.emplace_back(get_statements_to_find_sparse_position(loop_index, tensor, is_last_loop ? mid_var : mid_var - 1, need_to_exclude_tensors_at_runtime));
         }
 
 
@@ -536,7 +624,11 @@ namespace backend {
             while_stmts.emplace_back(
                 llir::Store::make(
                     total_work_var,
-                    total_work_var + get_call_work_function_expr(loop_index, is_last_loop, tensor, mid_var)
+                    total_work_var + (need_to_exclude_tensors_at_runtime ? llir::lSelect::make(
+                        tensor_partitioned_vars.at(tensor.tensor_name),
+                        llir::lConst::make((int64_t)0),
+                        get_call_work_function_expr(loop_index, is_last_loop, tensor, mid_var)
+                    ) : get_call_work_function_expr(loop_index, is_last_loop, tensor, mid_var))
                 )
             );
         }
@@ -546,7 +638,7 @@ namespace backend {
             llir::IfElse::make(
                 end_var <= start_var,
                 llir::Sequence::make({
-                    get_store_partition_statements(loop_index, is_last_loop, mid_var),
+                    get_store_partition_statements(loop_index, mid_var, need_to_exclude_tensors_at_runtime, !is_last_loop),
                     llir::Store::make(rem_count_var, rem_count_var - total_work_var),
                     llir::Break::make(),
                 }),
@@ -579,7 +671,7 @@ namespace backend {
 
     llir::lStmt PartitionFunctionLowerer::lower_mergepath_partition_loop(int loop_index, bool is_last_loop, std::vector<TensorLowerer>& tensors_with_curr_dim_sparse) {
         std::vector<llir::lStmt> stmts;
-
+        internal_assert(is_last_loop) << "Mergepath partitioning can only be used in the innermost loop";
         const Forall* forall = forall_list[loop_index].as<Forall>();
         std::string forall_idx = forall->idx;
 
@@ -796,7 +888,7 @@ namespace backend {
             llir::lSelect::make(tensor2_position_var_start < tensor2_position_var, llir::lConst::make(-1), tensor2.get_indices_field(forall_idx)[tensor2_position_var])
         );
         stmts.emplace_back(
-            get_store_partition_statements(loop_index, is_last_loop, index_value)
+            get_store_partition_statements(loop_index, index_value, false, false)
         );
         return llir::Sequence::make(std::move(stmts));
     }
@@ -806,16 +898,16 @@ namespace backend {
 
         const Forall* forall = forall_list[loop_index].as<Forall>();
         std::string forall_idx = forall->idx;
+        internal_assert(is_last_loop);
 
         // This case is when all tensors are dense
         if(included_tensors.size() > 1) {
-            internal_assert(is_last_loop);
             for(auto it: included_tensors){
                 internal_assert(it.second.tensor_type.format.is_sparse(forall_idx));
             }
 
             auto index_value = rem_count_var/included_tensors.size() - 1;
-            return get_store_partition_statements(loop_index, is_last_loop, index_value);
+            return get_store_partition_statements(loop_index, index_value, false, false);
         }
 
 
@@ -823,25 +915,24 @@ namespace backend {
         TensorLowerer tensor = included_tensors.begin()->second;
 
         llir::lExpr index_value;
-        if(is_last_loop) {
-            if(tensor.tensor_type.format.is_sparse(forall_idx)) {
-                stmts.emplace_back(
-                    llir::Declare::make(
-                        index_t,
-                        tensor.tensor_name+"_"+forall_idx+"_p",
-                        rem_count_var-1
-                    )
-                );
-                index_value = tensor.get_indices_field(forall_idx)[rem_count_var-1];
-                stmts.emplace_back(
-                    get_store_partition_statements(loop_index, is_last_loop, index_value)
-                );
-            } else {
-                auto index_value = rem_count_var - 1;
-                stmts.emplace_back(
-                    get_store_partition_statements(loop_index, is_last_loop, index_value)
-                );
-            }
+        
+        if(tensor.tensor_type.format.is_sparse(forall_idx)) {
+            stmts.emplace_back(
+                llir::Declare::make(
+                    index_t,
+                    tensor.tensor_name+"_"+forall_idx+"_p",
+                    rem_count_var-1
+                )
+            );
+            index_value = tensor.get_indices_field(forall_idx)[rem_count_var-1];
+            stmts.emplace_back(
+                get_store_partition_statements(loop_index, index_value, false, false)
+            );
+        } else {
+            auto index_value = rem_count_var - 1;
+            stmts.emplace_back(
+                get_store_partition_statements(loop_index, index_value, false, false)
+            );
         }
         return llir::Sequence::make(std::move(stmts)); 
     }

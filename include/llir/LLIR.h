@@ -250,6 +250,7 @@ lExpr operator>=(lExpr a, lExpr b);
 lExpr operator==(lExpr a, lExpr b);
 lExpr operator&&(lExpr a, lExpr b);
 lExpr operator!=(lExpr a, lExpr b);
+lExpr operator||(lExpr a, lExpr b);
 
 struct lConst : lExprNode<lConst> {
     std::variant<int64_t, uint64_t, double, bool> value;

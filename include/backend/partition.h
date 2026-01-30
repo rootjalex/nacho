@@ -13,6 +13,7 @@ namespace backend {
 struct PartitionFunctionLowerer {
     std::map<std::string, TensorLowerer> &operand_tensors;
     std::map<std::string, TensorLowerer> included_tensors;
+    std::map<std::string, llir::lExpr> tensor_partitioned_vars;
     std::vector<CIN> forall_list;
     llir::lType index_t = llir::Generic_t::make("index_t");
     llir::lType value_t = llir::Generic_t::make("value_t");
@@ -47,6 +48,9 @@ struct PartitionFunctionLowerer {
                 }
             }
 
+            for (const auto& it : operand_tensors) {
+                tensor_partitioned_vars[it.second.tensor_name] = llir::lVar::make(llir::Generic_t::make("bool"), "is_" + it.second.tensor_name + "_partitioned");
+            }
             internal_assert(included_tensors.size()>0) << "Expected atleast 1 included tensor for partitioning";
         }
 
@@ -76,17 +80,17 @@ struct PartitionFunctionLowerer {
 
     llir::lType lower_partition_struct_definition();
 
-    llir::lStmt lower_partition_loop(int loop_index, bool is_last_loop);
+    llir::lStmt lower_partition_loop(int loop_index, bool is_last_loop, bool need_to_exclude_tensors_at_runtime);
 
     llir::lStmt lower_mergepath_partition_loop(int loop_index, bool is_last_loop, std::vector<TensorLowerer>& tensors_with_curr_dim_sparse);
 
     llir::lStmt lower_trivial_partition_loop(int loop_index, bool is_last_loop);
 
-    llir::lStmt get_store_partition_statements(int loop_index, bool is_last_loop, llir::lExpr index_value);
+    llir::lStmt get_store_partition_statements(int loop_index, llir::lExpr index_value, bool need_to_exclude_tensors_at_runtime, bool recalculate_sparse_positions);
 
     llir::lExpr get_call_work_function_expr(int loop_index, bool is_last_loop, TensorLowerer& tensor, llir::lExpr index_value);
 
-    llir::lStmt get_statements_to_find_sparse_position(int loop_index, bool is_last_loop, TensorLowerer& tensor, llir::lExpr index_value);
+    llir::lStmt get_statements_to_find_sparse_position(int loop_index, TensorLowerer& tensor, llir::lExpr index_value, bool need_to_exclude_tensors_at_runtime);
 
     inline std::string get_partition_struct_name() {
         return "partition_" + get_partition_all_loops_string();
