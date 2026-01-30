@@ -449,7 +449,7 @@ namespace backend {
 
         // Special Case : Can Use normal balanced mergepath to optimize partitioning
         // When no dim is sparse the general scheme is best as that will require just 1 binary search.
-        if(included_tensors.size()==2 && tensors_with_curr_dim_sparse.size()>0 && is_last_loop) {
+        if(included_tensors.size()==2 && tensors_with_curr_dim_sparse.size()==2 && is_last_loop) {
             return lower_mergepath_partition_loop(loop_index, is_last_loop, tensors_with_curr_dim_sparse);
         }
 

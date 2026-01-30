@@ -113,8 +113,14 @@ namespace backend {
         printer.print(partition_lowerer.lower_partition_kernel_for_innermost_sparse_intersection());
 
         ComputeFunctionLowerer compute_lowerer(operand_tensors, result_tensor, get_forall_list(), cin);
-        printer.print(compute_lowerer.lower_result_per_thread_count_struct());
-        printer.print(compute_lowerer.lower_precompute_function_for_innermost_sparse_intersection());
+        
+        // Precompute is required only if result tensor has atleast one sparse dim. Else we can
+        // directly compute the write location, without the need of offsets.
+        if(!result_tensor.tensor_type.format.are_all_lvls_dense()) {
+            printer.print(compute_lowerer.lower_result_per_thread_count_struct());
+            printer.print(compute_lowerer.lower_precompute_function_for_innermost_sparse_intersection());
+        }
+        
         printer.print(compute_lowerer.lower_compute_function_for_innermost_sparse_intersection());
     }
 
