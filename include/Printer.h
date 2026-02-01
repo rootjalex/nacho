@@ -62,6 +62,7 @@ struct Printer : public Visitor {
 
     virtual void print(const llir::lExpr &);
     virtual void print_no_parens(const llir::lExpr &);
+    virtual void visit(const llir::lOp *) override;
     virtual void visit(const llir::lBinOp *) override;
     virtual void visit(const llir::lConst *) override;
     virtual void visit(const llir::lBuild *) override;

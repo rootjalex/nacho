@@ -94,6 +94,10 @@ void Visitor::visit(const llir::Struct_t *node) {
     }
 }
 
+void Visitor::visit(const llir::lOp *node) {
+    node->a.accept(this);
+}
+
 void Visitor::visit(const llir::lBinOp *node) {
     node->a.accept(this);
     node->b.accept(this);
@@ -139,7 +143,7 @@ void Visitor::visit(const llir::lIncrement *node) {
     node->var.accept(this);
 }
 
-void Visitor::visit(const llir::Declare *node) { node->init.accept(this); }
+void Visitor::visit(const llir::Declare *node) { if(node->init.defined())node->init.accept(this); }
 
 void Visitor::visit(const llir::IfElse *node) {
     node->cond.accept(this);

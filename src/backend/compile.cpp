@@ -77,6 +77,7 @@ namespace backend {
     }
 
     void CINLowerer::lower_cin() {
+        this->lower_binary_search_function();
         this->lower_struct_definitions();
         this->lower_work_functions();
         this->lower_innermost_sparse_intersection();
@@ -164,6 +165,84 @@ namespace backend {
 
         return checker.is_innermost_sparse;
 
+    }
+
+    void CINLowerer::lower_binary_search_function() {
+        std::vector<std::string> generics = {"index_t"};
+        auto index_t  = llir::Generic_t::make("index_t");
+
+        std::vector<llir::Function::Attribute> attributes = {
+            llir::Function::device, llir::Function::inline_};
+
+        std::vector<llir::Function::Argument> args;
+        llir::lType ret_type;
+        std::string name;
+        llir::lStmt body;
+
+        name = "binary_search";
+
+        ret_type = index_t;
+
+
+        args.emplace_back(
+            llir::Function::Argument{.mutating = false, .type = llir::Ptr_t::make(index_t), .name = "arr"});
+            args.emplace_back(
+                llir::Function::Argument{.mutating = false, .type = index_t, .name = "target_value"});
+            args.emplace_back(
+                llir::Function::Argument{.mutating = false, .type = llir::Int_t::make(32), .name = "start_index"});
+            args.emplace_back(
+                llir::Function::Argument{.mutating = false, .type = llir::Int_t::make(32), .name = "end_index"});
+
+        std::vector<llir::lStmt> stmts;
+        
+        llir::lExpr start_var = llir::lVar::make(index_t, "start_index");
+        llir::lExpr mid_var = llir::lVar::make(index_t, "mid");
+        llir::lExpr end_var = llir::lVar::make(index_t, "end_index");
+        llir::lExpr arr_var = llir::lVar::make(llir::Ptr_t::make(index_t), "arr");
+        llir::lExpr target_value_var = llir::lVar::make(index_t, "target_value");
+
+        stmts.emplace_back(
+            llir::Declare::make(
+                index_t,
+                "mid",
+                start_var + (((end_var - start_var) + 1) / 2)
+            )
+        );  
+        std::vector<llir::lStmt> while_stmts;
+
+        while_stmts.emplace_back(
+            llir::Store::make(
+                mid_var,
+                start_var + (((end_var - start_var) + 1) / 2)
+            )
+        );
+
+        while_stmts.emplace_back(llir::IfElse::make(
+            arr_var[mid_var] <= target_value_var,
+            llir::Store::make(start_var, mid_var),
+            llir::Store::make(end_var, mid_var - 1)
+        ));
+
+        stmts.emplace_back(
+            llir::While::make(
+                start_var < end_var,
+                llir::Sequence::make(std::move(while_stmts))
+            )
+        );
+
+        stmts.emplace_back(
+            llir::Store::make(
+                mid_var,
+                start_var + (((end_var - start_var) + 1) / 2)
+            )
+        );
+        
+        stmts.emplace_back(
+            llir::Return::make(mid_var)
+        );
+        body = llir::Sequence::make(std::move(stmts));
+
+        printer.print(llir::Function::make(std::move(generics), std::move(attributes), std::move(args), std::move(ret_type), name, std::move(body)));
     }
 
 

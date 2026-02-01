@@ -63,6 +63,16 @@ lType Struct_t::make(std::string name, std::vector<std::pair<std::string, lType>
     return node;
 }
 
+lExpr lOp::make(Op op, lExpr a) {
+    internal_assert(a.defined())
+        << "lOp of undefined: " << a;
+    lOp *node = new lOp;
+    node->op = op;
+    node->a = std::move(a);
+    return node;
+}
+
+
 lExpr lBinOp::make(lBinOp::Op op, lExpr a, lExpr b) {
     internal_assert(a.defined() && b.defined())
         << "lBinOp of undefined: " << a << " op " << b;
@@ -239,6 +249,15 @@ lStmt Declare::make(lType type, std::string name, lExpr init) {
     node->type = std::move(type);
     node->name = std::move(name);
     node->init = std::move(init);
+    return node;
+}
+
+lStmt Declare::make(lType type, std::string name) {
+    internal_assert(!name.empty()) << "Cannot make Declare with empty name.";
+    Declare *node = new Declare;
+    node->type = std::move(type);
+    node->name = std::move(name);
+    node->init = nullptr;
     return node;
 }
 

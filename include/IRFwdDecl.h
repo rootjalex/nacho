@@ -43,6 +43,7 @@ struct Tuple_t;
 struct Struct_t;
 
 struct lExpr;
+struct lOp;
 struct lBinOp;
 struct lConst;
 struct lBuild;
