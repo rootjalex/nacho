@@ -108,10 +108,10 @@ namespace backend {
     void CINLowerer::lower_innermost_sparse_intersection() {
         internal_assert(is_innermost_sparse_intersection()) << "CIN which are not innermost sparse intersection are not supported";
 
-        PartitionFunctionLowerer partition_lowerer(operand_tensors, get_forall_list());
+        PartitionFunctionLowerer partition_lowerer(operand_tensors,result_tensor, get_forall_list(), -1, get_forall_list().size()-1);
 
         printer.print(partition_lowerer.lower_partition_struct_definition());
-        printer.print(partition_lowerer.lower_partition_kernel_for_innermost_sparse_intersection());
+        printer.print(partition_lowerer.lower_partition_kernel());
 
         ComputeFunctionLowerer compute_lowerer(operand_tensors, result_tensor, get_forall_list(), cin);
         
