@@ -66,15 +66,26 @@ void test() {
         nacho::backend::CINLowerer(compile_to_cin(z_i), std::cout).lower_cin();
     }
 
-    a_ij = Tensor::make(csr_f32, "a");
-    b_ij = Tensor::make(csr_f32, "b");
+    a_ij = Tensor::make(dcsr_f32, "a");
+    b_ij = Tensor::make(dcsr_f32, "b");
 
-    z_ij = a_ij + b_ij;
+    z_ij = a_ij * b_ij;
     Expr z_i = a_i * b_i;
     std::cout << z_i << "\n";
     std::cout << compile_to_cin(z_i) << "\n";
     std::cout << "Debug\n";
     nacho::backend::CINLowerer(compile_to_cin(z_ij), std::cout).lower_cin();
+    // Format new_csr = Format::ordered({
+    //     {"j", LevelFormat::Dense},
+    //     {"k", LevelFormat::Compressed},
+    // });
+    // TensorType new_csr_f32 = TensorType(new_csr, dType::Float32);
+    // std::cout<<compile_to_cin(
+    //     Tensor::make(csr_f32,"A") * Tensor::make(new_csr_f32, "B")
+    // )<< "\n";
+    // nacho::backend::CINLowerer(compile_to_cin(
+    //     Tensor::make(csr_f32,"A") * Tensor::make(new_csr_f32, "B")
+    // ), std::cout).lower_cin();
     return;
 
     std::cout << "Debug\n";

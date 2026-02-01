@@ -698,19 +698,19 @@ namespace backend {
         stmts.emplace_back(
             llir::Declare::make(
                 index_t,
-                "start_j",
+                "start_"+forall_idx,
                 tensor1_position_var_start
             )
         );
         stmts.emplace_back(
             llir::Declare::make(
                 index_t,
-                "end_j",
+                "end_"+forall_idx,
                 tensor1_position_var_end
             )
         );
-        llir::lExpr start_j = llir::lVar::make(index_t, "start_j");
-        llir::lExpr end_j = llir::lVar::make(index_t, "end_j");
+        llir::lExpr start_j = llir::lVar::make(index_t, "start_"+forall_idx);
+        llir::lExpr end_j = llir::lVar::make(index_t, "end_"+forall_idx);
 
         llir::lExpr tensor1_position_var_expr = start_j + (end_j - start_j + 1)/2;
         llir::lExpr tensor2_position_var_expr = tensor2_position_var_start + (rem_count_var - (tensor1_position_var - tensor1_position_var_start));
@@ -871,10 +871,10 @@ namespace backend {
                 llir::Declare::make(
                     index_t,
                     tensor.tensor_name+"_"+forall_idx+"_p",
-                    rem_count_var-1
+                    get_sparse_dim_start_expr(tensor, forall_idx) + (rem_count_var)
                 )
             );
-            index_value = tensor.get_indices_field(forall_idx)[rem_count_var-1];
+            index_value = tensor.get_indices_field(forall_idx)[get_sparse_dim_start_expr(tensor, forall_idx) + (rem_count_var)];
             stmts.emplace_back(
                 get_store_partition_statements(loop_index, index_value, false, true)
             );

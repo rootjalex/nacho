@@ -83,7 +83,7 @@ struct PartitionFunctionLowerer {
     llir::lExpr get_sparse_dim_end_expr(TensorLowerer& tensor, const std::string& forall_idx);
 
     inline std::string get_partition_struct_name() {
-        return "partition_" + get_partition_all_loops_string();
+        return "partition";
     }
 
 };

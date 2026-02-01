@@ -25,6 +25,8 @@ namespace backend {
             std::vector<CIN> get_forall_list();
             void lower_cin();
             void lower_struct_definitions();
+            std::vector<int> get_all_sparse_intersection_levels(CIN& cin);
+            CIN get_modified_cin_for_sparse_intersection(int target_level, CIN& cin);
             void lower_innermost_sparse_intersection();
             void lower_work_functions();
             // is_innermost_sparse_intersection checks if the given CIN represents an innermost sparse intersection. 

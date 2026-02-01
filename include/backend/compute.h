@@ -21,6 +21,7 @@ namespace backend {
         CIN cin;
         // Memoized lattices, used for both compute and precompute.
         std::map<Seq, Lattice, SeqLessThan> lattices;
+        int previous_sparse_intersection;
         int current_sparse_intersection;
         int next_sparse_intersection;
         std::map<std::string, TensorLowerer> included_tensors;
@@ -30,9 +31,11 @@ namespace backend {
             const TensorLowerer &result_tensor,
             const std::map<std::string, TensorLowerer> &included_tensors,
             const std::vector<CIN> &forall_list, const CIN &cin, 
-            int current_sparse_intersection,int next_sparse_intersection)
+            int previous_sparse_intersection, int current_sparse_intersection,int next_sparse_intersection)
             : operand_tensors(operand_tensors), result_tensor(result_tensor),
-              forall_list(forall_list), cin(cin), current_sparse_intersection(current_sparse_intersection),
+              forall_list(forall_list), cin(cin), 
+              previous_sparse_intersection(previous_sparse_intersection),
+              current_sparse_intersection(current_sparse_intersection),
               next_sparse_intersection(next_sparse_intersection),
               included_tensors(included_tensors) {}
 
@@ -77,9 +80,9 @@ namespace backend {
 
         llir::lType lower_result_per_thread_count_struct();
 
-        llir::lStmt lower_precompute_function_for_innermost_sparse_intersection();
+        llir::lStmt lower_precompute_function();
 
-        llir::lStmt lower_compute_function_for_innermost_sparse_intersection();
+        llir::lStmt lower_compute_function();
 
         llir::lStmt lower_loop(CIN loop,
                                const std::set<Seq, SeqLessThan> &defined,
