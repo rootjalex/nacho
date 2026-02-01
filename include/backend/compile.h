@@ -32,6 +32,8 @@ namespace backend {
             bool is_innermost_sparse_intersection();
             void lower_binary_search_function();
 
+            std::map<std::string, TensorLowerer> get_included_tensors_for_level(int level);
+
         };
 
 

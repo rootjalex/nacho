@@ -32,6 +32,7 @@ struct Mutator {
     virtual CIN visit(const Forall *);
     virtual CIN visit(const Sequence *);
     virtual CIN visit(const Where *);
+    virtual CIN visit(const CalculateWork *);
 
   private:
     template <typename Base, typename T>

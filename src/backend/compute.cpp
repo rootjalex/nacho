@@ -414,6 +414,34 @@ llir::lStmt ComputeFunctionLowerer::lower_assign_statement(
 
     } else if(assign.as<Accumulate>()) {
         internal_assert(false) << "TODO: Generation for Accumulate/Reductions not supported.";
+    } else if(assign.as<CalculateWork>()) {
+        llir::lExpr work_expr = llir::lConst::make((int64_t)0);
+        auto get_work_expr = [&](TensorLowerer& Tensor) {
+            std::vector<llir::lExpr> work_args;
+            work_args.emplace_back(
+                llir::lVar::make(llir::Generic_t::make(Tensor.get_struct_name()), Tensor.tensor_name)
+            );
+            auto iter_vars = get_iter_vars_result(result_tensor);
+            for(int j=0;j<=next_sparse_intersection;j++) {
+                work_args.emplace_back(iter_vars[j]);
+            }
+            std::string forall_idx = forall_list[current_sparse_intersection].as<Forall>()->idx;
+            return llir::lFunctionCall::make(Tensor.get_work_function_name(get_all_loops_string(next_sparse_intersection),forall_idx),work_args);
+        };
+        for(auto it: included_tensors) {
+            work_expr = work_expr + get_work_expr(it.second);
+        }
+        return llir::Store::make(
+            llir::lVar::make(llir::Generic_t::make("index_t"), "T_work_offsets")[
+                result_tensor.get_offset_expression_for_next_sparse(
+                    result_tensor.tensor_type.format.get_prev_sparse_level(next_sparse_intersection+1),
+                    next_sparse_intersection,
+                    false, true,
+                    get_iter_vars_result(result_tensor)
+                )
+            ],
+            work_expr
+        );  
     } else {
         internal_assert(false) << "Expected Assign or Accumulate in lower_assign_statement: " << assign;
     }

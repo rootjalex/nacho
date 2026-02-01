@@ -107,13 +107,13 @@ namespace backend {
 
     void CINLowerer::lower_innermost_sparse_intersection() {
         internal_assert(is_innermost_sparse_intersection()) << "CIN which are not innermost sparse intersection are not supported";
-
-        PartitionFunctionLowerer partition_lowerer(operand_tensors,result_tensor, get_forall_list(), -1, get_forall_list().size()-1);
+        auto included_tensors = get_included_tensors_for_level(get_forall_list().size()-1);
+        PartitionFunctionLowerer partition_lowerer(operand_tensors, result_tensor, included_tensors, get_forall_list(), -1, get_forall_list().size()-1);
 
         printer.print(partition_lowerer.lower_partition_struct_definition());
         printer.print(partition_lowerer.lower_partition_kernel());
 
-        ComputeFunctionLowerer compute_lowerer(operand_tensors, result_tensor, get_forall_list(), cin);
+        ComputeFunctionLowerer compute_lowerer(operand_tensors, result_tensor, included_tensors, get_forall_list(), cin,-1, get_forall_list().size()-1);
         
         // Precompute is required only if result tensor has atleast one sparse dim. Else we can
         // directly compute the write location, without the need of offsets.
@@ -243,6 +243,34 @@ namespace backend {
         body = llir::Sequence::make(std::move(stmts));
 
         printer.print(llir::Function::make(std::move(generics), std::move(attributes), std::move(args), std::move(ret_type), name, std::move(body)));
+    }
+
+    std::map<std::string, TensorLowerer> CINLowerer::get_included_tensors_for_level(int level) {
+            auto forall  = get_forall_list()[level].as<Forall>();
+            std::vector<Seq> locators = get_dense_locators(forall->seq);
+
+            std::map<std::string, TensorLowerer> included_tensors;
+
+            // included tensors are the tensors which are included in the work
+            // calculation. Non-included tensors are not co-iterated and instead looked up.
+            std::map<std::string, TensorLowerer> excluded_tensors;
+            for(const auto &loc : locators) {
+                const auto *index = loc.as<Index>();
+                if (!index){
+                    internal_assert(false) << "Expected Index node in locator sequence: " << loc;
+                }
+                for(const auto &it : operand_tensors) {
+                    if (it.second.tensor_name == index->tensor) {
+                        excluded_tensors[it.second.tensor_name] = it.second;
+                    }
+                }
+            }
+            for(auto it : operand_tensors) {
+                if(excluded_tensors.find(it.first) == excluded_tensors.end()) {
+                    included_tensors[it.first] = it.second;
+                }
+            }
+            return included_tensors;
     }
 
 

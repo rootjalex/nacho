@@ -21,19 +21,25 @@ namespace backend {
         CIN cin;
         // Memoized lattices, used for both compute and precompute.
         std::map<Seq, Lattice, SeqLessThan> lattices;
+        int current_sparse_intersection;
+        int next_sparse_intersection;
+        std::map<std::string, TensorLowerer> included_tensors;
 
         ComputeFunctionLowerer(
             const std::map<std::string, TensorLowerer> &operand_tensors,
             const TensorLowerer &result_tensor,
-            const std::vector<CIN> &forall_list, const CIN &cin)
+            const std::map<std::string, TensorLowerer> &included_tensors,
+            const std::vector<CIN> &forall_list, const CIN &cin, 
+            int current_sparse_intersection,int next_sparse_intersection)
             : operand_tensors(operand_tensors), result_tensor(result_tensor),
-              forall_list(forall_list), cin(cin) {}
+              forall_list(forall_list), cin(cin), current_sparse_intersection(current_sparse_intersection),
+              next_sparse_intersection(next_sparse_intersection),
+              included_tensors(included_tensors) {}
 
-        inline std::string get_all_loops_string() {
-            std::string all_loops_string = std::accumulate(forall_list.begin(), forall_list.end(), std::string(""),
-                [](const std::string &acc, const CIN &c) {
-                    return acc + c.as<Forall>()->idx;
-                });
+        inline std::string get_all_loops_string(int level) {
+            std::string all_loops_string = "";
+            for(int i=0;i<=level;i++)
+                all_loops_string += forall_list[i].as<Forall>()->idx;
             return all_loops_string;
         }
 
@@ -54,11 +60,11 @@ namespace backend {
         }
 
         inline std::string get_precompute_function_name() {
-            return  "precompute_" + get_all_loops_string() + "_kernel";
+            return  "precompute_" + get_all_loops_string(current_sparse_intersection) + "_kernel";
         }
 
         inline std::string get_compute_function_name() {
-            return  "compute_" + get_all_loops_string() + "_kernel";
+            return  "compute_" + get_all_loops_string(current_sparse_intersection) + "_kernel";
         }
 
         inline std::string get_start_name(const std::string &suffix) const {

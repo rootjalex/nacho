@@ -31,6 +31,7 @@ struct Assign;
 struct Forall;
 struct Sequence;
 struct Where;
+struct CalculateWork;
 
 namespace llir {
 

@@ -14,7 +14,7 @@ struct PartitionFunctionLowerer {
     std::map<std::string, TensorLowerer> &operand_tensors;
     TensorLowerer &result_tensor;
 
-    std::map<std::string, TensorLowerer> included_tensors;
+    std::map<std::string, TensorLowerer> &included_tensors;
     std::map<std::string, llir::lExpr> tensor_partitioned_vars;
     std::vector<CIN> forall_list;
     int previous_sparse_intersect_forall_id;
@@ -28,33 +28,10 @@ struct PartitionFunctionLowerer {
 
 
     // Lower the partitioning information from the CIN to the LLIR.
-    PartitionFunctionLowerer(std::map<std::string, TensorLowerer> &operand_tensors, TensorLowerer& result_tensor, const std::vector<CIN> &forall_list, int previous_sparse_intersect_forall_id, int next_sparse_intersect_forall_id)
-        : operand_tensors(operand_tensors), result_tensor(result_tensor), forall_list(forall_list) {
+    PartitionFunctionLowerer(std::map<std::string, TensorLowerer> &operand_tensors, TensorLowerer& result_tensor, std::map<std::string, TensorLowerer> &included_tensors, const std::vector<CIN> &forall_list, int previous_sparse_intersect_forall_id, int next_sparse_intersect_forall_id)
+        : operand_tensors(operand_tensors), result_tensor(result_tensor), included_tensors(included_tensors), forall_list(forall_list) {
             this->previous_sparse_intersect_forall_id = previous_sparse_intersect_forall_id;
             this->next_sparse_intersect_forall_id = next_sparse_intersect_forall_id;
-
-            auto last_forall  = forall_list[next_sparse_intersect_forall_id].as<Forall>();
-            std::vector<Seq> locators = get_dense_locators(last_forall->seq);
-
-            // included tensors are the tensors which are included in the work
-            // calculation. Non-included tensors are not co-iterated and instead looked up.
-            std::map<std::string, TensorLowerer> excluded_tensors;
-            for(const auto &loc : locators) {
-                const auto *index = loc.as<Index>();
-                if (!index){
-                    internal_assert(false) << "Expected Index node in locator sequence: " << loc;
-                }
-                for(const auto &it : operand_tensors) {
-                    if (it.second.tensor_name == index->tensor) {
-                        excluded_tensors[it.second.tensor_name] = it.second;
-                    }
-                }
-            }
-            for(auto it : operand_tensors) {
-                if(excluded_tensors.find(it.first) == excluded_tensors.end()) {
-                    included_tensors[it.first] = it.second;
-                }
-            }
 
             for (const auto& it : operand_tensors) {
                 tensor_partitioned_vars[it.second.tensor_name] = llir::lVar::make(llir::Generic_t::make("bool"), "is_" + it.second.tensor_name + "_partitioned");
