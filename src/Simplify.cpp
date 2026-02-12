@@ -80,7 +80,7 @@ struct Simplify : public SimplifySeq {
         for (size_t level = 0; level < node->level; level++) {
             Seq temp = Index::make(node->tensor, node->type, level);
             if (defined.count(temp) == 0) {
-                return Empty::make(node->is_sparse);
+                return Empty::make(true);
             }
         }
         // All parents are defined.

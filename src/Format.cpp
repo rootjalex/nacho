@@ -244,4 +244,9 @@ Format mul_formats(const Format &a, const Format &b) {
     });
 }
 
+bool Format::are_all_lvls_dense() const {
+    return std::all_of(levels.begin(), levels.end(),
+                       [](const Level &lvl) { return lvl.format == LevelFormat::Dense; });
+}
+
 } // namespace nacho
