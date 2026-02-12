@@ -315,6 +315,11 @@ void Printer::visit(const Where *node) {
     dedent();
 }
 
+void Printer::visit(const CalculateWork *node) {
+    print_indent();
+    os << "calculate_work_stmt()\n";
+}
+
 void Printer::print(const llir::lType &ltype) { ltype.accept(this); }
 
 void Printer::visit(const llir::Generic_t *node) { os << node->name; }
@@ -412,6 +417,18 @@ bool is_infix_op(const llir::lBinOp::Op op) {
     }
 }
 
+std::string get_op_string(const llir::lOp::Op op) {
+    switch (op) {
+    case llir::lOp::Not: {
+        return "!";
+        break;
+    }
+    default: {
+        internal_error << "Unknown lOp::Op in printing.";
+    }
+    }
+}
+
 std::string get_op_string(const llir::lBinOp::Op op) {
     switch (op) {
     case llir::lBinOp::And: {
@@ -466,6 +483,11 @@ std::string get_op_string(const llir::lBinOp::Op op) {
         internal_error << "Unknown lBinOp::Op in printing.";
     }
     }
+}
+
+void Printer::visit(const llir::lOp *node) {
+    os << get_op_string(node->op);
+    print_no_parens(node->a);
 }
 
 void Printer::visit(const llir::lBinOp *node) {
@@ -564,8 +586,10 @@ void Printer::visit(const llir::Declare *node) {
     print(node->type);
     os << " ";
     os << node->name;
-    os << " = ";
-    print_no_parens(node->init);
+    if(node->init.defined()){
+        os << " = ";
+        print_no_parens(node->init);
+    }
     os << ";\n";
 }
 

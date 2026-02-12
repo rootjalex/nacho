@@ -22,6 +22,7 @@ enum class lTypeEnum { Generic_t, Float_t, Int_t, Ptr_t, Tuple_t, Struct_t };
 
 // Expressions
 enum class lExprEnum {
+    lOp,
     lBinOp,
     lConst,
     lVar,
@@ -209,6 +210,19 @@ struct Struct_t : lTypeNode<Struct_t> {
     static const lTypeEnum node_type = lTypeEnum::Struct_t;
 };
 
+
+struct lOp : lExprNode<lOp> {
+    enum Op {
+        Not
+    };
+    Op op;
+    lExpr a;
+
+    static lExpr make(Op op, lExpr a);
+
+    static const lExprEnum node_type = lExprEnum::lOp;
+};
+
 struct lBinOp : lExprNode<lBinOp> {
     enum Op {
         And,
@@ -224,6 +238,7 @@ struct lBinOp : lExprNode<lBinOp> {
         Mul,
         Or,
         Sub,
+        OrEq,
     };
     Op op;
     lExpr a, b;
@@ -250,6 +265,7 @@ lExpr operator>=(lExpr a, lExpr b);
 lExpr operator==(lExpr a, lExpr b);
 lExpr operator&&(lExpr a, lExpr b);
 lExpr operator!=(lExpr a, lExpr b);
+lExpr operator||(lExpr a, lExpr b);
 
 struct lConst : lExprNode<lConst> {
     std::variant<int64_t, uint64_t, double, bool> value;
@@ -334,6 +350,7 @@ struct Declare : lStmtNode<Declare> {
     lExpr init;
 
     static lStmt make(lType type, std::string name, lExpr init);
+    static lStmt make(lType type, std::string name);
 
     static const lStmtEnum node_type = lStmtEnum::Declare;
 };

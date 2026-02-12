@@ -73,6 +73,8 @@ void Visitor::visit(const Where *node) {
     node->consumer.accept(this);
 }
 
+void Visitor::visit(const CalculateWork *node) { (void)node; }
+
 
 void Visitor::visit(const llir::Generic_t *node) { (void)node; }
 
@@ -92,6 +94,10 @@ void Visitor::visit(const llir::Struct_t *node) {
     for (const auto &field : node->fields) {
         field.second.accept(this);
     }
+}
+
+void Visitor::visit(const llir::lOp *node) {
+    node->a.accept(this);
 }
 
 void Visitor::visit(const llir::lBinOp *node) {
@@ -139,7 +145,7 @@ void Visitor::visit(const llir::lIncrement *node) {
     node->var.accept(this);
 }
 
-void Visitor::visit(const llir::Declare *node) { node->init.accept(this); }
+void Visitor::visit(const llir::Declare *node) { if(node->init.defined())node->init.accept(this); }
 
 void Visitor::visit(const llir::IfElse *node) {
     node->cond.accept(this);

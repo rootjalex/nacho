@@ -136,7 +136,7 @@ void ComputeFunctionLowerer::add_partition_assignments(
 }
 
 llir::lStmt ComputeFunctionLowerer::
-    lower_precompute_function_for_innermost_sparse_intersection() {
+    lower_precompute_function() {
     llir::lType index_t = llir::Generic_t::make("index_t");
     llir::lType value_t = llir::Generic_t::make("value_t");
     std::vector<std::string> generics = {"index_t", "value_t"};
@@ -190,7 +190,7 @@ llir::lStmt ComputeFunctionLowerer::
 
     // Declare local count variables to be used to calculat the offsets into
     // result. These will be stored in count_offsets at the end.
-    for (int i = 0; i < result_tensor.tensor_type.format.levels.size(); i++) {
+    for (int i = 0; i <= current_sparse_intersection; i++) {
         auto index = result_tensor.tensor_type.format.levels[i].index;
         if (is_sparse_format(
                 result_tensor.tensor_type.format.lvlfmt_of(index))) {
@@ -204,7 +204,7 @@ llir::lStmt ComputeFunctionLowerer::
     internal_assert(cin.defined());
     stmts.push_back(lower_loop(cin, defined, lookups, /*is_precompute*/ true));
 
-    for (int i = 0; i < result_tensor.tensor_type.format.levels.size(); i++) {
+    for (int i = 0; i <= current_sparse_intersection; i++) {
         auto index = result_tensor.tensor_type.format.levels[i].index;
         if (is_sparse_format(
                 result_tensor.tensor_type.format.lvlfmt_of(index))) {
@@ -229,7 +229,7 @@ llir::lStmt ComputeFunctionLowerer::
 }
 
 llir::lStmt ComputeFunctionLowerer::
-    lower_compute_function_for_innermost_sparse_intersection() {
+    lower_compute_function() {
     llir::lType index_t = llir::Generic_t::make("index_t");
     llir::lType value_t = llir::Generic_t::make("value_t");
     std::vector<std::string> generics = {"index_t", "value_t"};
@@ -280,7 +280,7 @@ llir::lStmt ComputeFunctionLowerer::
     // Add common initialization statements
     add_partition_assignments(stmts);
 
-    for (int i = 0; i < result_tensor.tensor_type.format.levels.size(); i++) {
+    for (int i = 0; i <= current_sparse_intersection; i++) {
         auto index = result_tensor.tensor_type.format.levels[i].index;
         if (is_sparse_format(
                 result_tensor.tensor_type.format.lvlfmt_of(index))) {
@@ -414,6 +414,34 @@ llir::lStmt ComputeFunctionLowerer::lower_assign_statement(
 
     } else if(assign.as<Accumulate>()) {
         internal_assert(false) << "TODO: Generation for Accumulate/Reductions not supported.";
+    } else if(assign.as<CalculateWork>()) {
+        llir::lExpr work_expr = llir::lConst::make((int64_t)0);
+        auto get_work_expr = [&](TensorLowerer& Tensor) {
+            std::vector<llir::lExpr> work_args;
+            work_args.emplace_back(
+                llir::lVar::make(llir::Generic_t::make(Tensor.get_struct_name()), Tensor.tensor_name)
+            );
+            auto iter_vars = get_iter_vars_result(result_tensor);
+            for(int j=0;j<=current_sparse_intersection;j++) {
+                work_args.emplace_back(iter_vars[j]);
+            }
+            std::string forall_idx = forall_list[current_sparse_intersection].as<Forall>()->idx;
+            return llir::lFunctionCall::make(Tensor.get_work_function_name(get_all_loops_string(next_sparse_intersection),forall_idx),work_args);
+        };
+        for(auto it: included_tensors) {
+            work_expr = work_expr + get_work_expr(it.second);
+        }
+        return llir::Store::make(
+            llir::lVar::make(llir::Generic_t::make("index_t"), "T_work_offsets")[
+                result_tensor.get_offset_expression_for_next_sparse(
+                    result_tensor.tensor_type.format.get_prev_sparse_level(current_sparse_intersection+1),
+                    current_sparse_intersection,
+                    false, true,
+                    get_iter_vars_result(result_tensor)
+                )
+            ],
+            work_expr
+        );  
     } else {
         internal_assert(false) << "Expected Assign or Accumulate in lower_assign_statement: " << assign;
     }
@@ -558,6 +586,13 @@ llir::lStmt ComputeFunctionLowerer::lower_loop(
         imap[i] = std::move(p);
     }
 
+    auto current_for_it = std::find_if(forall_list.begin(), forall_list.end(),
+                               [&](CIN f) {
+                                   const Forall *ff = f.as<Forall>();
+                                   return ff->idx == forall->idx;
+                               });
+    int loop_level = std::distance(forall_list.begin(), current_for_it);
+
     auto make_loop = [&](const Seq &s) {
         auto [is, _] = partition_iterators_locators(s);
 
@@ -672,7 +707,7 @@ llir::lStmt ComputeFunctionLowerer::lower_loop(
                     {assign_indices_stmt, std::move(body)});
             }
 
-            if (seq.get()->is_sparse) {
+            if (seq.get()->is_sparse ) {
                 // Count this loop iteration.
                 llir::lStmt inc = llir::BaseExpr::make(
                     llir::lIncrement::make(llir::lVar::make(
@@ -786,10 +821,10 @@ llir::lStmt ComputeFunctionLowerer::lower_loop(
             return llir::lStmt();
         };
 
-
-        llir::lStmt assign_indices_stmt;
         // Store the index value in the result
-        if(!is_precompute){
+        llir::lStmt assign_indices_stmt;
+        
+        if(!is_precompute && previous_sparse_intersection < loop_level){
             assign_indices_stmt = make_assign_indices(llir::lVar::make(index_t, forall->idx));
         }
 

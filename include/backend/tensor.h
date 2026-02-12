@@ -3,6 +3,7 @@
 #include "CIN.h"
 #include "Type.h"
 #include "llir/LLIR.h"
+#include <numeric>
 
 namespace nacho {
     namespace backend {
@@ -13,9 +14,10 @@ namespace nacho {
     struct TensorLowerer {
         std::string tensor_name;
         TensorType tensor_type;
+        bool is_result_tensor;
         TensorLowerer() = default;
-        TensorLowerer(std::string tensor_name, TensorType tensor_type)
-            : tensor_name(std::move(tensor_name)), tensor_type(std::move(tensor_type)) {}
+        TensorLowerer(std::string tensor_name, TensorType tensor_type, bool is_result_tensor=false)
+            : tensor_name(std::move(tensor_name)), tensor_type(std::move(tensor_type)), is_result_tensor(is_result_tensor) {}
 
         inline std::string get_struct_name() const {
             return tensor_name + "_tensor_format";
@@ -75,6 +77,13 @@ namespace nacho {
             );
         }
 
+        inline llir::lExpr get_length_field(const int level) const {
+            return llir::lFieldAccess::make(
+                llir::lVar::make(llir::Generic_t::make(get_struct_name()), tensor_name),
+                get_length_field_name(level)
+            );
+        }
+
         inline std::string
         get_offsets_field_name(const std::string &index) const {
             return "dim_" + index + "_offsets";
@@ -121,8 +130,8 @@ namespace nacho {
         }
 
         inline std::string
-        get_work_function_name(const std::string &index) const {
-            return "work_" + tensor_name + "_dim_" + index;
+        get_work_function_name(std::string prefix_string, const std::string &index) const {
+            return "work_"+prefix_string+"_" + tensor_name + "_dim_" + index;
         }
 
         inline std::string get_type_suffix(const int level) const {
@@ -151,6 +160,11 @@ namespace nacho {
         // args are loop_order = [i,j,k,l],target_dim = 2, prev_dim_positions =
         // [12, 32], target_dim_position = 54
         llir::lStmt lower_work_function(std::vector<std::string> loop_order,
+                                        int target_dim);
+
+        llir::lStmt lower_result_work_function(std::vector<std::string> loop_order, int target_dim, int sparse_intersection_dim);
+    
+        llir::lStmt lower_result_work_function(std::vector<std::string> loop_order,
                                         int target_dim);
 
         llir::lExpr get_offset_expression_for_next_sparse(

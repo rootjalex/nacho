@@ -51,6 +51,7 @@ struct Printer : public Visitor {
     virtual void visit(const Forall *) override;
     virtual void visit(const Sequence *) override;
     virtual void visit(const Where *) override;
+    virtual void visit(const CalculateWork *) override;
 
     virtual void print(const llir::lType &);
     virtual void visit(const llir::Generic_t *) override;
@@ -62,6 +63,7 @@ struct Printer : public Visitor {
 
     virtual void print(const llir::lExpr &);
     virtual void print_no_parens(const llir::lExpr &);
+    virtual void visit(const llir::lOp *) override;
     virtual void visit(const llir::lBinOp *) override;
     virtual void visit(const llir::lConst *) override;
     virtual void visit(const llir::lBuild *) override;

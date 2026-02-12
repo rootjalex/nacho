@@ -109,4 +109,8 @@ CIN Mutator::visit(const Where *node) {
                        std::move(consumer));
 }
 
+CIN Mutator::visit(const CalculateWork *node) {
+    return node;
+}
+
 } // namespace nacho

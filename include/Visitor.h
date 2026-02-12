@@ -30,6 +30,7 @@ struct Visitor {
     virtual void visit(const Forall *);
     virtual void visit(const Sequence *);
     virtual void visit(const Where *);
+    virtual void visit(const CalculateWork *);
 
     // LLIR
     virtual void visit(const llir::Generic_t *);
@@ -38,6 +39,7 @@ struct Visitor {
     virtual void visit(const llir::Ptr_t *);
     virtual void visit(const llir::Tuple_t *);
     virtual void visit(const llir::Struct_t *);
+    virtual void visit(const llir::lOp *);
     virtual void visit(const llir::lBinOp *);
     virtual void visit(const llir::lConst *);
     virtual void visit(const llir::lBuild *);

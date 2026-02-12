@@ -29,6 +29,7 @@ enum class CINEnum {
     Forall,
     Sequence,
     Where,
+    CalculateWork,
 };
 
 using IRcExprNode = IRNode<cExpr, cExprEnum>;
@@ -195,6 +196,11 @@ struct Where : CINNode<Where> {
                     CIN producer);
 
     static const CINEnum node_type = CINEnum::Where;
+};
+
+struct CalculateWork :  CINNode<CalculateWork> {
+    static CIN make();
+    static const CINEnum node_type = CINEnum::CalculateWork;
 };
 
 } // namespace nacho

@@ -31,6 +31,7 @@ struct Assign;
 struct Forall;
 struct Sequence;
 struct Where;
+struct CalculateWork;
 
 namespace llir {
 
@@ -43,6 +44,7 @@ struct Tuple_t;
 struct Struct_t;
 
 struct lExpr;
+struct lOp;
 struct lBinOp;
 struct lConst;
 struct lBuild;
