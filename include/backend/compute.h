@@ -96,13 +96,7 @@ namespace backend {
         // TODO: deduplicate with
         // PartitionFunctionLowerer::get_partition_struct_name()
         inline std::string get_partition_struct_name() const {
-            std::string partition_argtype_name = "partition_";
-            CIN strip_idxs = cin;
-            while (const auto *forall = strip_idxs.as<Forall>()) {
-                partition_argtype_name += forall->idx;
-                strip_idxs = forall->body;
-            }
-            return partition_argtype_name;
+            return "partition";
         }
     };
 

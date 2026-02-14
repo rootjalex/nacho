@@ -125,17 +125,23 @@ llir::lExpr TensorLowerer::get_offset_expression_for_next_sparse(
 
 // lower_work_function returns the LLIR work function for the given tensor.
 // target_dim is the target dimension for which work is being calculated.
-// prev_dim_positions are the positions of dimensions less than target_dim.
-// target_dim_position is the position of the target_dim at which work is being
-// calculated. Eg - Consider a DCSR tensor with dims i,k and the loop order is
+// loop_order is the the current loop order (The loop order can be any
+// prefix of the actual loop order. This is so that you can generate
+// work functions for only a prefix of the loops to calculate work for the current sparse intersection loop). 
+// Consider a DCSR tensor with dims i,k and the loop order is
 // [i,j,k,l] (the DCSR tensor is broadcaster over j,l) And now we need to
 // generate a work function which can calulate work for i=12, j=12, 0<= k <=54.
 // 0 <= l <= |L| Then the args are loop_order = [i,j,k,l],target_dim = 2 (k) The
-// generated work function for the example will look like following
+// generated work function. will take the values of i,j,k as the arguments.
 //
+// if is_target_dim_value_fixed is true then the generated work function calculates work for
+// when target_dim is fixed to the specific value instead of target_dim being iterated from
+// 0 to the the value. For example for DCSR example above if work function is generated
+// with is_target_dim_value_fixed = true then the generated work function will calculate
+// work for i=12, j=12, k=54.
 llir::lStmt
 TensorLowerer::lower_work_function(std::vector<std::string> loop_order,
-                                   int target_dim) {
+                                   int target_dim, bool is_target_dim_value_fixed) {
 
     internal_assert(target_dim < loop_order.size()) << "Target dimension has to be less than loop order size";
 
@@ -149,14 +155,14 @@ TensorLowerer::lower_work_function(std::vector<std::string> loop_order,
     auto order_map = index_order_map(tensor_type.format.levels);
 
     // Check what is the last level in loop order that is present inside this tensor 
-    int last_level_loop_place = -1;
+    int last_level_idx_in_loop_order = -1;
     for(int i=loop_order.size()-1; i>=0; i--) {
         if(tensor_type.format.level_exists(loop_order[i])) {
-            last_level_loop_place = i;
+            last_level_idx_in_loop_order = i;
             break;
         }
     }
-    int last_level_in_loop_order = last_level_loop_place==-1 ? -1 : order_map[loop_order[last_level_loop_place]];
+    int last_level_in_loop_order = last_level_idx_in_loop_order==-1 ? -1 : order_map[loop_order[last_level_idx_in_loop_order]];
 
     // checks the loop order is consistent with the tensor format
     auto violates_order = [&](const std::vector<std::string> &loop_order,
@@ -189,10 +195,10 @@ TensorLowerer::lower_work_function(std::vector<std::string> loop_order,
         .type = llir::Generic_t::make(get_struct_name() + "<index_t, value_t>"),
         .name = tensor_name});
 
-    // last_sparse_level will store the last sparse level before target_dim
-    int last_sparse_level = -1;
-    // last_level will store the last level before target_dim
-    int last_level = -1;
+    // last_sparse_level_before_target_dim will store the last sparse level for this tensor coming before target_dim 
+    int last_sparse_level_before_target_dim = -1;
+    // last_level will store the last level for this tensor which comes before target_dim
+    int last_level_before_target_dim = -1;
     for (int i = 0; i <= target_dim; i++) {
 
         // only add arguments for non-broadcasted levels
@@ -204,9 +210,9 @@ TensorLowerer::lower_work_function(std::vector<std::string> loop_order,
                 // sparse dimensions are iterated by positions while dense are
                 // iterated by coordinates
                 name += "_p";
-                last_sparse_level = order_map[loop_order[i]];
+                last_sparse_level_before_target_dim = order_map[loop_order[i]];
             }
-            last_level = order_map[loop_order[i]];
+            last_level_before_target_dim = order_map[loop_order[i]];
             args.emplace_back(llir::Function::Argument{
                 .mutating = false, .type = index_t, .name = name});
         }
@@ -245,7 +251,7 @@ TensorLowerer::lower_work_function(std::vector<std::string> loop_order,
     // if target_dim is a loop that comes after last level of the tensor in the
     // loop order Then iteration work for this tensor is 0 (as we are not
     // iterating on any non-zeros of the tensor)
-    if (last_level_loop_place < target_dim) {
+    if (last_level_idx_in_loop_order < target_dim) {
         stmts.emplace_back(llir::Return::make(llir::lConst::make((int64_t)0)));
         llir::lStmt body = llir::Sequence::make(std::move(stmts));
         return llir::Function::make(std::move(generics), std::move(attributes),
@@ -260,18 +266,18 @@ TensorLowerer::lower_work_function(std::vector<std::string> loop_order,
     // "<<last_sparse_level<<std::endl;
     llir::lExpr count_expr;
     // We need to iterate on all the nonzeros if last_level == -1
-    if (last_level == -1) {
+    if (last_level_before_target_dim == -1) {
         // if there is no sparse dimension in the tensor in the given loop order(i.e all dense) just
         // return 1 (The 1 will get multiplied later by sizes of all dense
         // dimensions in the next for loop below)
-        int last_sparse_dim = tensor_type.format.get_prev_sparse_level(last_level_in_loop_order + 1);
-        if (last_sparse_dim == -1) {
+        int last_sparse_dim_in_loop_order = tensor_type.format.get_prev_sparse_level(last_level_in_loop_order + 1);
+        if (last_sparse_dim_in_loop_order == -1) {
             count_expr = llir::lConst::make((int64_t)1);
         } else {
             // We iterate on the whole last sparse dim that comes before last_level_loop_place
-            count_expr = this->get_length_field(last_sparse_dim);
+            count_expr = this->get_length_field(last_sparse_dim_in_loop_order);
         }
-        for (int i = last_sparse_dim + 1;
+        for (int i = last_sparse_dim_in_loop_order + 1;
              i <= last_level_in_loop_order; i++) {
             count_expr = count_expr * this->get_size_field(i);
         }
@@ -287,46 +293,46 @@ TensorLowerer::lower_work_function(std::vector<std::string> loop_order,
         llir::lExpr end_expr;
 
         // target_dim is a level inside this tensor
-        if (tensor_type.format.level_exists(loop_order[target_dim])) {
+        if (tensor_type.format.level_exists(loop_order[target_dim]) && !is_target_dim_value_fixed) {
             // loop_order[target_dim] == last_level
 
             // last_level is also sparse
-            if (last_level == last_sparse_level) {
-                start_expr = last_level - 1 >= 0
+            if (last_level_before_target_dim == last_sparse_level_before_target_dim) {
+                start_expr = last_level_before_target_dim - 1 >= 0
                                  ? get_offset_expression_for_next_sparse(
                                        tensor_type.format.get_prev_sparse_level(
-                                           last_level),
-                                       last_level - 1, false)
+                                           last_level_before_target_dim),
+                                       last_level_before_target_dim - 1, false)
                                  : llir::lConst::make((int64_t)0);
 
-                if (last_level - 1 >= 0)
-                    start_expr = this->get_offsets_field(last_sparse_level)[start_expr];
+                if (last_level_before_target_dim - 1 >= 0)
+                    start_expr = this->get_offsets_field(last_sparse_level_before_target_dim)[start_expr];
             } else {
                 // std::cout<<" last_level "<<last_level<<" last_sparse_level
                 // "<<last_sparse_level<<std::endl;
                 start_expr =
-                    last_level - 1 >= 0
+                    last_level_before_target_dim - 1 >= 0
                         ? get_offset_expression_for_next_sparse(
-                                  last_sparse_level, last_level - 1, false) * this->get_size_field(last_level)
+                                  last_sparse_level_before_target_dim, last_level_before_target_dim - 1, false) * this->get_size_field(last_level_before_target_dim)
                         : llir::lConst::make((int64_t)0);
             }
         } else {
             start_expr = get_offset_expression_for_next_sparse(
-                last_sparse_level, last_level, false);
+                last_sparse_level_before_target_dim, last_level_before_target_dim, false);
         }
 
-        end_expr = get_offset_expression_for_next_sparse(last_sparse_level,
-                                                         last_level, true);
+        end_expr = get_offset_expression_for_next_sparse(last_sparse_level_before_target_dim,
+                                                         last_level_before_target_dim, true);
 
-        for (int i = last_level + 1;
-             i < std::min(tensor_type.format.get_next_sparse_level(last_sparse_level), last_level_in_loop_order + 1);
+        for (int i = last_level_before_target_dim + 1;
+             i < std::min(tensor_type.format.get_next_sparse_level(last_sparse_level_before_target_dim), last_level_in_loop_order + 1);
              i++) {
             start_expr = start_expr * this->get_size_field(i);
             end_expr = end_expr * this->get_size_field(i);
         }
 
         int next_sparse_level =
-            tensor_type.format.get_next_sparse_level(last_sparse_level);
+            tensor_type.format.get_next_sparse_level(last_sparse_level_before_target_dim);
         // std::cout<<" last_level "<<last_level<<" last_sparse_level
         // "<<last_sparse_level<<std::endl;
         stmts.emplace_back(llir::Declare::make(
@@ -403,14 +409,14 @@ TensorLowerer::lower_work_function(std::vector<std::string> loop_order,
 
     // if target_dim is a broad cast level need to multiple by the arg of
     // target_dim
-    if (!tensor_type.format.level_exists(loop_order[target_dim])) {
+    if (!tensor_type.format.level_exists(loop_order[target_dim]) && !is_target_dim_value_fixed) {
         work_expr = work_expr * llir::lVar::make(index_t, loop_order[target_dim]);
     }
 
     // Multiply by the required broadcast levels
     // broadcast factor is not required for broacast levels that come after the
     // last level in the tensor
-    for (int i = target_dim + 1; i < last_level_loop_place; i++) {
+    for (int i = target_dim + 1; i < last_level_idx_in_loop_order; i++) {
         if (!tensor_type.format.level_exists(loop_order[i])) {
             work_expr = work_expr * llir::lVar::make(index_t, "bc_size_" + loop_order[i]);
         }

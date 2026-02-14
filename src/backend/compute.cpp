@@ -273,7 +273,7 @@ llir::lStmt ComputeFunctionLowerer::
         .mutating = true,
         .type = llir::Generic_t::make(result_tensor.get_struct_name() +
                                       "<index_t, value_t>"),
-        .name = "result"});
+        .name = result_tensor.tensor_name});
 
     std::vector<llir::lStmt> stmts;
 
@@ -398,7 +398,7 @@ llir::lStmt ComputeFunctionLowerer::lower_assign_statement(
                 llir::lFieldAccess::make(
                     llir::lVar::make(
                         llir::Generic_t::make(result_tensor.get_struct_name()),
-                        "result"
+                        result_tensor.tensor_name
                     ),
                     result_tensor.get_values_field_name()
                 ),
@@ -421,9 +421,8 @@ llir::lStmt ComputeFunctionLowerer::lower_assign_statement(
             work_args.emplace_back(
                 llir::lVar::make(llir::Generic_t::make(Tensor.get_struct_name()), Tensor.tensor_name)
             );
-            auto iter_vars = get_iter_vars_result(result_tensor);
             for(int j=0;j<=current_sparse_intersection;j++) {
-                work_args.emplace_back(iter_vars[j]);
+                work_args.emplace_back(Tensor.get_iter_var(j, llir::Generic_t::make("index_t")));
             }
             std::string forall_idx = forall_list[current_sparse_intersection].as<Forall>()->idx;
             return llir::lFunctionCall::make(Tensor.get_work_function_name(get_all_loops_string(next_sparse_intersection),forall_idx),work_args);
@@ -494,6 +493,8 @@ llir::lStmt ComputeFunctionLowerer::lower_loop(
             index_t, forall->idx,
             llir::lVar::make(index_t, "start_" + forall->idx)));
     }
+
+    llir::lExpr atleast_one_iter_cond;
 
     for (const auto &i : forall_iters) {
         const Index *idx = i.as<Index>();
@@ -582,9 +583,17 @@ llir::lStmt ComputeFunctionLowerer::lower_loop(
         stmts.push_back(llir::Declare::make(
             index_t, tlower.get_stop_name(idx->level), stop_value));
 
+        atleast_one_iter_cond = atleast_one_iter_cond.defined() ? (atleast_one_iter_cond || (get_iter(idx->level)<= get_stop(idx->level))) : (get_iter(idx->level)<= get_stop(idx->level));
+        
         lExprPair p = {get_iter(idx->level), get_stop(idx->level)};
         imap[i] = std::move(p);
     }
+
+    if(result_tensor.is_sparse(forall->idx) && result_tensor.tensor_type.format.get_level_order(forall->idx) > 0) {
+        stmts.push_back(llir::Declare::make(
+        llir::Generic_t::make("bool"), "atleast_one_iter_" + forall->idx, atleast_one_iter_cond));
+    }
+    
 
     auto current_for_it = std::find_if(forall_list.begin(), forall_list.end(),
                                [&](CIN f) {
@@ -617,29 +626,12 @@ llir::lStmt ComputeFunctionLowerer::lower_loop(
         }
         internal_assert(cond.defined()) << s;
 
-        // used only for compute kernel, adds the epilogue for offset
-        // calculation in result.
-        auto make_offset_calculation = [&](const Forall *forall) {
-            if (is_sparse_format(
-                    result_tensor.tensor_type.format.lvlfmt_of(forall->idx))) {
-                int level = result_tensor.tensor_type.format.get_level_order(
-                    forall->idx);
-                auto store_stmt = llir::Store::make(
-                    llir::lArrayAccess::make(
-                        llir::lFieldAccess::make(
-                            llir::lVar::make(
-                                llir::Generic_t::make(
-                                    result_tensor.get_struct_name()),
-                                "result"),
-                            result_tensor.get_offsets_field_name(forall->idx)),
-                        result_tensor.get_offset_expression_for_next_sparse(
-                            result_tensor.tensor_type.format
-                                .get_prev_sparse_level(level),
-                            level - 1, true, true,
-                            get_iter_vars_result(result_tensor))),
-                    llir::lVar::make(index_t, "offset_" + forall->idx));
+        auto get_body_epilogue_stmt = [&](const CIN nextCin, Seq seq, const Forall *forall) {
+            llir::lStmt stmt;
 
-                auto get_condition = [&](const Index *idx) -> llir::lExpr {
+            // Get the condition for the particular (tensor,level) this level iterates
+            // till the extrema i.e stop_var == extrema
+            auto get_condition_stop_eq_extrema = [&](const Index *idx) -> llir::lExpr {
                     internal_assert(idx) << idx;
                     TensorLowerer tlower(idx->tensor, idx->type);
                     llir::lExpr stop_var = llir::lVar::make(
@@ -649,22 +641,57 @@ llir::lStmt ComputeFunctionLowerer::lower_loop(
                     extrema = extrema - llir::lConst::make(1);
                     llir::lExpr cond = stop_var == extrema;
                     return cond;
-                };
+            };
 
-                // auto idxs = indexes(forall->seq);
-                auto [idxs, _] = partition_iterators_locators(forall->seq);
-                llir::lExpr cond;
-                for (int i = 0; i < idxs.size(); i++) {
-                    llir::lExpr idx_cond = get_condition(idxs[i].as<Index>());
-                    cond = i == 0 ? idx_cond : cond && idx_cond;
+            if (result_tensor.is_sparse(forall->idx)) {
+                // Count this loop iteration.
+                stmt = llir::BaseExpr::make(
+                    llir::lIncrement::make(llir::lVar::make(
+                        index_t,
+                        (is_precompute ? "count_" : "offset_") + forall->idx)));
+
+                
+                // If this is not the innermost loop need to wrap the increment statement under a condition
+                // also, add the offset calculation statement here
+                if(nextCin.as<Forall>()) {
+                    auto nextForall = nextCin.as<Forall>();
+                    // offset calculation statement here
+                    // eg :- result.dim_j_offsets[offset_i + 1] = offset_j
+                    int level = result_tensor.tensor_type.format.get_level_order(
+                    nextForall->idx);
+                    llir::lStmt store_stmt;
+                    if(!is_precompute) {
+                         store_stmt = llir::Store::make(
+                            result_tensor.get_offsets_field(nextForall->idx)[
+                                result_tensor.get_offset_expression_for_next_sparse(
+                                    result_tensor.tensor_type.format
+                                        .get_prev_sparse_level(level),
+                                    level - 1, true, true,
+                                    get_iter_vars_result(result_tensor))],
+                            llir::lVar::make(index_t, "offset_" + nextForall->idx));
+                    }
+
+                    auto [idxs, _] = partition_iterators_locators(nextForall->seq);
+                    llir::lExpr cond;
+                    for (int i = 0; i < idxs.size(); i++) {
+                        llir::lExpr idx_cond = get_condition_stop_eq_extrema(idxs[i].as<Index>());
+                        cond = i == 0 ? idx_cond : cond && idx_cond;
+                    }
+                    llir::lExpr atleast_one_idx_cond = llir::lVar::make(llir::Generic_t::make("bool"), "atleast_one_iter_" + nextForall->idx);
+                    cond = cond && atleast_one_idx_cond;
+                    internal_assert(cond.defined()) << nextForall->seq;
+
+                    if(store_stmt.defined()) {
+                        stmt = llir::IfElse::make(cond, llir::Sequence::make({std::move(store_stmt),std::move(stmt)}), nullptr);
+                    } else {
+                        stmt = llir::IfElse::make(cond, std::move(stmt), nullptr);
+                    }
                 }
-                internal_assert(cond.defined()) << forall->seq;
-
-                return llir::IfElse::make(cond, std::move(store_stmt), nullptr);
             }
-            return llir::lStmt();
+            return stmt;
         };
 
+        
         auto make_body = [&](const Seq &a, llir::lStmt &assign_indices_stmt) {
             // Do NOT change this to partition_iterators_locators, body
             // needs all defined.
@@ -690,14 +717,6 @@ llir::lStmt ComputeFunctionLowerer::lower_loop(
             llir::lStmt body;
             if (cin.as<Forall>()) {
                 body = lower_loop(cin, new_def, new_locs, is_precompute);
-                if (!is_precompute) {
-                    auto offset_stmt =
-                        make_offset_calculation(cin.as<Forall>());
-                    if (offset_stmt.defined()) {
-                        body = llir::Sequence::make(
-                            {std::move(body), std::move(offset_stmt)});
-                    }
-                }
             } else {
                 body = lower_assign_statement(cin, is_precompute);
             }
@@ -707,18 +726,12 @@ llir::lStmt ComputeFunctionLowerer::lower_loop(
                     {assign_indices_stmt, std::move(body)});
             }
 
-            if (seq.get()->is_sparse ) {
-                // Count this loop iteration.
-                llir::lStmt inc = llir::BaseExpr::make(
-                    llir::lIncrement::make(llir::lVar::make(
-                        index_t,
-                        (is_precompute ? "count_" : "offset_") + forall->idx)));
-                if (body.defined()) {
-                    body =
-                        llir::Sequence::make({std::move(body), std::move(inc)});
-                } else {
-                    body = std::move(inc);
-                }
+            auto epilogue_stmt = get_body_epilogue_stmt(cin, a, forall);
+            assert(body.defined() || epilogue_stmt.defined());
+            if (body.defined() && epilogue_stmt.defined()) {
+                body = llir::Sequence::make({std::move(body), std::move(epilogue_stmt)});
+            } else if (epilogue_stmt.defined()) {
+                body = std::move(epilogue_stmt);
             }
             return body;
         };
@@ -808,14 +821,8 @@ llir::lStmt ComputeFunctionLowerer::lower_loop(
                 is_sparse_format(
                     result_tensor.tensor_type.format.lvlfmt_of(forall->idx))) {
                 return llir::Store::make(
-                    llir::lArrayAccess::make(
-                        llir::lFieldAccess::make(
-                            llir::lVar::make(
-                                llir::Generic_t::make(
-                                    result_tensor.get_struct_name()),
-                                "result"),
-                            result_tensor.get_indices_field_name(forall->idx)),
-                        llir::lVar::make(index_t, "offset_" + forall->idx)),
+                    result_tensor.get_indices_field(forall->idx)[
+                        llir::lVar::make(index_t, "offset_" + forall->idx)],
                     index);
             }
             return llir::lStmt();
