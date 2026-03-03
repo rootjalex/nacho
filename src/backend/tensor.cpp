@@ -239,6 +239,13 @@ TensorLowerer::lower_work_function(std::vector<std::string> loop_order,
         }
     }
 
+    // for result tensor, T_work_offsets needs to be added as an argument , This is required for the recurssive partitioning case
+    if(is_result_tensor) {
+        args.emplace_back(llir::Function::Argument{.mutating = false,
+                                                 .type = llir::Ptr_t::make(index_t),
+                                                 .name = "T_work_offsets"});
+    }
+
     llir::lType ret_type = llir::Generic_t::make("index_t");
     std::string all_loops_string = std::accumulate(loop_order.begin(), loop_order.end(), std::string(""),
             [](const std::string &acc, const std::string &c) {
@@ -432,45 +439,6 @@ TensorLowerer::lower_work_function(std::vector<std::string> loop_order,
 }
 
 
-
-llir::lStmt TensorLowerer::lower_result_work_function(std::vector<std::string> loop_order, int target_dim, int sparse_intersection_dim) {
-    // For result tensor, work is simply the size of the target dimension in
-    // the sparse intersection
-    llir::lType index_t = llir::Generic_t::make("index_t");
-    llir::lType value_t = llir::Generic_t::make("value_t");
-    std::vector<std::string> generics = {"index_t", "value_t"};
-
-    std::vector<llir::Function::Attribute> attributes = {
-        llir::Function::device, llir::Function::inline_};
-
-    std::vector<llir::Function::Argument> args;
-    args.emplace_back(llir::Function::Argument{
-        .mutating = false,
-        .type = llir::Generic_t::make(get_struct_name() + "<index_t, value_t>"),
-        .name = tensor_name});
-
-    llir::lType ret_type = llir::Generic_t::make("index_t");
-
-    std::string all_loops_string = std::accumulate(loop_order.begin(), loop_order.end(), std::string(""),
-        [](const std::string &acc, const std::string &c) {
-            return acc + c;
-        });
-    std::string name = get_work_function_name(all_loops_string, loop_order[target_dim]);
-
-
-
-    std::vector<llir::lStmt> stmts;
-
-    llir::lExpr size_expr = this->get_size_field(sparse_intersection_dim);
-
-    stmts.emplace_back(llir::Return::make(size_expr));
-
-    llir::lStmt body = llir::Sequence::make(std::move(stmts));
-
-    return llir::Function::make(std::move(generics), std::move(attributes),
-                                std::move(args), std::move(ret_type), name,
-                                std::move(body));
-}
 
 // Lower the tensor index definition to LLIR.
 // This struct defines an object to specify the values of different levels to

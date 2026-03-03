@@ -39,9 +39,9 @@ struct PartitionFunctionLowerer {
             internal_assert(included_tensors.size()>0) << "Expected atleast 1 included tensor for partitioning";
         }
 
-    inline std::string get_partition_all_loops_string() {
+    inline std::string get_partition_all_loops_string(bool use_previous_sparse_intersect = false) {
         std::string all_loops_string = "";
-        for(int i=0;i<=next_sparse_intersect_forall_id; i++) {
+        for(int i=0;i<= (use_previous_sparse_intersect ? previous_sparse_intersect_forall_id : next_sparse_intersect_forall_id); i++) {
             all_loops_string += forall_list[i].as<Forall>()->idx;
         }
         return all_loops_string;

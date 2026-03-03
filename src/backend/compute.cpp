@@ -176,6 +176,13 @@ llir::lStmt ComputeFunctionLowerer::
     args.emplace_back(llir::Function::Argument{
         .mutating = false, .type = index_t, .name = "per_thread_work"});
 
+    if(previous_sparse_intersection != -1)
+        args.emplace_back(llir::Function::Argument{
+            .mutating = false,
+            .type = llir::Generic_t::make(result_tensor.get_struct_name() +
+                                        "<index_t, value_t>"),
+            .name = result_tensor.tensor_name});
+
     std::vector<llir::lStmt> stmts;
 
     // Add common initialization statements
@@ -274,6 +281,13 @@ llir::lStmt ComputeFunctionLowerer::
         .type = llir::Generic_t::make(result_tensor.get_struct_name() +
                                       "<index_t, value_t>"),
         .name = result_tensor.tensor_name});
+    
+    if(next_sparse_intersection != forall_list.size()) {
+        args.emplace_back(llir::Function::Argument{
+            .mutating = true,
+            .type = llir::Ptr_t::make(index_t),
+            .name = "T_work_offsets"});
+    }
 
     std::vector<llir::lStmt> stmts;
 

@@ -162,10 +162,6 @@ namespace nacho {
         llir::lStmt lower_work_function(std::vector<std::string> loop_order,
                                         int target_dim, bool is_target_dim_value_fixed = false);
 
-        llir::lStmt lower_result_work_function(std::vector<std::string> loop_order, int target_dim, int sparse_intersection_dim);
-    
-        llir::lStmt lower_result_work_function(std::vector<std::string> loop_order,
-                                        int target_dim);
 
         llir::lExpr get_offset_expression_for_next_sparse(
             int dim_level_start, int dim_level_end, bool upper_bound,
