@@ -649,43 +649,42 @@ llir::lStmt ComputeFunctionLowerer::lower_loop(
                     llir::lIncrement::make(llir::lVar::make(
                         index_t,
                         (is_precompute ? "count_" : "offset_") + forall->idx)));
+            }
 
-                
-                // If this is not the innermost loop need to wrap the increment statement under a condition
-                // also, add the offset calculation statement here
-                if(nextCin.as<Forall>()) {
-                    auto nextForall = nextCin.as<Forall>();
-                    // offset calculation statement here
-                    // eg :- result.dim_j_offsets[offset_i + 1] = offset_j
-                    int level = result_tensor.tensor_type.format.get_level_order(
-                    nextForall->idx);
-                    llir::lStmt store_stmt;
-                    if(!is_precompute) {
-                         store_stmt = llir::Store::make(
-                            result_tensor.get_offsets_field(nextForall->idx)[
-                                result_tensor.get_offset_expression_for_next_sparse(
-                                    result_tensor.tensor_type.format
-                                        .get_prev_sparse_level(level),
-                                    level - 1, true, true,
-                                    get_iter_vars_result(result_tensor))],
-                            llir::lVar::make(index_t, "offset_" + nextForall->idx));
-                    }
+            auto nextForall = nextCin.as<Forall>();
+            // If this is not the innermost loop need to wrap the increment statement under a condition
+            // also, add the offset calculation statement here
+            if(nextForall && result_tensor.is_sparse(nextForall->idx)) {
+                // offset calculation statement here
+                // eg :- result.dim_j_offsets[offset_i + 1] = offset_j
+                int level = result_tensor.tensor_type.format.get_level_order(
+                nextForall->idx);
+                llir::lStmt store_stmt;
+                if(!is_precompute) {
+                        store_stmt = llir::Store::make(
+                        result_tensor.get_offsets_field(nextForall->idx)[
+                            result_tensor.get_offset_expression_for_next_sparse(
+                                result_tensor.tensor_type.format
+                                    .get_prev_sparse_level(level),
+                                level - 1, true, true,
+                                get_iter_vars_result(result_tensor))],
+                        llir::lVar::make(index_t, "offset_" + nextForall->idx));
+                }
 
-                    auto [idxs, _] = partition_iterators_locators(nextForall->seq);
-                    llir::lExpr cond;
-                    for (int i = 0; i < idxs.size(); i++) {
-                        llir::lExpr idx_cond = get_condition_stop_eq_extrema(idxs[i].as<Index>());
-                        cond = i == 0 ? idx_cond : cond && idx_cond;
-                    }
-                    llir::lExpr atleast_one_idx_cond = llir::lVar::make(llir::Generic_t::make("bool"), "atleast_one_iter_" + nextForall->idx);
-                    cond = cond && atleast_one_idx_cond;
-                    internal_assert(cond.defined()) << nextForall->seq;
+                auto [idxs, _] = partition_iterators_locators(nextForall->seq);
+                llir::lExpr cond;
+                for (int i = 0; i < idxs.size(); i++) {
+                    llir::lExpr idx_cond = get_condition_stop_eq_extrema(idxs[i].as<Index>());
+                    cond = i == 0 ? idx_cond : cond && idx_cond;
+                }
+                llir::lExpr atleast_one_idx_cond = llir::lVar::make(llir::Generic_t::make("bool"), "atleast_one_iter_" + nextForall->idx);
+                cond = cond && atleast_one_idx_cond;
+                internal_assert(cond.defined()) << nextForall->seq;
 
-                    if(store_stmt.defined()) {
-                        stmt = llir::IfElse::make(cond, llir::Sequence::make({std::move(store_stmt),std::move(stmt)}), nullptr);
-                    } else {
-                        stmt = llir::IfElse::make(cond, std::move(stmt), nullptr);
-                    }
+                if(store_stmt.defined() && stmt.defined()) {
+                    stmt = llir::IfElse::make(cond, llir::Sequence::make({std::move(store_stmt),std::move(stmt)}), nullptr);
+                } else if(store_stmt.defined()) {
+                    stmt = llir::IfElse::make(cond, std::move(store_stmt), nullptr);
                 }
             }
             return stmt;
