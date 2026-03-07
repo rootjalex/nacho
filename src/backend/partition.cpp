@@ -94,6 +94,13 @@ namespace backend {
             }
         );
 
+        if(previous_sparse_intersect_forall_id != -1)
+            args.emplace_back(
+                llir::Function::Argument{
+                    .mutating = true, .type = llir::Ptr_t::make(index_t), .name = "T_work_offsets"
+                }
+            );
+
         std::vector<llir::lStmt> stmts;
 
         // int thread_id = blockIdx.x * blockDim.x + threadIdx.x;
@@ -409,7 +416,11 @@ namespace backend {
             }
         }
 
-        return llir::lFunctionCall::make(tensor.get_work_function_name(get_partition_all_loops_string(),forall_idx),work_args);
+        if(tensor.is_result_tensor) {
+            work_args.emplace_back(llir::lVar::make(index_t, "T_work_offsets"));
+        }
+
+        return llir::lFunctionCall::make(tensor.get_work_function_name(get_partition_all_loops_string(tensor.is_result_tensor),forall_idx),work_args);
     };
 
     llir::lExpr PartitionFunctionLowerer::get_sparse_dim_start_expr(TensorLowerer& tensor, const std::string& forall_idx) {
@@ -638,16 +649,50 @@ namespace backend {
             )
         );
 
+        auto start_modifier_statements = std::vector<llir::lStmt>{llir::Store::make(
+                start_var,
+                is_last_loop? mid_var + 1 : mid_var
+            )};
+        auto end_modifier_statements = std::vector<llir::lStmt>{llir::Store::make(
+                        end_var,
+                        is_last_loop? mid_var : mid_var - 1
+                    )};
+
+        for(int i=0;i<tensors_with_curr_dim_sparse.size();i++) {
+            TensorLowerer tensor = tensors_with_curr_dim_sparse[i];
+            llir::lExpr start_position_var = llir::lVar::make(index_t, tensor.tensor_name+"_"+forall_idx+"_p_start");
+            llir::lExpr end_position_var = llir::lVar::make(index_t, tensor.tensor_name+"_"+forall_idx+"_p_end");
+            llir::lExpr position_var = llir::lVar::make(index_t,tensor.tensor_name + "_" + forall_idx + "_p");
+            start_modifier_statements.emplace_back(
+                llir::IfElse::make(
+                    llir::lOp::make(llir::lOp::Not, tensor_partitioned_vars.at(tensor.tensor_name)),
+                    llir::Store::make(
+                        start_position_var,
+                        position_var
+                    ),
+                    nullptr
+                )
+            );
+            end_modifier_statements.emplace_back(
+                llir::IfElse::make(
+                    llir::lOp::make(llir::lOp::Not, tensor_partitioned_vars.at(tensor.tensor_name)),
+                    llir::Store::make(
+                        end_position_var,
+                        position_var
+                    ),
+                    nullptr
+                )
+            );
+        }
+
         while_stmts.emplace_back(
                 llir::IfElse::make(
                     work_var < rem_count_var,
-                    llir::Store::make(
-                        start_var,
-                        is_last_loop? mid_var + 1 : mid_var
+                    llir::Sequence::make(
+                        start_modifier_statements
                     ),
-                    llir::Store::make(
-                        end_var,
-                        is_last_loop? mid_var : mid_var - 1
+                    llir::Sequence::make(
+                        end_modifier_statements
                     )
                 )
             );

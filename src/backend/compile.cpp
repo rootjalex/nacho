@@ -142,10 +142,11 @@ namespace backend {
 
             // Generate Compute kernel
             // We need to lower an extra work function for compute kernel if this not innermost sparse intersect
+            // The target_dim value is fixed for this work function.
             if(i!=sparse_intersection_levels.size()-2){
                 for (auto it : operand_tensors) {
                     auto next_loop_order = std::vector<std::string>(loop_order.begin(), loop_order.begin() + next_sparse_intersection + 1);
-                    printer.print(it.second.lower_work_function(next_loop_order, current_sparse_intersection));
+                    printer.print(it.second.lower_work_function(next_loop_order, current_sparse_intersection, true));
                 }
             }
             printer.print(compute_lowerer.lower_compute_function());
@@ -362,9 +363,9 @@ namespace backend {
             args.emplace_back(
                 llir::Function::Argument{.mutating = false, .type = index_t, .name = "target_value"});
             args.emplace_back(
-                llir::Function::Argument{.mutating = false, .type = llir::Int_t::make(32), .name = "start_index"});
+                llir::Function::Argument{.mutating = true, .type = llir::Int_t::make(32), .name = "start_index"});
             args.emplace_back(
-                llir::Function::Argument{.mutating = false, .type = llir::Int_t::make(32), .name = "end_index"});
+                llir::Function::Argument{.mutating = true, .type = llir::Int_t::make(32), .name = "end_index"});
 
         std::vector<llir::lStmt> stmts;
         

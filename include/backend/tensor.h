@@ -160,12 +160,8 @@ namespace nacho {
         // args are loop_order = [i,j,k,l],target_dim = 2, prev_dim_positions =
         // [12, 32], target_dim_position = 54
         llir::lStmt lower_work_function(std::vector<std::string> loop_order,
-                                        int target_dim);
+                                        int target_dim, bool is_target_dim_value_fixed = false);
 
-        llir::lStmt lower_result_work_function(std::vector<std::string> loop_order, int target_dim, int sparse_intersection_dim);
-    
-        llir::lStmt lower_result_work_function(std::vector<std::string> loop_order,
-                                        int target_dim);
 
         llir::lExpr get_offset_expression_for_next_sparse(
             int dim_level_start, int dim_level_end, bool upper_bound,
@@ -185,6 +181,10 @@ namespace nacho {
             case dType::TemplateT:
                 return llir::Generic_t::make("value_t");
             }
+        }
+
+        inline bool is_sparse(std::string index) const {
+            return is_sparse_format(tensor_type.format.lvlfmt_of(index));
         }
 
         inline bool is_sparse(const int level) const {
