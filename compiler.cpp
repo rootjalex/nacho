@@ -43,38 +43,39 @@ void test() {
 
     Expr a_ij = Tensor::make(dcsr_f32, "a");
     Expr b_ij = Tensor::make(dcsr_f32, "b");
-    Expr c_ij = Tensor::make(csr_f32, "c");
+    Expr c_ij = Tensor::make(dcsr_f32, "c");
     Expr d_ij = Tensor::make(csr_f32, "d");
 
     Expr a_i = Tensor::make(s_f32, "a_vec");
     Expr b_i = Tensor::make(s_f32, "b_vec");
-    Expr c_i = Tensor::make(d_f32, "c_vec");
+    Expr c_i = Tensor::make(s_f32, "c_vec");
     Expr d_i = Tensor::make(d_f32, "d_vec");
 
-    Expr z_ij = a_ij + b_ij;
+    Expr z_ij = a_ij * b_ij;
+    // Expr z_ij = a_ij * (b_ij+c_ij);
 
-    // std::cout << z_ij << "\n";
-    // std::cout << compile_to_cin(z_ij) << "\n";
-    // std::cout << "Debug\n";
-    // nacho::backend::CINLowerer(compile_to_cin(z_ij), std::cout).lower_cin();
-
-    {
-        Expr z_i = a_i * c_i;
-        std::cout << z_i << "\n";
-        std::cout << compile_to_cin(z_i) << "\n";
-        std::cout << "Debug\n";
-        nacho::backend::CINLowerer(compile_to_cin(z_i), std::cout).lower_cin();
-    }
-
-    a_ij = Tensor::make(dcsr_f32, "a");
-    b_ij = Tensor::make(dcsr_f32, "b");
-
-    z_ij = a_ij * b_ij;
-    Expr z_i = a_i * b_i;
-    std::cout << z_i << "\n";
-    std::cout << compile_to_cin(z_i) << "\n";
+    std::cout << z_ij << "\n";
+    std::cout << compile_to_cin(z_ij) << "\n";
     std::cout << "Debug\n";
     nacho::backend::CINLowerer(compile_to_cin(z_ij), std::cout).lower_cin();
+
+    // {
+    //     Expr z_i = a_i * c_i;
+    //     std::cout << z_i << "\n";
+    //     std::cout << compile_to_cin(z_i) << "\n";
+    //     std::cout << "Debug\n";
+    //     nacho::backend::CINLowerer(compile_to_cin(z_i), std::cout).lower_cin();
+    // }
+
+    // a_ij = Tensor::make(dcsr_f32, "a");
+    // b_ij = Tensor::make(dcsr_f32, "b");
+
+    // z_ij = a_ij * b_ij;
+     Expr z_i = a_i * b_i;
+    // std::cout << z_i << "\n";
+    // std::cout << compile_to_cin(z_i) << "\n";
+    // std::cout << "Debug\n";
+    // nacho::backend::CINLowerer(compile_to_cin(z_ij), std::cout).lower_cin();
     // Format new_csr = Format::ordered({
     //     {"j", LevelFormat::Dense},
     //     {"k", LevelFormat::Compressed},

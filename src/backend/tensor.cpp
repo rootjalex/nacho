@@ -79,6 +79,9 @@ llir::lExpr TensorLowerer::get_offset_expression_for_next_sparse(
         dim_level_start = 0;
     }
 
+    if(use_dim_vars)
+        assert(dim_vars.size() == (dim_level_end - dim_level_start + 1));
+
     int next_sparse_dim_level =
         tensor_type.format.get_next_sparse_level(dim_level_start);
 
@@ -91,7 +94,7 @@ llir::lExpr TensorLowerer::get_offset_expression_for_next_sparse(
     if (is_start_dim_sparse) {
         ip_expr =
             use_dim_vars
-                ? dim_vars[dim_level_start]
+                ? dim_vars[0]
                 : llir::lVar::make(
                       index_t,
                       tensor_type.format.levels[dim_level_start].index + "_p");
@@ -108,7 +111,7 @@ llir::lExpr TensorLowerer::get_offset_expression_for_next_sparse(
 
         llir::lExpr dense_expr =
             use_dim_vars
-                ? dim_vars[i]
+                ? dim_vars[i-dim_level_start]
                 : llir::lVar::make(index_t, tensor_type.format.levels[i].index);
         if (i == dim_level_end && upper_bound) {
             dense_expr = dense_expr + 1;

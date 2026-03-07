@@ -198,8 +198,12 @@ struct Where : CINNode<Where> {
     static const CINEnum node_type = CINEnum::Where;
 };
 
+// CalculateWork is used as intermediate node, when we have multiple sparse intersections. 
+// This node is placed belore the current sparse intersection that is being evaluated on
+// The orginal body is just embeded inside a caculate work node.
 struct CalculateWork :  CINNode<CalculateWork> {
-    static CIN make();
+    CIN body;
+    static CIN make(CIN body);
     static const CINEnum node_type = CINEnum::CalculateWork;
 };
 

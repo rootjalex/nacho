@@ -10,94 +10,38 @@
 #include "backend/partition.h"
 #include <numeric>
 #include <map>
+#include "backend/base_lowerer.h"
+
 
 namespace nacho {
 namespace backend {
-
-    struct ComputeFunctionLowerer {
-        std::map<std::string, TensorLowerer> operand_tensors;
-        TensorLowerer result_tensor;
-        std::vector<CIN> forall_list;
+    struct ComputeKernelLowerer : public BaseKernelLowerer {
         CIN cin;
         // Memoized lattices, used for both compute and precompute.
         std::map<Seq, Lattice, SeqLessThan> lattices;
-        int previous_sparse_intersection;
-        int current_sparse_intersection;
-        int next_sparse_intersection;
-        std::map<std::string, TensorLowerer> included_tensors;
+        bool need_operand_pos_map;
 
-        ComputeFunctionLowerer(
-            const std::map<std::string, TensorLowerer> &operand_tensors,
-            const TensorLowerer &result_tensor,
-            const std::map<std::string, TensorLowerer> &included_tensors,
-            const std::vector<CIN> &forall_list, const CIN &cin, 
-            int previous_sparse_intersection, int current_sparse_intersection,int next_sparse_intersection)
-            : operand_tensors(operand_tensors), result_tensor(result_tensor),
-              forall_list(forall_list), cin(cin), 
-              previous_sparse_intersection(previous_sparse_intersection),
-              current_sparse_intersection(current_sparse_intersection),
-              next_sparse_intersection(next_sparse_intersection),
-              included_tensors(included_tensors) {}
-
-        inline std::string get_all_loops_string(int level) {
-            std::string all_loops_string = "";
-            for(int i=0;i<=level;i++)
-                all_loops_string += forall_list[i].as<Forall>()->idx;
-            return all_loops_string;
-        }
-
-        inline std::string get_counts_struct_name() {
-            return "result_per_thread_count";
-        }
-
-        inline std::string get_counts_field_name(const std::string &index) {
-            return "dim_" + index + "_count";
-        }
-
-        inline std::string get_iterator_name(TensorLowerer& tensor, const std::string &index) {
-            return "idx_"+tensor.tensor_name+"_"+index;
-        }
-
-        inline std::string get_end_iterator_name(TensorLowerer& tensor, const std::string &index) {
-            return "end_"+tensor.tensor_name+"_"+index;
-        }
-
-        inline std::string get_precompute_function_name() {
-            return  "precompute_" + get_all_loops_string(current_sparse_intersection) + "_kernel";
-        }
-
-        inline std::string get_compute_function_name() {
-            return  "compute_" + get_all_loops_string(current_sparse_intersection) + "_kernel";
-        }
-
-        inline std::string get_start_name(const std::string &suffix) const {
-            return "start_" + suffix;
-        }
-
-        inline std::string get_end_name(const std::string &suffix) const {
-            return "end_" + suffix;
-        }
-
-        llir::lType lower_result_per_thread_count_struct();
+        ComputeKernelLowerer(
+            std::map<std::string, TensorLowerer> &operand_tensors,
+            TensorLowerer &result_tensor,
+            std::map<std::string, TensorLowerer> &included_tensors,
+            const std::vector<CIN> &forall_list, const CIN &cin,
+            int previous_sparse_intersection, int current_sparse_intersection, int next_sparse_intersection)
+            : BaseKernelLowerer(operand_tensors, result_tensor, included_tensors, forall_list, previous_sparse_intersection, current_sparse_intersection, next_sparse_intersection), cin(cin) {}
 
         llir::lStmt lower_precompute_function();
 
         llir::lStmt lower_compute_function();
 
         llir::lStmt lower_loop(CIN loop,
-                               const std::set<Seq, SeqLessThan> &defined,
-                               const std::set<Seq, SeqLessThan> &lookups,
-                               bool is_precompute);
+            const std::set<Seq, SeqLessThan> &defined,
+            bool is_precompute, int loop_level);
 
         llir::lStmt lower_assign_statement(CIN assign, bool is_precompute);
 
-        void add_partition_assignments(std::vector<llir::lStmt> &stmts);
+        llir::lExpr get_condition_to_initialise_iterators(int level, bool end);
 
-        // TODO: deduplicate with
-        // PartitionFunctionLowerer::get_partition_struct_name()
-        inline std::string get_partition_struct_name() const {
-            return "partition";
-        }
+        void add_partition_assignments(std::vector<llir::lStmt> &stmts);
     };
 
 } // namespace backend
