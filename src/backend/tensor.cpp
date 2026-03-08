@@ -296,17 +296,17 @@ TensorLowerer::lower_work_function(std::vector<std::string> partial_loop_order,
             // partial_loop_order[target_dim] == last_tensor_level_before_target_dim
 
             // last_tensor_level_before_target_loop is also sparse
-            if (last_tensor_level_before_target_loop == last_sparse_tensor_level_before_target_loop) {
+            //if (last_tensor_level_before_target_loop == last_sparse_tensor_level_before_target_loop) {
                 start_expr = last_tensor_level_before_target_loop > BEFORE_FIRST_LEVEL+1 ? 
                                 this->get_offsets_field(last_sparse_tensor_level_before_target_loop)[
                                     get_level_indexing_expression(
                                         last_sparse_tensor_level_before_target_loop, false, pos_vars
                                     )] : llir::lConst::make((int64_t)0);
-            } else {
-                start_expr = get_level_indexing_expression(
-                        min(next_sparse_level, last_tensor_level_in_partial_loop+1),false, pos_vars
-                    );
-            }
+            // } else {
+            //     start_expr = get_level_indexing_expression(
+            //             min(next_sparse_level, last_tensor_level_in_partial_loop+1),false, pos_vars
+            //         );
+            // }
         } else {
             start_expr = get_level_indexing_expression(
                         min(next_sparse_level, last_tensor_level_in_partial_loop+1),false, pos_vars

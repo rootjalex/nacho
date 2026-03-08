@@ -429,15 +429,14 @@ namespace backend {
                     ));
             }
         }
-        if(tensor.tensor_level_exists(forall_idx)) {
-            if(tensor.is_sparse(forall_idx)) {
-                work_args.emplace_back(
-                    llir::lVar::make(index_t, tensor.get_iterator_suffix(forall_idx))
-                );
-            } else {
-                work_args.emplace_back(is_last_loop? index_value : index_value - 1);
-            }
+        if(tensor.tensor_level_exists(forall_idx) && tensor.is_sparse(forall_idx)) {
+            work_args.emplace_back(
+                llir::lVar::make(index_t, tensor.get_iterator_suffix(forall_idx))
+            );
+        } else {
+            work_args.emplace_back(is_last_loop? index_value : index_value - 1);
         }
+
 
         // pass broadcast sizes for all dimensions after current forall which are not present in the tensor
         for(LoopNum j=loop_num+1;j<tensor.end_loop_num();++j){

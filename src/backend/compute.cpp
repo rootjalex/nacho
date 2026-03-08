@@ -446,10 +446,29 @@ llir::lStmt ComputeKernelLowerer::lower_assign_statement(
             work_args.emplace_back(
                 llir::lVar::make(llir::Generic_t::make(Tensor.get_struct_name()), Tensor.tensor_name)
             );
-            for(LoopNum j=BEFORE_FIRST_LOOP+1;j<=current_sparse_intersection;++j) {
+            for(LoopNum j=BEFORE_FIRST_LOOP+1;j<current_sparse_intersection;++j) {
                 if(Tensor.tensor_level_exists(j))
-                    work_args.emplace_back(Tensor.get_iter_var(Tensor.loop_num_to_tensor_level(j), llir::Generic_t::make("index_t")));
+                    work_args.emplace_back(Tensor.get_iter_var(Tensor.loop_num_to_tensor_level(j), index_t));
             }
+
+            if(Tensor.tensor_level_exists(current_sparse_intersection)) {
+                work_args.emplace_back(Tensor.get_iter_var(Tensor.loop_num_to_tensor_level(current_sparse_intersection), index_t));
+            } else {
+                work_args.emplace_back(llir::lVar::make(index_t, Tensor.loop_name(current_sparse_intersection)));
+            }
+
+            // pass broadcast sizes for all dimensions after current forall which are not present in the tensor
+            for(LoopNum j=current_sparse_intersection+1;j<Tensor.end_loop_num();++j){
+                if(!Tensor.tensor_level_exists(j)) {
+                    auto it = std::find_if(operand_tensors.begin(), operand_tensors.end(), [&](const auto& op_tensor) {
+                        return op_tensor.second.tensor_level_exists(j);
+                    });
+                    internal_assert(it != operand_tensors.end()) << "Expected operand tensor to exist";
+
+                    work_args.emplace_back(it->second.get_size_field(it->second.loop_num_to_tensor_level(j)));
+                }
+            }
+
             std::string forall_idx = forall_list[current_sparse_intersection.get()].as<Forall>()->idx;
             return llir::lFunctionCall::make(Tensor.get_work_function_name(get_all_loops_string(next_sparse_intersection),forall_idx),work_args);
         };
@@ -745,16 +764,6 @@ llir::lStmt ComputeKernelLowerer::lower_loop(
                                 )],
                         llir::lVar::make(index_t, "offset_" + nextForall->idx));
                 }
-
-                // nextForall is >previous sparse intersect because of start condition
-                auto [idxs, _] = partition_iterators_locators(forall->seq);
-                internal_assert(idxs.size()>0) << forall->seq;
-                // llir::lExpr cond;
-            
-                // for (int i = 0; i < idxs.size(); i++) {
-                //     llir::lExpr idx_cond = get_condition_stop_eq_extrema(idxs[i].as<Index>());
-                //     cond = i == 0 ? idx_cond : cond && idx_cond;
-                // }
 
                 offset_write_cond = offset_write_cond || (llir::lVar::make(index_t, "thread_id") == llir::lVar::make(index_t, "max_thread_id"));
 
