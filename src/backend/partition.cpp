@@ -13,23 +13,23 @@ namespace backend {
 
         std::vector<std::pair<std::string, llir::lType>> fields;
 
-        for(int i=0; i<=previous_sparse_intersection;i++) {
-            const Forall* forall = forall_list[i].as<Forall>();
+        for(LoopNum i=BEFORE_FIRST_LOOP+1; i<=previous_sparse_intersection;++i) {
+            const Forall* forall = forall_list[i.get()].as<Forall>();
             std::string forall_idx = forall->idx;
-            assert(result_tensor.tensor_type.format.level_exists(forall_idx));
+            internal_assert(result_tensor.tensor_level_exists(forall_idx)) << "Expected forall index " << forall_idx << " to be present in the result tensor for all loops upto and including the previous sparse intersection";
 
             fields.emplace_back(result_tensor.get_iterator_suffix(forall_idx), llir::Ptr_t::make(index_t));
         }
 
-        for(int i=previous_sparse_intersection+1;i<=current_sparse_intersection;i++) {
-            const Forall* forall = forall_list[i].as<Forall>();
+        for(LoopNum i=previous_sparse_intersection+1;i<=current_sparse_intersection;++i) {
+            const Forall* forall = forall_list[i.get()].as<Forall>();
             std::string forall_idx = forall->idx;
             bool has_dense = false;
             for(auto it: included_tensors) {
                 auto tensor = it.second;
                 // Check if the tensor has this forall index in its format levels
-                if(tensor.tensor_type.format.level_exists(forall_idx)) {
-                    if(!is_sparse_format(tensor.tensor_type.format.lvlfmt_of(forall_idx))) {
+                if(tensor.tensor_level_exists(forall_idx)) {
+                    if(!tensor.is_sparse(forall_idx)) {
                         has_dense = true;
                         continue;
                     }
@@ -43,8 +43,8 @@ namespace backend {
             for(auto it: operand_tensors) {
                 if(included_tensors.find(it.first) == included_tensors.end()) {
                     TensorLowerer tensor = it.second;
-                    if(tensor.tensor_type.format.level_exists(forall_idx)) {
-                        if(tensor.tensor_type.format.is_sparse(forall_idx)) {
+                    if(tensor.tensor_level_exists(forall_idx)) {
+                        if(tensor.is_sparse(forall_idx)) {
                             fields.emplace_back(tensor.get_iterator_suffix(forall_idx), llir::Ptr_t::make(index_t));
                         }
                     }
@@ -99,7 +99,7 @@ namespace backend {
             }
         );
 
-        if(previous_sparse_intersection != -1)
+        if(previous_sparse_intersection != BEFORE_FIRST_LOOP)
             args.emplace_back(
                 llir::Function::Argument{
                     .mutating = false, .type = llir::Ptr_t::make(index_t), .name = "T_work_offsets"
@@ -107,9 +107,9 @@ namespace backend {
             );
 
         bool need_operand_pos_map_arg = false;
-        for(int i =0; i<=previous_sparse_intersection; i++) {
+        for(LoopNum i = BEFORE_FIRST_LOOP+1; i<=previous_sparse_intersection; ++i) {
             for(auto it: operand_tensors) {
-                if(exists_field_in_result_to_operand_pos_map(forall_list[i].as<Forall>(), it.second)){
+                if(exists_field_in_result_to_operand_pos_map(forall_list[i.get()].as<Forall>(), it.second)){
                     need_operand_pos_map_arg = true;
                     break;
                 }
@@ -148,23 +148,25 @@ namespace backend {
         // block_stmts for if count == 0 case
         std::vector<llir::lStmt> block_stmts;
 
-        for(int i=0;i<=previous_sparse_intersection;i++) {
-            const Forall* forall = forall_list[i].as<Forall>();
+        for(LoopNum i=BEFORE_FIRST_LOOP+1;i<=previous_sparse_intersection;++i) {
+            const Forall* forall = forall_list[i.get()].as<Forall>();
             std::string forall_idx = forall->idx;
-            block_stmts.emplace_back(llir::Store::make(
-                get_partition_struct_current_thread_field(result_tensor.get_iterator_suffix(forall_idx)),
-                llir::lConst::make((int64_t)0)));
+            if(result_tensor.tensor_level_exists(forall_idx)){
+                block_stmts.emplace_back(llir::Store::make(
+                    get_partition_struct_current_thread_field(result_tensor.get_iterator_suffix(forall_idx)),
+                    llir::lConst::make((int64_t)0)));
+            }
         }
 
-        for(int i=previous_sparse_intersection+1;i<=current_sparse_intersection;i++) {
-            const Forall* forall = forall_list[i].as<Forall>();
+        for(LoopNum i=previous_sparse_intersection+1;i<=current_sparse_intersection;++i) {
+            const Forall* forall = forall_list[i.get()].as<Forall>();
             std::string forall_idx = forall->idx;
             bool has_dense = false;
             for(auto it: operand_tensors) {
                 auto tensor = it.second;
                 // Check if the tensor has this forall index in its format levels
-                if(tensor.tensor_type.format.level_exists(forall_idx)) {
-                    if(!tensor.tensor_type.format.is_sparse(forall_idx)) {
+                if(tensor.tensor_level_exists(forall_idx)) {
+                    if(!tensor.is_sparse(forall_idx)) {
                         if(included_tensors.find(it.first) != included_tensors.end()) {
                             has_dense = true;
                         }
@@ -202,24 +204,26 @@ namespace backend {
         block_stmts = std::vector<llir::lStmt>{};
 
 
-        for(int i=0;i<=previous_sparse_intersection;i++) {
-            const Forall* forall = forall_list[i].as<Forall>();
+        for(LoopNum i=BEFORE_FIRST_LOOP+1;i<=previous_sparse_intersection;++i) {
+            const Forall* forall = forall_list[i.get()].as<Forall>();
             std::string forall_idx = forall->idx;
-            block_stmts.emplace_back(llir::Store::make(
-                get_partition_struct_current_thread_field(result_tensor.get_iterator_suffix(forall_idx)),
-                result_tensor.is_sparse(forall_idx) ? result_tensor.get_length_field(forall_idx) - 1 : result_tensor.get_size_field(forall_idx) - 1));
+            if(result_tensor.tensor_level_exists(forall_idx)){
+                block_stmts.emplace_back(llir::Store::make(
+                    get_partition_struct_current_thread_field(result_tensor.get_iterator_suffix(forall_idx)),
+                    result_tensor.is_sparse(forall_idx) ? result_tensor.get_length_field(forall_idx) - 1 : result_tensor.get_size_field(forall_idx) - 1));
+            }
         }
 
-        for(int i=previous_sparse_intersection+1;i<=current_sparse_intersection;i++) {
-            const Forall* forall = forall_list[i].as<Forall>();
+        for(LoopNum i=previous_sparse_intersection+1;i<=current_sparse_intersection;++i) {
+            const Forall* forall = forall_list[i.get()].as<Forall>();
             std::string forall_idx = forall->idx;
             bool has_dense = false;
             TensorLowerer tensor_with_dense_dim;
             for(auto it: operand_tensors) {
                 auto tensor = it.second;
                 // Check if the tensor has this forall index in its format levels
-                if(tensor.tensor_type.format.level_exists(forall_idx)) {
-                    if(!tensor.tensor_type.format.is_sparse(forall_idx)) {
+                if(tensor.tensor_level_exists(forall_idx)) {
+                    if(!tensor.is_sparse(forall_idx)) {
                         if(included_tensors.find(it.first) != included_tensors.end()) {
                             has_dense = true;
                             tensor_with_dense_dim = tensor;
@@ -280,14 +284,13 @@ namespace backend {
         // When a tensor has a sparse dim at any of the outer loops that are currently being partitioned
         // Then the corresponding partition for that dimension may not lie exactly on the partition
         // boundary. In that case the number of tensors to consider in the further loops has a runtime
-        // dependency on whether the partition boundary is aligned with the tensor's sparse dimensions.
-        // We need to generate some additional bookkeeping code to keep track of these tensors.
+        // dependency on whether the partition boundary aligns with the tensor's sparse dimensions.
+        // We need to generate some additional bookkeeping code to keep track of these tensors which become 
+        // inactive during partitioning.
         bool need_to_exclude_tensors_at_runtime = false;
-
         for(auto it : operand_tensors) {
-            auto tensor = it.second.tensor_type.format;
             // Check if the tensor has a sparse dimension at any level other than the last level
-            if(tensor.get_prev_sparse_level(current_sparse_intersection) != -1) {
+            if(it.second.get_loop_num_for_prev_sparse_level(current_sparse_intersection) != BEFORE_FIRST_LOOP) {
                 need_to_exclude_tensors_at_runtime = true;
                 break;
             }
@@ -310,13 +313,13 @@ namespace backend {
         }
 
 
-        for(int i=0;i<=previous_sparse_intersection;i++) {
+        for(LoopNum i=BEFORE_FIRST_LOOP+1;i<=previous_sparse_intersection; ++i) {
             stmts.emplace_back(
                 lower_partition_loop_from_work_offsets(i, need_to_exclude_tensors_at_runtime)
             );
         }
 
-        for(int i=previous_sparse_intersection+1;i<=current_sparse_intersection;i++) {
+        for(LoopNum i=previous_sparse_intersection+1;i<=current_sparse_intersection;++i) {
             stmts.emplace_back(
                 lower_partition_loop(i, i == current_sparse_intersection, need_to_exclude_tensors_at_runtime)
             );
@@ -330,15 +333,15 @@ namespace backend {
         return llir::Function::make(std::move(generics), std::move(attributes), std::move(args), std::move(ret_type), name, std::move(body));
     }
 
-    llir::lStmt PartitionKernelLowerer::get_store_partition_statements(int loop_index, llir::lExpr index_value, bool need_to_exclude_tensors_at_runtime, bool is_last_loop) {
-        const Forall* forall = forall_list[loop_index].as<Forall>();
+    llir::lStmt PartitionKernelLowerer::get_store_partition_statements(LoopNum loop_num, llir::lExpr index_value, bool need_to_exclude_tensors_at_runtime, bool is_last_loop) {
+        const Forall* forall = forall_list[loop_num.get()].as<Forall>();
         std::string forall_idx = forall->idx;
         std::vector<llir::lStmt> store_partition_stmts;
         bool has_dense = false;
         for(auto it : included_tensors) {
             TensorLowerer tensor = it.second;
-            if(tensor.tensor_type.format.level_exists(forall_idx)) {
-                if(!tensor.tensor_type.format.is_sparse(forall_idx)) {
+            if(tensor.tensor_level_exists(forall_idx)) {
+                if(!tensor.is_sparse(forall_idx)) {
                     has_dense = true;
                     continue;
                 }
@@ -348,7 +351,7 @@ namespace backend {
                 // to find the sparse position for the index_value.
                 if(!is_last_loop) {
                     store_partition_stmts.emplace_back(get_statements_to_find_sparse_position(
-                        loop_index,
+                        loop_num,
                         tensor,
                         index_value,
                         need_to_exclude_tensors_at_runtime
@@ -380,11 +383,11 @@ namespace backend {
             TensorLowerer tensor = it.second;
             // included tensors are already handled above
             if(included_tensors.find(tensor.tensor_name) == included_tensors.end()) {
-                if(tensor.tensor_type.format.level_exists(forall_idx)) {
-                    if(tensor.tensor_type.format.is_sparse(forall_idx)) {
+                if(tensor.tensor_level_exists(forall_idx)) {
+                    if(tensor.is_sparse(forall_idx)) {
                         store_partition_stmts.emplace_back(
                             get_statements_to_find_sparse_position(
-                                loop_index,
+                                loop_num,
                                 tensor,
                                 index_value,
                                 need_to_exclude_tensors_at_runtime
@@ -410,15 +413,15 @@ namespace backend {
         return llir::Sequence::make(std::move(store_partition_stmts));
     }
 
-    llir::lExpr PartitionKernelLowerer::get_call_work_function_expr(int loop_index, bool is_last_loop, TensorLowerer& tensor, llir::lExpr index_value) {
-        const Forall* forall = forall_list[loop_index].as<Forall>();
+    llir::lExpr PartitionKernelLowerer::get_call_work_function_expr(LoopNum loop_num, bool is_last_loop, TensorLowerer& tensor, llir::lExpr index_value) {
+        const Forall* forall = forall_list[loop_num.get()].as<Forall>();
         std::string forall_idx = forall->idx;
 
         std::vector<llir::lExpr> work_args;
         work_args.emplace_back(llir::lVar::make(llir::Generic_t::make(tensor.get_struct_name()), tensor.tensor_name));
-        for(int j=0;j<loop_index;j++){
-            std::string forall_j_idx = forall_list[j].as<Forall>()->idx;
-            if(tensor.tensor_type.format.level_exists(forall_j_idx)) {
+        for(LoopNum j=BEFORE_FIRST_LOOP+1;j<loop_num;++j){
+            std::string forall_j_idx = forall_list[j.get()].as<Forall>()->idx;
+            if(tensor.tensor_level_exists(forall_j_idx)) {
                 work_args.emplace_back(
                     llir::lVar::make(
                         index_t,
@@ -426,8 +429,8 @@ namespace backend {
                     ));
             }
         }
-        if(tensor.tensor_type.format.level_exists(forall_idx)) {
-            if(is_sparse_format(tensor.tensor_type.format.lvlfmt_of(forall_idx))) {
+        if(tensor.tensor_level_exists(forall_idx)) {
+            if(tensor.is_sparse(forall_idx)) {
                 work_args.emplace_back(
                     llir::lVar::make(index_t, tensor.get_iterator_suffix(forall_idx))
                 );
@@ -437,12 +440,12 @@ namespace backend {
         }
 
         // pass broadcast sizes for all dimensions after current forall which are not present in the tensor
-        for(int j=loop_index+1;j<forall_list.size();j++){
-            std::string forall_j_idx = forall_list[j].as<Forall>()->idx;
-            if(!tensor.tensor_type.format.level_exists(forall_j_idx)) {
+        for(LoopNum j=loop_num+1;j<tensor.end_loop_num();++j){
+            std::string forall_j_idx = forall_list[j.get()].as<Forall>()->idx;
+            if(!tensor.tensor_level_exists(forall_j_idx)) {
                 
                 auto it = std::find_if(operand_tensors.begin(), operand_tensors.end(), [&](const auto& op_tensor) {
-                    return op_tensor.second.tensor_type.format.level_exists(forall_j_idx);
+                    return op_tensor.second.tensor_level_exists(forall_j_idx);
                 });
                 internal_assert(it != operand_tensors.end()) << "Expected operand tensor to exist";
 
@@ -458,52 +461,43 @@ namespace backend {
     };
 
     llir::lExpr PartitionKernelLowerer::get_sparse_dim_start_expr(TensorLowerer& tensor, const std::string& forall_idx) {
-        int current_dim_level = tensor.tensor_type.format.get_level_order(forall_idx);
-        std::vector<llir::lExpr> dim_vars_for_offset_expression;
+        internal_assert(tensor.tensor_level_exists(forall_idx)) << "Expected tensor level to exist for forall index " << forall_idx;
+        TensorLevelNum current_tensor_level = tensor.loop_num_to_tensor_level(tensor.get_loop_num(forall_idx));
+        std::map<TensorLevelNum, llir::lExpr> dim_vars_for_offset_expression;
 
-        int start_level = tensor.tensor_type.format.get_prev_sparse_level(current_dim_level);
-        int end_level = current_dim_level - 1;
-        for(int d=std::max(0, start_level);d<=end_level;d++) {
-            auto level = tensor.tensor_type.format.levels[d];
-            dim_vars_for_offset_expression.emplace_back(
-                llir::lVar::make(index_t, tensor.get_iterator_suffix(level.index))
-            );
+        for(TensorLevelNum d=BEFORE_FIRST_LEVEL+1;d<=current_tensor_level-1;++d) {
+            dim_vars_for_offset_expression[d] = llir::lVar::make(index_t, tensor.get_iterator_suffix(d));
         }
 
-        return current_dim_level == 0
+        return current_tensor_level == BEFORE_FIRST_LEVEL + 1
                     ? llir::lConst::make((int64_t)-1)
-                    : tensor.get_offsets_field(forall_idx)[tensor.get_offset_expression_for_next_sparse(
-                                start_level,
-                                end_level, false, true,
+                    : tensor.get_offsets_field(forall_idx)[tensor.get_level_indexing_expression(
+                                current_tensor_level, false,
                                 dim_vars_for_offset_expression)] - 1;
 
     }
 
     llir::lExpr PartitionKernelLowerer::get_sparse_dim_end_expr(TensorLowerer& tensor, const std::string& forall_idx) {
-        int current_dim_level = tensor.tensor_type.format.get_level_order(forall_idx);
-        std::vector<llir::lExpr> dim_vars_for_offset_expression;
+        internal_assert(tensor.tensor_level_exists(forall_idx)) << "Expected tensor level to exist for forall index " << forall_idx;
+        TensorLevelNum current_tensor_level = tensor.loop_num_to_tensor_level(tensor.get_loop_num(forall_idx));
+        std::map<TensorLevelNum, llir::lExpr> dim_vars_for_offset_expression;
 
-        int start_level = tensor.tensor_type.format.get_prev_sparse_level(current_dim_level);
-        int end_level = current_dim_level - 1;
-        for(int d=std::max(0, start_level);d<=end_level;d++) {
-            auto level = tensor.tensor_type.format.levels[d];
-            dim_vars_for_offset_expression.emplace_back(
-                llir::lVar::make(index_t, tensor.get_iterator_suffix(level.index))
-            );
+        for(TensorLevelNum d=BEFORE_FIRST_LEVEL+1;d<=current_tensor_level-1;++d) {
+            dim_vars_for_offset_expression[d] = llir::lVar::make(index_t, tensor.get_iterator_suffix(d));
         }
 
-        return current_dim_level == 0
+        return current_tensor_level == BEFORE_FIRST_LEVEL + 1
                     ? tensor.get_length_field(forall_idx) -1
-                    : tensor.get_offsets_field(forall_idx)[tensor.get_offset_expression_for_next_sparse(
-                                start_level,
-                                end_level, true, true,
+                    : tensor.get_offsets_field(forall_idx)[tensor.get_level_indexing_expression(
+                                current_tensor_level, true,
                                 dim_vars_for_offset_expression)] - 1;
 
     }
 
 
-    llir::lStmt PartitionKernelLowerer::get_statements_to_find_sparse_position(int loop_index, TensorLowerer& tensor, llir::lExpr index_value, bool need_to_exclude_tensors_at_runtime) {
-        const Forall* forall = forall_list[loop_index].as<Forall>();
+
+    llir::lStmt PartitionKernelLowerer::get_statements_to_find_sparse_position(LoopNum loop_num, TensorLowerer& tensor, llir::lExpr index_value, bool need_to_exclude_tensors_at_runtime) {
+        const Forall* forall = forall_list[loop_num.get()].as<Forall>();
         std::string forall_idx = forall->idx;
 
         std::vector<llir::lStmt> stmts;
@@ -516,7 +510,7 @@ namespace backend {
         auto binary_search_call = llir::lFunctionCall::make("binary_search", {tensor.get_indices_field(forall_idx), index_value, start_expr, end_expr});
         auto position_var_name = tensor.get_iterator_suffix(forall_idx);
         auto position_var = llir::lVar::make(index_t, position_var_name);
-        if(need_to_exclude_tensors_at_runtime && loop_index != 0) {
+        if(need_to_exclude_tensors_at_runtime && loop_num != BEFORE_FIRST_LOOP+1) {
             stmts.emplace_back(
                 llir::IfElse::make(
                     llir::lOp::make(llir::lOp::Not, tensor_partitioned_vars.at(tensor.tensor_name)),
@@ -531,18 +525,18 @@ namespace backend {
         return llir::Sequence::make(std::move(stmts));
     }
 
-    llir::lStmt PartitionKernelLowerer::lower_partition_loop(int loop_index, bool is_last_loop, bool need_to_exclude_tensors_at_runtime) {
+    llir::lStmt PartitionKernelLowerer::lower_partition_loop(LoopNum loop_num, bool is_last_loop, bool need_to_exclude_tensors_at_runtime) {
         std::vector<llir::lStmt> stmts;
 
-        const Forall* forall = forall_list[loop_index].as<Forall>();
+        const Forall* forall = forall_list[loop_num.get()].as<Forall>();
         std::string forall_idx = forall->idx;
 
         std::vector<TensorLowerer> tensors_with_curr_dim;
         std::vector<TensorLowerer> tensors_with_curr_dim_sparse;
         for(auto it : included_tensors) {
-            if(it.second.tensor_type.format.level_exists(forall_idx)){
+            if(it.second.tensor_level_exists(forall_idx)){
                 tensors_with_curr_dim.push_back(it.second);
-                if(is_sparse_format(it.second.tensor_type.format.lvlfmt_of(forall_idx))) {
+                if(it.second.is_sparse(forall_idx)) {
                     tensors_with_curr_dim_sparse.push_back(it.second);
                 }
             } 
@@ -552,17 +546,17 @@ namespace backend {
         // Optimization Case : Can Use normal balanced mergepath to optimize partitioning
         // When no dim is sparse the general scheme is best as that will require just 1 binary search.
         if(!need_to_exclude_tensors_at_runtime && included_tensors.size()==2 && tensors_with_curr_dim_sparse.size()==2 && is_last_loop) {
-            return lower_mergepath_partition_loop(loop_index, is_last_loop, tensors_with_curr_dim_sparse);
+            return lower_mergepath_partition_loop(loop_num, is_last_loop, tensors_with_curr_dim_sparse);
         }
 
         // Optimization Case: Can return partitions directly w/o binary search
         if(!need_to_exclude_tensors_at_runtime && included_tensors.size()==1 && is_last_loop) {
-            return lower_trivial_partition_loop(loop_index, is_last_loop);
+            return lower_trivial_partition_loop(loop_num, is_last_loop);
         }
 
         // Optimization Case: Can use simple partitioning when no tensor has sparse dim at current level
         if(!need_to_exclude_tensors_at_runtime && tensors_with_curr_dim_sparse.size() == 0 && is_last_loop) {
-            return lower_trivial_partition_loop(loop_index, is_last_loop);
+            return lower_trivial_partition_loop(loop_num, is_last_loop);
         }   
 
         //TODO: Optimization Case - not last loop but included tensor size == 1 and the tensor is sparse
@@ -579,7 +573,7 @@ namespace backend {
 
         auto it = std::find_if(operand_tensors.begin(), operand_tensors.end(),
             [&](const auto &pair) {
-                return pair.second.tensor_type.format.level_exists(forall_idx);
+                return pair.second.tensor_level_exists(forall_idx);
             });
         end_expr = it->second.get_size_field(forall_idx) -1;
 
@@ -643,7 +637,7 @@ namespace backend {
         // for tensors where forall_idx dim is sparse we need to find the corresponding position
         for(int i=0;i<tensors_with_curr_dim_sparse.size();i++) {
             TensorLowerer tensor = tensors_with_curr_dim_sparse[i];
-            while_stmts.emplace_back(get_statements_to_find_sparse_position(loop_index, tensor, is_last_loop ? mid_var : mid_var - 1, need_to_exclude_tensors_at_runtime));
+            while_stmts.emplace_back(get_statements_to_find_sparse_position(loop_num, tensor, is_last_loop ? mid_var : mid_var - 1, need_to_exclude_tensors_at_runtime));
         }
 
 
@@ -661,11 +655,11 @@ namespace backend {
             while_stmts.emplace_back(
                 llir::Store::make(
                     work_var,
-                    work_var + (need_to_exclude_tensors_at_runtime && loop_index != 0 ? llir::lSelect::make(
+                    work_var + (need_to_exclude_tensors_at_runtime && loop_num != BEFORE_FIRST_LOOP+1 ? llir::lSelect::make(
                         tensor_partitioned_vars.at(tensor.tensor_name),
                         llir::lConst::make((int64_t)0),
-                        get_call_work_function_expr(loop_index, is_last_loop, tensor, mid_var)
-                    ) : get_call_work_function_expr(loop_index, is_last_loop, tensor, mid_var))
+                        get_call_work_function_expr(loop_num, is_last_loop, tensor, mid_var)
+                    ) : get_call_work_function_expr(loop_num, is_last_loop, tensor, mid_var))
                 )
             );
         }
@@ -675,7 +669,7 @@ namespace backend {
             llir::IfElse::make(
                 end_var <= start_var,
                 llir::Sequence::make({
-                    get_store_partition_statements(loop_index, mid_var, need_to_exclude_tensors_at_runtime, is_last_loop),
+                    get_store_partition_statements(loop_num, mid_var, need_to_exclude_tensors_at_runtime, is_last_loop),
                     llir::Store::make(rem_count_var, rem_count_var - work_var),
                     llir::Break::make(),
                 }),
@@ -740,10 +734,10 @@ namespace backend {
         return llir::Sequence::make(std::move(stmts));
     }
 
-    llir::lStmt PartitionKernelLowerer::lower_mergepath_partition_loop(int loop_index, bool is_last_loop, std::vector<TensorLowerer>& tensors_with_curr_dim_sparse) {
+    llir::lStmt PartitionKernelLowerer::lower_mergepath_partition_loop(LoopNum loop_num, bool is_last_loop, std::vector<TensorLowerer>& tensors_with_curr_dim_sparse) {
         std::vector<llir::lStmt> stmts;
         internal_assert(is_last_loop) << "Mergepath partitioning can only be used in the innermost loop";
-        const Forall* forall = forall_list[loop_index].as<Forall>();
+        const Forall* forall = forall_list[loop_num.get()].as<Forall>();
         std::string forall_idx = forall->idx;
 
         internal_assert(tensors_with_curr_dim_sparse.size() == 2);
@@ -917,35 +911,35 @@ namespace backend {
             llir::lSelect::make(tensor2_position_var_start < tensor2_position_var, llir::lConst::make(-1), tensor2.get_indices_field(forall_idx)[tensor2_position_var])
         );
         stmts.emplace_back(
-            get_store_partition_statements(loop_index, index_value, false, true)
+            get_store_partition_statements(loop_num, index_value, false, true)
         );
         return llir::Sequence::make(std::move(stmts));
     }
 
-    llir::lStmt PartitionKernelLowerer::lower_trivial_partition_loop(int loop_index, bool is_last_loop) {
+    llir::lStmt PartitionKernelLowerer::lower_trivial_partition_loop(LoopNum loop_num, bool is_last_loop) {
         std::vector<llir::lStmt> stmts;
 
-        const Forall* forall = forall_list[loop_index].as<Forall>();
+        const Forall* forall = forall_list[loop_num.get()].as<Forall>();
         std::string forall_idx = forall->idx;
         internal_assert(is_last_loop);
 
         // This case is when all tensors are dense
         if(included_tensors.size() > 1) {
             for(auto it: included_tensors){
-                internal_assert(it.second.tensor_type.format.is_sparse(forall_idx));
+                internal_assert(!it.second.is_sparse(forall_idx));
             }
 
             auto index_value = rem_count_var/included_tensors.size() - 1;
-            return get_store_partition_statements(loop_index, index_value, false, true);
+            return get_store_partition_statements(loop_num, index_value, false, true);
         }
 
-
+        internal_assert(included_tensors.size() == 1);
         // include_tensor.size()==1 case
         TensorLowerer tensor = included_tensors.begin()->second;
 
         llir::lExpr index_value;
         
-        if(tensor.tensor_type.format.is_sparse(forall_idx)) {
+        if(tensor.tensor_level_exists(forall_idx) && tensor.is_sparse(forall_idx)) {
             stmts.emplace_back(
                 llir::Declare::make(
                     index_t,
@@ -955,21 +949,21 @@ namespace backend {
             );
             index_value = tensor.get_indices_field(forall_idx)[get_sparse_dim_start_expr(tensor, forall_idx) + (rem_count_var)];
             stmts.emplace_back(
-                get_store_partition_statements(loop_index, index_value, false, true)
+                get_store_partition_statements(loop_num, index_value, false, true)
             );
         } else {
             auto index_value = rem_count_var - 1;
             stmts.emplace_back(
-                get_store_partition_statements(loop_index, index_value, false, true)
+                get_store_partition_statements(loop_num, index_value, false, true)
             );
         }
         return llir::Sequence::make(std::move(stmts)); 
     }
 
-    llir::lStmt PartitionKernelLowerer::lower_partition_loop_from_work_offsets(int loop_index, bool need_to_exclude_tensors_at_runtime) {
+    llir::lStmt PartitionKernelLowerer::lower_partition_loop_from_work_offsets(LoopNum loop_num, bool need_to_exclude_tensors_at_runtime) {
         std::vector<llir::lStmt> stmts;
 
-        const Forall* forall = forall_list[loop_index].as<Forall>();
+        const Forall* forall = forall_list[loop_num.get()].as<Forall>();
         std::string forall_idx = forall->idx;
 
         std::string start_var_name = result_tensor.get_start_name(forall_idx);
@@ -982,8 +976,9 @@ namespace backend {
 
         llir::lExpr start_expr, end_expr, mid_expr;
 
-        
-        if(result_tensor.tensor_type.format.is_sparse(forall_idx)) {
+        internal_assert(result_tensor.tensor_level_exists(forall_idx))<< "Tensor level does not exist in result tensor "<<result_tensor.tensor_name;
+
+        if(result_tensor.is_sparse(forall_idx)) {
             start_expr = get_sparse_dim_start_expr(result_tensor, forall_idx);
             end_expr = get_sparse_dim_end_expr(result_tensor, forall_idx);
         } else {
@@ -1018,8 +1013,8 @@ namespace backend {
         );
 
         for(auto it : included_tensors) {
-            if(it.second.tensor_type.format.level_exists(forall_idx)){
-                if(it.second.tensor_type.format.is_sparse(forall_idx)) {
+            if(it.second.tensor_level_exists(forall_idx)){
+                if(it.second.is_sparse(forall_idx)) {
                     stmts.emplace_back(
                         llir::Declare::make(
                             index_t,
@@ -1037,7 +1032,7 @@ namespace backend {
         while_stmts.emplace_back(
             llir::Store::make(
                 work_var,
-                get_call_work_function_expr(loop_index, false, result_tensor, mid_var)
+                get_call_work_function_expr(loop_num, false, result_tensor, mid_var)
             )
         );
         
@@ -1065,7 +1060,7 @@ namespace backend {
         break_stmts.emplace_back(
             llir::Store::make(
                 work_var,
-                get_call_work_function_expr(loop_index, true, result_tensor, mid_var)
+                get_call_work_function_expr(loop_num, true, result_tensor, mid_var)
             )
         );
         break_stmts.emplace_back(llir::Store::make(rem_count_var, rem_count_var - work_var));
@@ -1086,8 +1081,8 @@ namespace backend {
         );
 
         for(auto it : included_tensors) {
-            if(it.second.tensor_type.format.level_exists(forall_idx)){
-                if(it.second.tensor_type.format.is_sparse(forall_idx)) {
+            if(it.second.tensor_level_exists(forall_idx)){
+                if(it.second.is_sparse(forall_idx)) {
                     break_stmts.emplace_back(
                         llir::Store::make(
                             llir::lVar::make(index_t, it.second.get_iterator_suffix(forall_idx)),
@@ -1119,7 +1114,7 @@ namespace backend {
                 llir::Sequence::make(std::move(while_stmts))
             )
         );
-        if(result_tensor.tensor_type.format.is_sparse(forall_idx)) {
+        if(result_tensor.is_sparse(forall_idx)) {
             stmts.emplace_back(
                 llir::Declare::make(index_t, forall_idx, result_tensor.get_indices_field(forall_idx)[mid_var+1])
             );
