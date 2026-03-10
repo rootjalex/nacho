@@ -37,9 +37,6 @@ void test() {
     TensorType s_f32 = TensorType(s, dType::Float32);
     TensorType d_f32 = TensorType(d, dType::Float32);
 
-    auto dcsr_lowered = nacho::backend::TensorLowerer("dcsr", dcsr_f32).lower_tensor_struct_definition();
-    std::cout << dcsr_lowered << "\n";
-
 
     Expr a_ij = Tensor::make(dcsr_f32, "a");
     Expr b_ij = Tensor::make(dcsr_f32, "b");
@@ -54,9 +51,6 @@ void test() {
     Expr z_ij = a_ij * b_ij;
     // Expr z_ij = a_ij * (b_ij+c_ij);
 
-    std::cout << z_ij << "\n";
-    std::cout << compile_to_cin(z_ij) << "\n";
-    std::cout << "Debug\n";
     nacho::backend::CINLowerer(compile_to_cin(z_ij), std::cout).lower_cin();
 
     // {

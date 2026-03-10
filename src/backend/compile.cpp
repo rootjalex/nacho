@@ -14,14 +14,16 @@ namespace nacho {
 namespace backend {
 
     CINLowerer::CINLowerer(CIN cin, std::ostream &os) : cin(std::move(cin)), printer(os) {
+        loop_order = get_loop_order();
         struct TensorVisitor : Visitor {
             std::map<std::string, TensorLowerer> &operand_tensors;
             TensorLowerer &result_tensor;
-            TensorVisitor(std::map<std::string, TensorLowerer> &operand_tensors, TensorLowerer &result_tensor)
-                : operand_tensors(operand_tensors), result_tensor(result_tensor) {}
+            std::vector<std::string> &loop_order;
+            TensorVisitor(std::map<std::string, TensorLowerer> &operand_tensors, TensorLowerer &result_tensor, std::vector<std::string> &loop_order)
+                : operand_tensors(operand_tensors), result_tensor(result_tensor), loop_order(loop_order) {}
 
             void add_tensor(std::string str, TensorType type) {
-                TensorLowerer lowerer(str, type);
+                TensorLowerer lowerer(str, type, loop_order);
                 operand_tensors[str] = lowerer;
             }
 
@@ -30,17 +32,17 @@ namespace backend {
             }
 
             void visit(const Accumulate *node) override { 
-                result_tensor = TensorLowerer(node->tensor, node->type, true);
+                result_tensor = TensorLowerer(node->tensor, node->type, loop_order, true);
                 node->expr.accept(this); 
             }
 
             void visit(const Assign *node) override { 
-                result_tensor = TensorLowerer(node->tensor, node->type, true);
+                result_tensor = TensorLowerer(node->tensor, node->type, loop_order, true);
                 node->expr.accept(this); 
             }
         };
 
-        TensorVisitor visitor(operand_tensors, result_tensor);
+        TensorVisitor visitor(operand_tensors, result_tensor, loop_order);
         this->cin.accept(&visitor);
     }
 
@@ -77,33 +79,31 @@ namespace backend {
     }
 
     void CINLowerer::lower_cin() {
-
-        std::vector<std::string> loop_order = get_loop_order();
         auto forall_list = get_forall_list();
 
-        std::vector<int> sparse_intersection_levels = get_all_sparse_intersection_levels(cin);
+        std::vector<LoopNum> sparse_intersection_levels = get_all_sparse_intersection_levels(cin);
 
-        sparse_intersection_levels.insert(sparse_intersection_levels.begin(), -1);
-        if(sparse_intersection_levels.back()!=loop_order.size()-1) {
-            sparse_intersection_levels.push_back(loop_order.size()-1);
+        sparse_intersection_levels.insert(sparse_intersection_levels.begin(), BEFORE_FIRST_LOOP);
+        if(sparse_intersection_levels.back()!=LoopNum(loop_order.size()-1)) {
+            sparse_intersection_levels.push_back(LoopNum(loop_order.size()-1));
         }
 
         this->lower_binary_search_function();
         this->lower_struct_definitions(sparse_intersection_levels[sparse_intersection_levels.size()-2]);
 
         for(int i=0; i< sparse_intersection_levels.size()-1;i++) {
-            int previous_sparse_intersection = sparse_intersection_levels[i];
-            int current_sparse_intersection = sparse_intersection_levels[i+1];
-            int next_sparse_intersection = i!=sparse_intersection_levels.size()-2 ? sparse_intersection_levels[i+2] : forall_list.size() ;
+            LoopNum previous_sparse_intersection = sparse_intersection_levels[i];
+            LoopNum current_sparse_intersection = sparse_intersection_levels[i+1];
+            LoopNum next_sparse_intersection = i!=sparse_intersection_levels.size()-2 ? sparse_intersection_levels[i+2] : LoopNum(forall_list.size());
 
-            auto previous_loop_order = std::vector<std::string>(loop_order.begin(), loop_order.begin() + previous_sparse_intersection + 1);
-            auto current_loop_order = std::vector<std::string>(loop_order.begin(), loop_order.begin() + current_sparse_intersection + 1);
-            
+            auto previous_loop_order = std::vector<std::string>(loop_order.begin(), loop_order.begin() + previous_sparse_intersection.get() + 1);
+            auto current_loop_order = std::vector<std::string>(loop_order.begin(), loop_order.begin() + current_sparse_intersection.get() + 1);
+
             // Generate work functions for partition kernel
-            for(int level=0; level<=previous_sparse_intersection;level++) {
-                printer.print(result_tensor.lower_work_function(previous_loop_order, level));
+            for(LoopNum loop=BEFORE_FIRST_LOOP+1; loop<=previous_sparse_intersection;++loop) {
+                printer.print(result_tensor.lower_work_function(previous_loop_order, loop));
             }
-            for(int level = previous_sparse_intersection + 1; level <= current_sparse_intersection; level++) {
+            for(LoopNum level = previous_sparse_intersection + 1; level <= current_sparse_intersection; ++level) {
                 for (auto it : operand_tensors) {
                     printer.print(it.second.lower_work_function(current_loop_order, level));
                 }
@@ -127,7 +127,7 @@ namespace backend {
             ComputeKernelLowerer compute_lowerer(operand_tensors, result_tensor, included_tensors, forall_list, modified_cin, previous_sparse_intersection, current_sparse_intersection, next_sparse_intersection);
             
             // Generate Precompute kernels
-            if(result_tensor.tensor_type.format.get_prev_sparse_level(current_sparse_intersection+1) != -1) {
+            if(result_tensor.get_loop_num_for_prev_sparse_level(current_sparse_intersection+1) != BEFORE_FIRST_LOOP) {
                 printer.print(compute_lowerer.lower_precompute_function());
             }
 
@@ -136,7 +136,7 @@ namespace backend {
             // The target_dim value is fixed for this work function.
             if(i!=sparse_intersection_levels.size()-2){
                 for (auto it : operand_tensors) {
-                    auto next_loop_order = std::vector<std::string>(loop_order.begin(), loop_order.begin() + next_sparse_intersection + 1);
+                    auto next_loop_order = std::vector<std::string>(loop_order.begin(), loop_order.begin() + next_sparse_intersection.get() + 1);
                     printer.print(it.second.lower_work_function(next_loop_order, current_sparse_intersection, true));
                 }
             }
@@ -150,7 +150,7 @@ namespace backend {
     // this includes tensor struct definitions for both the operand and result tensors
     // This also result_per_thread_count structs and result_to_operand_pos_map structs
     // which might be required by the intermediate kernels.
-    void CINLowerer::lower_struct_definitions(int last_sparse_intersection) {
+    void CINLowerer::lower_struct_definitions(LoopNum last_sparse_intersection) {
         for (auto it : operand_tensors) {
             printer.print(it.second.lower_tensor_struct_definition());
             // printer.print(it.second.lower_tensor_index_definition());
@@ -160,9 +160,9 @@ namespace backend {
 
         // Use BaseKernelLowerer to lower the one time struct definitions of result_per_thread_count struct and result_to_operand_pos_map struct
         auto empty_map = std::map<std::string, TensorLowerer>();
-        BaseKernelLowerer BaseLowerer(operand_tensors, result_tensor, empty_map, get_forall_list(), -1, -1, -1);
+        BaseKernelLowerer BaseLowerer(operand_tensors, result_tensor, empty_map, get_forall_list(), BEFORE_FIRST_LOOP, BEFORE_FIRST_LOOP, BEFORE_FIRST_LOOP);
         // Need to lower this struct only once
-        if(!result_tensor.tensor_type.format.are_all_lvls_dense()) {
+        if(!result_tensor.are_all_lvls_dense()) {
             printer.print(BaseLowerer.lower_result_per_thread_count_struct());
         }
 
@@ -172,16 +172,16 @@ namespace backend {
         }
     }
 
-    llir::lType CINLowerer::lower_result_pos_to_operand_pos_map_struct(int last_sparse_intersection) {
+    llir::lType CINLowerer::lower_result_pos_to_operand_pos_map_struct(LoopNum last_sparse_intersection) {
         std::vector<std::string> generics = {"index_t"};
         std::vector<std::pair<std::string, llir::lType>> fields;
         auto forall_list = get_forall_list(); auto empty_map = std::map<std::string, TensorLowerer>();
-        BaseKernelLowerer BaseLowerer(operand_tensors, result_tensor, empty_map, forall_list, -1, -1, -1);
-        for(int level=0; level<=last_sparse_intersection;level++) {
-            if(level == -1 || level >= forall_list.size()-1) {
+        BaseKernelLowerer BaseLowerer(operand_tensors, result_tensor, empty_map, forall_list, BEFORE_FIRST_LOOP, BEFORE_FIRST_LOOP, BEFORE_FIRST_LOOP);
+        for(LoopNum loop=BEFORE_FIRST_LOOP+1; loop<=last_sparse_intersection;++loop) {
+            if(loop >= LoopNum(forall_list.size()-1)) {
                 continue;
             }
-            const Forall* forall = forall_list[level].as<Forall>();
+            const Forall* forall = forall_list[loop.get()].as<Forall>();
             std::string forall_idx = forall->idx;
 
             for(auto& [name, tensor] : operand_tensors) {
@@ -198,12 +198,12 @@ namespace backend {
                                  std::move(generics));
     }
 
-    std::vector<int> CINLowerer::get_all_sparse_intersection_levels(CIN& cin) {
+    std::vector<LoopNum> CINLowerer::get_all_sparse_intersection_levels(CIN& cin) {
         struct Checker : public Visitor {
-            int loop_level = -1;
+            LoopNum loop_num = BEFORE_FIRST_LOOP;
             bool inside_sparse_intersection = false;
             bool found_sparse_intersection = false;
-            std::vector<int> sparse_intersection_levels;
+            std::vector<LoopNum> sparse_intersection_levels;
 
             void visit(const Intersect * node) override{
                 //std::cout<<"Visiting intersect at loop level "<< loop_level << " , inside_sparse_intersection: "<< inside_sparse_intersection <<" "<<Seq(node)<<std::endl;
@@ -252,12 +252,12 @@ namespace backend {
                 // if we already found a sparse intersection, 
                 // that means this forall is inside a sparse intersection forall
                 // hence cin is not innermost sparse
-                loop_level++;
+                ++loop_num;
                 found_sparse_intersection = false;
                 //<<" Going inside seq "<<(Seq)node->seq<<std::endl;
                 node->seq.accept(this);
                 if(found_sparse_intersection) {
-                    sparse_intersection_levels.push_back(loop_level);
+                    sparse_intersection_levels.push_back(loop_num);
                 }
                 found_sparse_intersection = false;
                 node->body.accept(this);
@@ -273,14 +273,14 @@ namespace backend {
         return checker.sparse_intersection_levels;
     }
 
-    CIN CINLowerer::get_modified_cin_for_sparse_intersection(int target_level, CIN& cin) {
+    CIN CINLowerer::get_modified_cin_for_sparse_intersection(LoopNum target_loop, CIN& cin) {
         struct Modifier: public Mutator {
-            int loop_level = -1;
-            int target_level;
-            Modifier(int target_level) : target_level(target_level) {}
+            LoopNum loop_num = BEFORE_FIRST_LOOP;
+            LoopNum target_loop;
+            Modifier(LoopNum target_loop) : target_loop(target_loop) {}
             CIN visit(const Forall * node) override{
-                loop_level++;
-                if(loop_level < target_level) {
+                ++loop_num;
+                if(loop_num < target_loop) {
                     Seq seq = mutate(node->seq);
                     CIN body = mutate(node->body);
                     if (seq.same_as(node->seq) && body.same_as(node->body)) {
@@ -294,7 +294,7 @@ namespace backend {
                 }
             }
         };
-        return Modifier(target_level).mutate(cin);
+        return Modifier(target_loop).mutate(cin);
     }
 
 
@@ -375,11 +375,27 @@ namespace backend {
         printer.print(llir::Function::make(std::move(generics), std::move(attributes), std::move(args), std::move(ret_type), name, std::move(body)));
     }
 
-    std::map<std::string, TensorLowerer> CINLowerer::get_included_tensors_for_level(int level) {
-            auto forall  = get_forall_list()[level].as<Forall>();
-            std::vector<Seq> locators = get_dense_locators(forall->seq);
+    std::map<std::string, TensorLowerer> CINLowerer::get_included_tensors_for_level(LoopNum loop_num) {
+            auto forall  = get_forall_list()[loop_num.get()].as<Forall>();
 
             std::map<std::string, TensorLowerer> included_tensors;
+
+            // For non-innermost sparse case, for dense level in the sparse intersection loop
+            // which is the last loop for this phase there is nothing to actually read. 
+            // for inntermost sparse case we have non-zeros to read even if last level is dense
+            // Just exclude dense tensors from work calculation for this case for now.
+            // (Counting all memory loads (including indices probably gives a better idea for this))
+            if(loop_num < LoopNum(loop_order.size()-1)) {
+                for(auto it : operand_tensors) {
+                    if(it.second.is_sparse(loop_num)) {
+                        included_tensors[it.first] = it.second;
+                    }
+                }
+            } 
+
+            std::vector<Seq> locators = get_dense_locators(forall->seq);
+
+            
 
             // included tensors are the tensors which are included in the work
             // calculation. Non-included tensors are not co-iterated and instead looked up.

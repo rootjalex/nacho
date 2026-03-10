@@ -21,9 +21,9 @@ namespace nacho {
 
             std::map<std::string, TensorLowerer> &included_tensors;
             std::vector<CIN> forall_list;
-            int previous_sparse_intersection;
-            int current_sparse_intersection;
-            int next_sparse_intersection;
+            LoopNum previous_sparse_intersection;
+            LoopNum current_sparse_intersection;
+            LoopNum next_sparse_intersection;
 
             llir::lType index_t = llir::Generic_t::make("index_t");
             llir::lType value_t = llir::Generic_t::make("value_t");
@@ -34,21 +34,31 @@ namespace nacho {
                 TensorLowerer &result_tensor,
                 std::map<std::string, TensorLowerer> &included_tensors,
                 const std::vector<CIN> &forall_list, 
-                int previous_sparse_intersection, int current_sparse_intersection,int next_sparse_intersection)
+                LoopNum previous_sparse_intersection, LoopNum current_sparse_intersection, LoopNum next_sparse_intersection)
                 : operand_tensors(operand_tensors), result_tensor(result_tensor), included_tensors(included_tensors),
                   forall_list(forall_list), 
                   previous_sparse_intersection(previous_sparse_intersection),
                   current_sparse_intersection(current_sparse_intersection),
                   next_sparse_intersection(next_sparse_intersection) {}
-
             
             // This is just a helper function to construct the suffix used in giving unique names to various generated kernels
             // The suffix is just the concatenation of all loop indices that the kernel operates on
-            inline std::string get_all_loops_string(int level) {
+            inline std::string get_all_loops_string(LoopNum loop_num) {
                 std::string all_loops_string = "";
-                for(int i=0;i<=level;i++)
-                    all_loops_string += forall_list[i].as<Forall>()->idx;
+                for(LoopNum i=BEFORE_FIRST_LOOP+1;i<=loop_num;++i)
+                    all_loops_string += forall_list[i.get()].as<Forall>()->idx;
                 return all_loops_string;
+            }
+
+            TensorLowerer get_tensor(std::string tensor_name) {
+                if(operand_tensors.find(tensor_name) != operand_tensors.end()) {
+                    return operand_tensors[tensor_name];
+                } else if(result_tensor.tensor_name == tensor_name) {
+                    return result_tensor;
+                } else {
+                    internal_assert(false) << "Tensor " << tensor_name << " not found in either operand tensors or result tensor.";
+                    return TensorLowerer();
+                }
             }
 
             inline std::string get_partition_function_name() {
@@ -100,7 +110,7 @@ namespace nacho {
             bool exists_field_in_result_to_operand_pos_map(const Forall* forall, TensorLowerer& operand_tensor);
             llir::lExpr map_result_pos_to_operand_pos(const Forall* forall, TensorLowerer& operand_tensor, llir::lExpr result_tensor_pos, llir::lExpr result_tensor_coord  = llir::lExpr());
 
-            llir::lExpr get_partition_initializer_expr_for_boundary_cases(const int forall_level, TensorLowerer& tensor, bool is_last_thread);
+            llir::lExpr get_partition_initializer_expr_for_boundary_cases(LoopNum forall_loop_num, TensorLowerer& tensor, bool is_last_thread);
         };
     }
 }

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <ostream>
 #include <set>
 #include <string>
 #include <vector>
@@ -11,6 +12,62 @@ enum class LevelFormat {
     Compressed,
     // TODO: Coordinate, Hash, etc (Change below function too when adding more sparse types)
 };
+
+class TensorLevelNum {
+        public:
+        int value;
+        explicit TensorLevelNum(int v) : value(v) {}
+        int get() const { return value; }
+        bool operator<(const TensorLevelNum& other) const {
+            return value < other.value;
+        }
+        bool operator>(const TensorLevelNum& other) const {
+            return value > other.value;
+        }
+        bool operator<=(const TensorLevelNum& other) const {
+            return value <= other.value;
+        }
+        bool operator>=(const TensorLevelNum& other) const {
+            return value >= other.value;
+        }
+        bool operator==(const TensorLevelNum& other) const {
+            return value == other.value;
+        }
+        bool operator!=(const TensorLevelNum& other) const {
+            return value != other.value;
+        }
+        TensorLevelNum operator+(int other) const {
+            return TensorLevelNum(value + other);
+        }
+
+        TensorLevelNum operator-(int other) const {
+            return TensorLevelNum(value - other);
+        }
+
+        TensorLevelNum& operator++() {
+            ++value;
+            return *this;
+        }
+        TensorLevelNum& operator--() {
+            --value;
+            return *this;
+        }
+};
+
+inline TensorLevelNum min(const TensorLevelNum& a, const TensorLevelNum& b) {
+            if (b.value < a.value) {
+                return b;
+            }
+            return a;
+}
+
+
+
+inline std::ostream &operator<<(std::ostream &os, const TensorLevelNum &lvl) {
+    return os << lvl.value;
+}
+
+inline static const TensorLevelNum BEFORE_FIRST_LEVEL{-1};
 
 inline bool is_sparse_format(const LevelFormat lvl_fmt) {
     return lvl_fmt == LevelFormat::Compressed;
@@ -54,10 +111,10 @@ struct Format {
             return copy;
         }
     }
-    int get_prev_sparse_level(int curr_level) const;   
-    int get_next_sparse_level(int curr_level) const;
-    int get_last_sparse_level() const;
-    int get_level_order(const std::string &idx) const;
+    TensorLevelNum get_prev_sparse_level(TensorLevelNum curr_level) const;
+    TensorLevelNum get_next_sparse_level(TensorLevelNum curr_level) const;
+    TensorLevelNum get_last_sparse_level() const;
+    TensorLevelNum get_level_order(const std::string &idx) const;
 
     LevelFormat lvlfmt_of(const std::string &idx) const;
     bool is_sparse(const std::string &idx) const;
