@@ -15,6 +15,8 @@ namespace backend {
 
         struct CINLowerer {
 
+            llir::lType index_t  = llir::Generic_t::make("index_t");
+
             CIN cin;
             Printer printer;
             TensorLowerer result_tensor;
@@ -24,16 +26,12 @@ namespace backend {
             std::vector<std::string> get_loop_order();
             std::vector<CIN> get_forall_list();
             void lower_cin();
-            void lower_struct_definitions();
+            void lower_struct_definitions(int last_sparse_intersection);
             std::vector<int> get_all_sparse_intersection_levels(CIN& cin);
             CIN get_modified_cin_for_sparse_intersection(int target_level, CIN& cin);
-            void lower_innermost_sparse_intersection();
-            void lower_work_functions();
-            // is_innermost_sparse_intersection checks if the given CIN represents an innermost sparse intersection. 
-            // this also returns true if the CIN does not have any sparse intersection.
-            bool is_innermost_sparse_intersection();
-            void lower_binary_search_function();
 
+            void lower_binary_search_function();
+            llir::lType lower_result_pos_to_operand_pos_map_struct(int last_sparse_intersection);
             std::map<std::string, TensorLowerer> get_included_tensors_for_level(int level);
 
         };

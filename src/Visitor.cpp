@@ -73,7 +73,7 @@ void Visitor::visit(const Where *node) {
     node->consumer.accept(this);
 }
 
-void Visitor::visit(const CalculateWork *node) { (void)node; }
+void Visitor::visit(const CalculateWork *node) { node->body.accept(this); }
 
 
 void Visitor::visit(const llir::Generic_t *node) { (void)node; }

@@ -98,8 +98,9 @@ CIN Where::make(std::string temp, TensorType temp_type, CIN producer,
     return node;
 }
 
-CIN CalculateWork::make() {
+CIN CalculateWork::make(CIN body) {
     CalculateWork *node = new CalculateWork;
+    node->body = std::move(body);
     return node;
 }
 } // namespace nacho

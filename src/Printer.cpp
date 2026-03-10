@@ -317,7 +317,10 @@ void Printer::visit(const Where *node) {
 
 void Printer::visit(const CalculateWork *node) {
     print_indent();
-    os << "calculate_work_stmt()\n";
+    os << "calculate_work_stmt\n";
+    indent();
+    print(node->body);
+    dedent();
 }
 
 void Printer::print(const llir::lType &ltype) { ltype.accept(this); }

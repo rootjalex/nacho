@@ -110,7 +110,11 @@ CIN Mutator::visit(const Where *node) {
 }
 
 CIN Mutator::visit(const CalculateWork *node) {
-    return node;
+    CIN body = mutate(node->body);
+    if (body.same_as(node->body)) {
+        return node;
+    }
+    return CalculateWork::make(std::move(body));
 }
 
 } // namespace nacho

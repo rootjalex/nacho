@@ -76,6 +76,7 @@ target_sources(
     src/backend/partition.cpp
     src/backend/tensor.cpp
     src/backend/compute.cpp
+    src/backend/base_lowerer.cpp
 )
 
 target_sources(
@@ -110,6 +111,7 @@ target_sources(
     include/backend/compile.h
     include/backend/tensor.h
     include/backend/compute.h
+    include/backend/base_lowerer.h
 )
 
 if (nacho_ENABLE_WARNINGS)
