@@ -517,9 +517,44 @@ void test_locator_optimization() {
 //     funcs[0].print(std::cout);
 // }
 
+void spvec() {
+    Format sparse = Format::ordered({
+        {"i", LevelFormat::Compressed},
+    });
+
+    Format dense = Format::ordered({
+        {"i", LevelFormat::Dense},
+    });
+
+    TensorType s_f32 = TensorType(sparse, dType::Float32);
+    TensorType d_f32 = TensorType(dense, dType::Float32);
+
+    Expr a_i = Tensor::make(s_f32, "a_vec");
+    Expr b_i = Tensor::make(s_f32, "b_vec");
+    Expr c_i = Tensor::make(s_f32, "c_vec");
+    Expr d_i = Tensor::make(d_f32, "d_vec");
+
+    auto check = [](const Expr &e, const std::string &str) {
+        std::cout << "// " << str << " : " << e << std::endl;
+        std::cout << "namespace " << str << " {\n";
+        nacho::backend::CINLowerer(compile_to_cin(e), std::cout).lower_cin();
+        std::cout << "} // namespace " << str << "\n";
+        std::cout << std::endl << std::endl;
+    };
+
+    check(a_i * b_i, "spvec_emul");
+
+    check(a_i + b_i, "spvec_eadd");
+
+    check(a_i + b_i * c_i, "spvec_efma");
+
+    check(a_i * (b_i + c_i), "spvec_erfma");
+}
+
 // TODO: write a parser.
 int main(int argc, char **argv) {
-    test();
+    // test();
+    spvec();
     // test_format_inf();
     // test_vec();
     // spgemm();
