@@ -220,14 +220,17 @@ def run_spgemm(start, end, save_and_plot):
         print(f"Failed: {failed}")
 
 
-def run_sparse_vectors(start, end, _save_and_plot):
+def run_sparse_vectors(start, end, save_and_plot):
+    import pandas as pd
     from parser import matrix_list
     from sparse_vectors import test_mergepath
+    from plotter import plot_bar_graph_2
 
     df = matrix_list()
     n = len(df)
     end = min(end, n - 2)
     failed = []
+    rows = []
 
     indices = list(range(start, end))
     for i in tqdm(indices, desc="Sparse Vectors", unit="triplet"):
@@ -243,6 +246,31 @@ def run_sparse_vectors(start, end, _save_and_plot):
         ans, full, partial, no, total_nnz = result
         if not ans:
             failed.append(i)
+        rows.append({
+            "matrix_a": df.iloc[i]['name'],
+            "matrix_b": df.iloc[i + 1]['name'],
+            "matrix_c": df.iloc[i + 2]['name'],
+            "total_nnz": total_nnz,
+            "full_mergepath_ms": full[0],
+            "full_precompute_ms": full[1],
+            "full_compute_ms": full[2],
+            "partial_mergepath_ms": partial[0],
+            "partial_precompute_ms": partial[1],
+            "partial_compute_ms": partial[2],
+            "nofusion_mergepath_ms": no[0],
+            "nofusion_precompute_ms": no[1],
+            "nofusion_compute_ms": no[2],
+            "correct": ans,
+        })
+
+    if save_and_plot and rows:
+        from plotter import _path
+        pd.DataFrame(rows).to_csv(_path(f"sparse_vectors_{start}-{end}", "csv"), index=False)
+        full_lb = [[r["full_mergepath_ms"], r["full_precompute_ms"], r["full_compute_ms"]] for r in rows]
+        partial_lb = [[r["partial_mergepath_ms"], r["partial_precompute_ms"], r["partial_compute_ms"]] for r in rows]
+        single_lb = [[r["nofusion_mergepath_ms"], r["nofusion_precompute_ms"], r["nofusion_compute_ms"]] for r in rows]
+        lengths = [r["total_nnz"] for r in rows]
+        plot_bar_graph_2(0, lengths, full_lb, partial_lb, single_lb, f"sparse_vectors_{start}-{end}")
     if failed:
         print(f"Failed: {failed}")
 
