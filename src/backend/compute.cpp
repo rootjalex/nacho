@@ -700,7 +700,7 @@ llir::lStmt ComputeKernelLowerer::lower_loop(
             iters.push_back(miter->second);
             if (cond.defined()) {
                 cond = cond && miter->second.first <= miter->second.second;
-                offset_write_cond = offset_write_cond && (miter->second.first != miter->second.second);
+                offset_write_cond = offset_write_cond || (miter->second.first != miter->second.second);
             } else {
                 cond = miter->second.first <= miter->second.second;
                 offset_write_cond = (miter->second.first != miter->second.second);

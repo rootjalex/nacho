@@ -48,7 +48,7 @@ void test() {
     Expr c_i = Tensor::make(s_f32, "c_vec");
     Expr d_i = Tensor::make(d_f32, "d_vec");
 
-    Expr z_ij = a_ij * b_ij;
+    Expr z_ij = a_ij + b_ij;
     // Expr z_ij = a_ij * (b_ij+c_ij);
 
     nacho::backend::CINLowerer(compile_to_cin(z_ij), std::cout).lower_cin();
