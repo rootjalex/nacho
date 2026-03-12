@@ -473,6 +473,7 @@ namespace backend {
         }
         func_args.emplace_back(llir::Function::Argument{
             .mutating = true,
+            .by_reference = true,
             .type = llir::Generic_t::make(result_tensor.get_struct_name() + "<index_t, value_t>"),
             .name = result_tensor.tensor_name});
 
@@ -721,25 +722,19 @@ namespace backend {
                     }
                 }
 
-                // Allocate offsets arrays for sparse dimensions (size = dim_size + 1 or nnz of parent + 1)
-                for (int lvl = 0; lvl <= phase_info.current_sparse_intersection; lvl++) {
+                // Allocate offsets arrays for non-outermost sparse dimensions
+                // (outermost sparse dim has no offsets field in the struct)
+                for (int lvl = 1; lvl <= phase_info.current_sparse_intersection; lvl++) {
                     auto idx = result_tensor.tensor_type.format.levels[lvl].index;
                     if (is_sparse_format(result_tensor.tensor_type.format.lvlfmt_of(idx))) {
                         // Offsets size depends on the parent dimension
                         std::string offsets_size;
-                        if (lvl == 0) {
-                            // First level: offsets size = dim_size + 1
-                            offsets_size = result_tensor.tensor_name + "." +
-                                          result_tensor.get_size_field_name(idx) + " + 1";
+                        auto parent_idx = result_tensor.tensor_type.format.levels[lvl - 1].index;
+                        if (is_sparse_format(result_tensor.tensor_type.format.lvlfmt_of(parent_idx))) {
+                            offsets_size = "nnz_" + parent_idx + "_" + std::to_string(phase) + " + 1";
                         } else {
-                            // Get nnz of parent sparse level + 1
-                            auto parent_idx = result_tensor.tensor_type.format.levels[lvl - 1].index;
-                            if (is_sparse_format(result_tensor.tensor_type.format.lvlfmt_of(parent_idx))) {
-                                offsets_size = "nnz_" + parent_idx + "_" + std::to_string(phase) + " + 1";
-                            } else {
-                                offsets_size = result_tensor.tensor_name + "." +
-                                              result_tensor.get_size_field_name(parent_idx) + " + 1";
-                            }
+                            offsets_size = result_tensor.tensor_name + "." +
+                                          result_tensor.get_size_field_name(parent_idx) + " + 1";
                         }
                         body_stmts.emplace_back(llir::RawCode::make(
                             "cudaMalloc((void**)&" + result_tensor.tensor_name + "." +
@@ -749,6 +744,30 @@ namespace backend {
                             "cudaMemset(" + result_tensor.tensor_name + "." +
                             result_tensor.get_offsets_field_name(idx) +
                             ", 0, (" + offsets_size + ") * sizeof(index_t));"));
+                    }
+                }
+
+                // Set result tensor nnz/length fields from precompute results
+                for (int lvl = 0; lvl <= phase_info.current_sparse_intersection; lvl++) {
+                    auto idx = result_tensor.tensor_type.format.levels[lvl].index;
+                    if (is_sparse_format(result_tensor.tensor_type.format.lvlfmt_of(idx))) {
+                        std::string nnz_name = "nnz_" + idx + "_" + std::to_string(phase);
+                        body_stmts.emplace_back(llir::RawCode::make(
+                            result_tensor.tensor_name + "." +
+                            result_tensor.get_length_field_name(idx) +
+                            " = " + nnz_name + ";"));
+                    }
+                }
+                if (phase == num_phases - 1) {
+                    // Set nnz to innermost sparse dim's count
+                    for (int lvl = phase_info.current_sparse_intersection; lvl >= 0; lvl--) {
+                        auto idx = result_tensor.tensor_type.format.levels[lvl].index;
+                        if (is_sparse_format(result_tensor.tensor_type.format.lvlfmt_of(idx))) {
+                            body_stmts.emplace_back(llir::RawCode::make(
+                                result_tensor.tensor_name + ".nnz = nnz_" +
+                                idx + "_" + std::to_string(phase) + ";"));
+                            break;
+                        }
                     }
                 }
             }
@@ -839,6 +858,141 @@ namespace backend {
         printer.print(llir::Function::make(std::move(generics), std::move(attributes),
                                            std::move(func_args), std::move(ret_type),
                                            name, std::move(body)));
+    }
+
+    void CINLowerer::lower_flat_wrapper(const std::string &op_name) {
+        llir::lType value_t = llir::Generic_t::make("value_t");
+        std::vector<std::string> generics = {"index_t", "value_t"};
+        std::vector<llir::Function::Attribute> attributes = {llir::Function::host};
+        llir::lType ret_type = llir::Generic_t::make("void");
+
+        std::vector<llir::Function::Argument> args;
+
+        // For each operand: add all struct fields as flat args
+        // All operand args are marked mutating to avoid const qualifiers,
+        // since the operand structs store non-const pointers internally.
+        for (const auto &[name, tensor] : operand_tensors) {
+            llir::lType struct_type = tensor.lower_tensor_struct_definition();
+            const auto *st = struct_type.as<llir::Struct_t>();
+            for (const auto &[field_name, field_type] : st->fields) {
+                args.push_back({
+                    .mutating = true,
+                    .type = field_type,
+                    .name = name + "_" + field_name
+                });
+            }
+        }
+
+        // For result: add size fields as input
+        for (size_t i = 0; i < result_tensor.tensor_type.format.levels.size(); i++) {
+            auto idx = result_tensor.tensor_type.format.levels[i].index;
+            args.push_back({
+                .mutating = true,
+                .type = index_t,
+                .name = "result_" + result_tensor.get_size_field_name(idx)
+            });
+        }
+
+        // Output references: nnz
+        args.push_back({
+            .mutating = true,
+            .by_reference = true,
+            .type = index_t,
+            .name = "out_nnz"
+        });
+
+        // Output references: indices (and offsets for non-outermost) for each sparse dim
+        for (int i = (int)result_tensor.tensor_type.format.levels.size() - 1; i >= 0; i--) {
+            auto idx = result_tensor.tensor_type.format.levels[i].index;
+            if (is_sparse_format(result_tensor.tensor_type.format.lvlfmt_of(idx))) {
+                args.push_back({
+                    .mutating = true,
+                    .by_reference = true,
+                    .type = llir::Ptr_t::make(index_t),
+                    .name = "out_" + result_tensor.get_indices_field_name(idx)
+                });
+                if (i != 0) {
+                    args.push_back({
+                        .mutating = true,
+                        .by_reference = true,
+                        .type = llir::Ptr_t::make(index_t),
+                        .name = "out_" + result_tensor.get_offsets_field_name(idx)
+                    });
+                }
+            }
+        }
+
+        // Output reference: values
+        args.push_back({
+            .mutating = true,
+            .by_reference = true,
+            .type = llir::Ptr_t::make(value_t),
+            .name = "out_values"
+        });
+
+        // Build function body
+        std::vector<llir::lStmt> body_stmts;
+
+        // Create and populate operand structs
+        for (const auto &[name, tensor] : operand_tensors) {
+            body_stmts.push_back(llir::RawCode::make(
+                tensor.get_struct_name() + "<index_t, value_t> " + name + ";"));
+            llir::lType struct_type = tensor.lower_tensor_struct_definition();
+            const auto *st = struct_type.as<llir::Struct_t>();
+            for (const auto &[field_name, field_type] : st->fields) {
+                body_stmts.push_back(llir::RawCode::make(
+                    name + "." + field_name + " = " + name + "_" + field_name + ";"));
+            }
+        }
+
+        // Create result struct and populate size fields
+        body_stmts.push_back(llir::RawCode::make(
+            result_tensor.get_struct_name() + "<index_t, value_t> " +
+            result_tensor.tensor_name + ";"));
+        for (size_t i = 0; i < result_tensor.tensor_type.format.levels.size(); i++) {
+            auto idx = result_tensor.tensor_type.format.levels[i].index;
+            std::string size_field = result_tensor.get_size_field_name(idx);
+            body_stmts.push_back(llir::RawCode::make(
+                result_tensor.tensor_name + "." + size_field +
+                " = result_" + size_field + ";"));
+        }
+
+        // Call the compute function
+        std::string call = result_tensor.tensor_name + "_compute<index_t, value_t>(";
+        bool first = true;
+        for (const auto &[name, tensor] : operand_tensors) {
+            if (!first) call += ", ";
+            call += name;
+            first = false;
+        }
+        call += ", " + result_tensor.tensor_name + ");";
+        body_stmts.push_back(llir::RawCode::make(call));
+
+        // Extract outputs
+        body_stmts.push_back(llir::RawCode::make(
+            "out_nnz = " + result_tensor.tensor_name + ".nnz;"));
+        for (int i = (int)result_tensor.tensor_type.format.levels.size() - 1; i >= 0; i--) {
+            auto idx = result_tensor.tensor_type.format.levels[i].index;
+            if (is_sparse_format(result_tensor.tensor_type.format.lvlfmt_of(idx))) {
+                body_stmts.push_back(llir::RawCode::make(
+                    "out_" + result_tensor.get_indices_field_name(idx) + " = " +
+                    result_tensor.tensor_name + "." +
+                    result_tensor.get_indices_field_name(idx) + ";"));
+                if (i != 0) {
+                    body_stmts.push_back(llir::RawCode::make(
+                        "out_" + result_tensor.get_offsets_field_name(idx) + " = " +
+                        result_tensor.tensor_name + "." +
+                        result_tensor.get_offsets_field_name(idx) + ";"));
+                }
+            }
+        }
+        body_stmts.push_back(llir::RawCode::make(
+            "out_values = " + result_tensor.tensor_name + ".values;"));
+
+        llir::lStmt body = llir::Sequence::make(std::move(body_stmts));
+        printer.print(llir::Function::make(std::move(generics), std::move(attributes),
+                                           std::move(args), std::move(ret_type),
+                                           op_name, std::move(body)));
     }
 
 }

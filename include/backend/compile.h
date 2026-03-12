@@ -59,6 +59,11 @@ namespace backend {
 
             void lower_host_function();
 
+            // Generate a flat-API wrapper function that takes raw pointers
+            // instead of nacho structs. This is the stable boundary between
+            // the compiler and runtime.
+            void lower_flat_wrapper(const std::string &op_name);
+
         };
 
 

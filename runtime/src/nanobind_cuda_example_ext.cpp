@@ -6,6 +6,7 @@
 #include "broadcasts/broadcasts.hpp"
 #include "spgemm/spgemm.hpp"
 #include "mergepath_utils/mergepath_utils.h"
+#include "nacho_generated/nacho_ops.hpp"
 #include "nb_utils.hpp"
 
 namespace nb = nanobind;
@@ -80,6 +81,9 @@ NB_MODULE(nanobind_cuda_example_ext, m) {
     m.def("gpu_sss_mergepath_test64", (&nb_3dmergepath_test<int, int64_t, float>));
     m.def("gpu_broadcast_xA", &broadcast_xA<int32_t, int32_t, float>);
     m.def("spgemm", &spgemm<int32_t, float>);
+
+    // nacho-generated operations
+    m.def("nacho_sparse_vec_mul", &nacho_sparse_vec_mul_nb);
 
     // handwritten
     // m.def("cv_collapse_coo", &cv_collapse_coo<uint32_t, uint32_t, float>);

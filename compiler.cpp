@@ -5,6 +5,9 @@
 #include "backend/compile.h"
 
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <functional>
 #include <map>
 
 using namespace nacho;
@@ -249,6 +252,130 @@ void test_locator_optimization() {
 }
 
 // ===========================================================================
+// Expression Registry (for --emit mode)
+// ===========================================================================
+
+using ExprBuilder = std::function<Expr()>;
+
+// clang-format off
+const std::map<std::string, ExprBuilder> EXPRESSIONS = {
+    {"sparse_vec_mul", []() {
+        Format s = Format::ordered({{"i", LevelFormat::Compressed}});
+        TensorType s_f32(s, dType::Float32);
+        return Tensor::make(s_f32, "a") * Tensor::make(s_f32, "b");
+    }},
+    {"sparse_vec_add", []() {
+        Format s = Format::ordered({{"i", LevelFormat::Compressed}});
+        TensorType s_f32(s, dType::Float32);
+        return Tensor::make(s_f32, "a") + Tensor::make(s_f32, "b");
+    }},
+    {"sparse_vec_apb_c", []() {
+        Format s = Format::ordered({{"i", LevelFormat::Compressed}});
+        TensorType s_f32(s, dType::Float32);
+        Expr a = Tensor::make(s_f32, "a");
+        Expr b = Tensor::make(s_f32, "b");
+        Expr c = Tensor::make(s_f32, "c");
+        return (a + b) * c;
+    }},
+    {"sparse_vec_ab_pc", []() {
+        Format s = Format::ordered({{"i", LevelFormat::Compressed}});
+        TensorType s_f32(s, dType::Float32);
+        Expr a = Tensor::make(s_f32, "a");
+        Expr b = Tensor::make(s_f32, "b");
+        Expr c = Tensor::make(s_f32, "c");
+        return (a * b) + c;
+    }},
+    {"dcsr_mul", []() {
+        Format dcsr = Format::ordered({
+            {"i", LevelFormat::Compressed},
+            {"j", LevelFormat::Compressed},
+        });
+        TensorType dcsr_f32(dcsr, dType::Float32);
+        return Tensor::make(dcsr_f32, "A") * Tensor::make(dcsr_f32, "B");
+    }},
+    {"dcsr_add", []() {
+        Format dcsr = Format::ordered({
+            {"i", LevelFormat::Compressed},
+            {"j", LevelFormat::Compressed},
+        });
+        TensorType dcsr_f32(dcsr, dType::Float32);
+        return Tensor::make(dcsr_f32, "A") + Tensor::make(dcsr_f32, "B");
+    }},
+};
+// clang-format on
+
+// ---------------------------------------------------------------------------
+// Helper: emit generated CUDA code to a file with a flat-API wrapper.
+// ---------------------------------------------------------------------------
+static void emit_to_file(const std::string &dir, const std::string &op_name,
+                         Expr expr) {
+    std::filesystem::create_directories(dir);
+    std::string filepath = dir + "/" + op_name + ".cu";
+    std::ofstream ofs(filepath);
+    if (!ofs) {
+        std::cerr << "Failed to open " << filepath << " for writing\n";
+        exit(1);
+    }
+
+    ofs << "#pragma once\n\n";
+    ofs << "#include <cuda_runtime.h>\n";
+    ofs << "#include <cub/cub.cuh>\n\n";
+
+    CIN cin = compile_to_cin(expr);
+    backend::CINLowerer lowerer(cin, ofs);
+    lowerer.lower_cin();
+    ofs << "\n";
+    lowerer.lower_flat_wrapper(op_name);
+    ofs << "\n";
+
+    // Emit explicit template instantiation for <int, float>.
+    // Build the type list by iterating operand/result tensor formats.
+    ofs << "// Explicit template instantiation\n";
+    ofs << "template void " << op_name << "<int, float>(";
+    bool first_arg = true;
+    // Operand args (all struct fields)
+    for (const auto &[name, tensor] : lowerer.operand_tensors) {
+        llir::lType struct_type = tensor.lower_tensor_struct_definition();
+        const auto *st = struct_type.as<llir::Struct_t>();
+        for (const auto &[field_name, field_type] : st->fields) {
+            if (!first_arg) ofs << ", ";
+            first_arg = false;
+            if (field_type.is<llir::Ptr_t>()) {
+                const auto *pt = field_type.as<llir::Ptr_t>();
+                if (pt->type.is<llir::Generic_t>()) {
+                    const auto *gt = pt->type.as<llir::Generic_t>();
+                    ofs << (gt->name == "value_t" ? "float" : "int") << "*";
+                }
+            } else {
+                ofs << "int";
+            }
+        }
+    }
+    // Result size args
+    for (size_t i = 0; i < lowerer.result_tensor.tensor_type.format.levels.size(); i++) {
+        if (!first_arg) ofs << ", ";
+        first_arg = false;
+        ofs << "int";
+    }
+    // Output refs: nnz
+    ofs << ", int&";
+    // Output refs: indices (and offsets for non-outermost)
+    for (int i = (int)lowerer.result_tensor.tensor_type.format.levels.size() - 1; i >= 0; i--) {
+        auto idx = lowerer.result_tensor.tensor_type.format.levels[i].index;
+        if (is_sparse_format(lowerer.result_tensor.tensor_type.format.lvlfmt_of(idx))) {
+            ofs << ", int*&";
+            if (i != 0) ofs << ", int*&";
+        }
+    }
+    // Output ref: values
+    ofs << ", float*&";
+    ofs << ");\n";
+
+    ofs.close();
+    std::cout << "Generated " << filepath << "\n";
+}
+
+// ===========================================================================
 // Test Registry
 // ===========================================================================
 
@@ -269,12 +396,17 @@ const std::map<std::string, TestFunc> TESTS = {
 // clang-format on
 
 int main(int argc, char **argv) {
-    // Usage: compiler --test <name>   Run a single test
-    //        compiler --list          List available tests
-    //        compiler                 Run all tests
+    // Usage: compiler --test <name>        Run a single test
+    //        compiler --list               List available tests
+    //        compiler --emit <dir> --name <op_name>   Generate .cu file
+    //        compiler                      Run all tests
     if (argc >= 2 && std::strcmp(argv[1], "--list") == 0) {
+        std::cout << "Tests:\n";
         for (const auto &[name, _] : TESTS)
-            std::cout << name << "\n";
+            std::cout << "  " << name << "\n";
+        std::cout << "Expressions (for --emit):\n";
+        for (const auto &[name, _] : EXPRESSIONS)
+            std::cout << "  " << name << "\n";
         return 0;
     }
 
@@ -286,6 +418,32 @@ int main(int argc, char **argv) {
             return 1;
         }
         it->second();
+        return 0;
+    }
+
+    // --emit <dir> --name <op_name>
+    if (argc >= 2 && std::strcmp(argv[1], "--emit") == 0) {
+        std::string dir, name;
+        // Parse remaining args
+        for (int i = 2; i < argc; i++) {
+            if (std::strcmp(argv[i], "--name") == 0 && i + 1 < argc) {
+                name = argv[++i];
+            } else if (dir.empty()) {
+                dir = argv[i];
+            }
+        }
+        if (dir.empty() || name.empty()) {
+            std::cerr << "Usage: compiler --emit <dir> --name <op_name>\n";
+            std::cerr << "Run with --list to see available expressions.\n";
+            return 1;
+        }
+        auto it = EXPRESSIONS.find(name);
+        if (it == EXPRESSIONS.end()) {
+            std::cerr << "Unknown expression: " << name << "\n";
+            std::cerr << "Run with --list to see available expressions.\n";
+            return 1;
+        }
+        emit_to_file(dir, name, it->second());
         return 0;
     }
 

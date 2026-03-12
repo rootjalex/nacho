@@ -57,6 +57,7 @@ set(nanobind_cuda_example_CUDA_SRC
   src/sparse_vector/sp_ab_c.cu
   src/broadcasts/broadcasts.cu
   src/spgemm/spgemm.cu
+  src/nacho_generated/sparse_vec_mul.cu
 )
 
 set(CPM_DOWNLOAD_VERSION 0.39.0)
@@ -103,6 +104,7 @@ set(nanobind_cuda_example_CPP_SRC
     src/sparse_vector/sparse_vector.cpp
     src/broadcasts/broadcasts.cpp
     src/spgemm/spgemm.cpp
+    src/nacho_generated/nacho_ops.cpp
 )
 
 # Add the CUDA flags (Redwood GPU arch)
