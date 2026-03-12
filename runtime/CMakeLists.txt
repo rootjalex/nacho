@@ -4,6 +4,84 @@ message("Building for Redwood")
 set(CMAKE_CUDA_ARCHITECTURES 89)
 project(nacho_runtime LANGUAGES CUDA CXX)
 
+# -----------------------------------------------------------------------------
+# nacho codegen integration
+# -----------------------------------------------------------------------------
+# Runtime kernels for nacho-generated ops are produced by the compiler binary.
+# Keep these generated .cu files in the build directory so the source tree
+# stays clean and reproducible.
+get_filename_component(NACHO_REPO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
+set(NACHO_BUILD_DIR "${NACHO_REPO_ROOT}/build")
+set(NACHO_GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated/nacho_generated")
+
+set(NACHO_GENERATED_OPS
+  sparse_vec_mul
+  sparse_vec_add
+  sparse_vec_apb_c
+  sparse_vec_ab_pc
+  dcsr_mul
+  dcsr_add
+)
+
+# Allow callers to provide a prebuilt compiler path. If omitted, default to
+# the top-level build output and bootstrap the compiler if it does not exist.
+set(NACHO_COMPILER "" CACHE FILEPATH "Path to the nacho compiler executable.")
+if (NACHO_COMPILER)
+  set(NACHO_COMPILER_EXE "${NACHO_COMPILER}")
+else ()
+  set(NACHO_COMPILER_EXE "${NACHO_BUILD_DIR}/compiler")
+endif ()
+
+if (NOT EXISTS "${NACHO_COMPILER_EXE}")
+  message(STATUS
+          "nacho compiler not found at '${NACHO_COMPILER_EXE}'. "
+          "Bootstrapping compiler build in '${NACHO_BUILD_DIR}'.")
+
+  execute_process(
+    COMMAND "${CMAKE_COMMAND}" -S "${NACHO_REPO_ROOT}" -B "${NACHO_BUILD_DIR}"
+    RESULT_VARIABLE NACHO_COMPILER_CONFIG_RESULT
+  )
+  if (NOT NACHO_COMPILER_CONFIG_RESULT EQUAL 0)
+    message(FATAL_ERROR
+            "Failed to configure nacho compiler in '${NACHO_BUILD_DIR}'. "
+            "Provide -DNACHO_COMPILER=/abs/path/to/compiler to override.")
+  endif ()
+
+  execute_process(
+    COMMAND "${CMAKE_COMMAND}" --build "${NACHO_BUILD_DIR}" --target nacho_compiler
+    RESULT_VARIABLE NACHO_COMPILER_BUILD_RESULT
+  )
+  if (NOT NACHO_COMPILER_BUILD_RESULT EQUAL 0)
+    message(FATAL_ERROR
+            "Failed to build target 'nacho_compiler'. "
+            "Provide -DNACHO_COMPILER=/abs/path/to/compiler to override.")
+  endif ()
+endif ()
+
+if (NOT EXISTS "${NACHO_COMPILER_EXE}")
+  message(FATAL_ERROR
+          "nacho compiler executable does not exist at '${NACHO_COMPILER_EXE}'.")
+endif ()
+
+message(STATUS "Using nacho compiler: ${NACHO_COMPILER_EXE}")
+
+# Generate one .cu file per op into the build tree.
+set(NACHO_GENERATED_CUDA_SRC)
+foreach (NACHO_OP IN LISTS NACHO_GENERATED_OPS)
+  set(NACHO_OP_CU "${NACHO_GENERATED_DIR}/${NACHO_OP}.cu")
+  add_custom_command(
+    OUTPUT "${NACHO_OP_CU}"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${NACHO_GENERATED_DIR}"
+    COMMAND "${NACHO_COMPILER_EXE}" --emit "${NACHO_GENERATED_DIR}" --name "${NACHO_OP}"
+    DEPENDS "${NACHO_COMPILER_EXE}"
+    COMMENT "Generating nacho kernel ${NACHO_OP}.cu"
+    VERBATIM
+  )
+  list(APPEND NACHO_GENERATED_CUDA_SRC "${NACHO_OP_CU}")
+endforeach ()
+set_source_files_properties(${NACHO_GENERATED_CUDA_SRC} PROPERTIES GENERATED TRUE)
+add_custom_target(generate_nacho_kernels DEPENDS ${NACHO_GENERATED_CUDA_SRC})
+
 if (NOT SKBUILD)
   message(WARNING "\
   This CMake file is meant to be executed using 'scikit-build'. Running
@@ -57,13 +135,8 @@ set(nacho_runtime_CUDA_SRC
   src/sparse_vector/sp_ab_c.cu
   src/broadcasts/broadcasts.cu
   src/spgemm/spgemm.cu
-  src/nacho_generated/sparse_vec_mul.cu
-  src/nacho_generated/sparse_vec_add.cu
-  src/nacho_generated/sparse_vec_apb_c.cu
-  src/nacho_generated/sparse_vec_ab_pc.cu
-  src/nacho_generated/dcsr_mul.cu
-  src/nacho_generated/dcsr_add.cu
 )
+list(APPEND nacho_runtime_CUDA_SRC ${NACHO_GENERATED_CUDA_SRC})
 
 set(CPM_DOWNLOAD_VERSION 0.39.0)
 set(CPM_DOWNLOAD_LOCATION "${CMAKE_BINARY_DIR}/cmake/CPM.cmake")
@@ -92,6 +165,7 @@ set(nacho_runtime_CUDA_DEPENDENCIES
 )
 
 add_library(nacho_runtime_CUDA_KERNELS STATIC ${nacho_runtime_CUDA_SRC})
+add_dependencies(nacho_runtime_CUDA_KERNELS generate_nacho_kernels)
 set_target_properties(nacho_runtime_CUDA_KERNELS
     PROPERTIES
     POSITION_INDEPENDENT_CODE ON
@@ -140,6 +214,7 @@ nanobind_add_module(
   ${nacho_runtime_CPP_SRC}
   ${nacho_runtime_CUDA_SRC}
 )
+add_dependencies(nacho_runtime_ext generate_nacho_kernels)
 
 # Link the CUDA libraries (optional, only needed if you require specific CUDA libraries)
 # target_link_libraries(nacho_runtime_ext PRIVATE CUDA::cudart)

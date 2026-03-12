@@ -53,6 +53,9 @@ cmake-build-*
 *.npz
 benchmark_results/
 
+# Runtime generated CUDA kernels (build-time codegen output)
+runtime/src/nacho_generated/*.cu
+
 # Python
 __pycache__/
 *.egg-info/

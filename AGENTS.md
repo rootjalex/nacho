@@ -5,7 +5,8 @@ The repository has two primary parts:
 - `include/` and `src/`: C++20 compiler core (`nacho_library`) and lowering pipeline.
 - `compiler.cpp`: compiler CLI entry point (`build/compiler`).
 - `runtime/`: CUDA + nanobind Python runtime package.
-- `runtime/src/`: operation kernels and bindings (`csr_add/`, `coo_add/`, `spgemm/`, `nacho_generated/`).
+- `runtime/src/`: operation kernels and bindings (`csr_add/`, `coo_add/`, `spgemm/`, `nacho_generated/` wrappers).
+- Runtime-generated CUDA kernels are emitted at build time into the runtime build directory (`build/.../generated/nacho_generated/`).
 - `runtime/tests/`: pytest-based correctness tests and benchmark scripts.
 - `cmake/`, `CMakeLists.txt`, `setup.sh`: build/configuration entry points.
 
@@ -23,7 +24,8 @@ The repository has two primary parts:
   - `CamelCase`: classes, enums.
   - `lower_case`: functions, variables, parameters, members.
   - `UPPER_CASE`: `constexpr` variables.
-- Keep generated CUDA kernels in `runtime/src/nacho_generated/`; do not mix hand-written helpers into generated files.
+- Generated kernels are build artifacts; do not hand-edit generated `.cu` files.
+- Add concise comments for non-obvious logic (especially build/codegen wiring) so control flow is human-readable.
 
 ## Testing Guidelines
 - Compiler tests are registered through CTest and executed via `build/compiler`.

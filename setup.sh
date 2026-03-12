@@ -102,6 +102,21 @@ load_cuda() {
     die "nvcc not found. Install CUDA toolkit or 'module load cuda'."
 }
 
+# Runtime builds invoke compiler-driven kernel generation. Build the compiler
+# on demand so `./setup.sh --runtime` works from a clean checkout.
+ensure_compiler_for_runtime() {
+    if [[ -x "$REPO_DIR/build/compiler" ]]; then
+        info "Found compiler: $REPO_DIR/build/compiler"
+        return
+    fi
+
+    info "Compiler not found; building it for runtime kernel generation..."
+    cmake -S "$REPO_DIR" -B "$REPO_DIR/build"
+    cmake --build "$REPO_DIR/build" --target nacho_compiler -j"$(nproc)"
+
+    [[ -x "$REPO_DIR/build/compiler" ]] || die "Expected compiler at $REPO_DIR/build/compiler"
+}
+
 # ---------------------------------------------------------------------------
 # Compiler setup
 # ---------------------------------------------------------------------------
@@ -157,13 +172,14 @@ setup_runtime() {
         info "GPU: ${gpu:-unknown}"
     fi
 
-    # Ensure CMake is new enough (cuco requires 3.23.1+, scikit-build-core uses system cmake)
+    # Ensure CMake is new enough for both runtime and compiler bootstrap.
+    # The top-level compiler build requires CMake 3.30+.
     local need_cmake=false
     if command -v cmake &>/dev/null; then
         local cmake_ver
         cmake_ver=$(cmake --version | head -1 | grep -oP '\d+\.\d+')
-        if awk "BEGIN{exit(!($cmake_ver < 3.24))}"; then
-            warn "System CMake is $cmake_ver, runtime deps need 3.23.1+. Installing via conda..."
+        if awk "BEGIN{exit(!($cmake_ver < 3.30))}"; then
+            warn "System CMake is $cmake_ver, runtime + compiler generation needs 3.30+. Installing via conda..."
             need_cmake=true
         fi
     else
@@ -181,6 +197,8 @@ setup_runtime() {
     # Install PyTorch with CUDA support
     info "Installing PyTorch (CUDA)..."
     pip install --quiet torch
+
+    ensure_compiler_for_runtime
 
     info "Installing runtime package (compiles CUDA — may take a few minutes)..."
     pip install --verbose "$REPO_DIR/runtime"

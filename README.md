@@ -67,6 +67,10 @@ Available tests:
 
 The `runtime/` directory contains the GPU runtime and benchmark suite (CUDA kernels, Python bindings via nanobind, benchmarks against cuSPARSE). See [`runtime/README.md`](runtime/README.md) for details.
 
+During runtime builds, nacho-generated kernels are produced automatically by
+`build/compiler` into the build directory. If the compiler is missing, the
+runtime build bootstraps it first.
+
 ### Acknowledgements
 
 A significant portion of the code in this repository is modeled after, or
