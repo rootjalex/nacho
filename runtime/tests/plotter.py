@@ -2,13 +2,17 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 from matplotlib.patches import Patch
 import numpy as np
+import os
+
+_RESULTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'benchmark_results')
+os.makedirs(_RESULTS_DIR, exist_ok=True)
 
 def load_and_plot(file_names, plot_name):
     nnz = []
     cusparse = []
     manual = []
     pytorch = []
-    dir = "benchmark_results/"
+    dir = _RESULTS_DIR + "/"
     for file in file_names:
         data = np.load(dir + file + ".npz", allow_pickle=True)
         nnz_manual = data["nnz"].tolist()
@@ -25,7 +29,7 @@ def load_and_plot(file_names, plot_name):
     plot(nnz, manual, cusparse, pytorch, plot_name)
 
 def plot_3(nnz, lengths, full, partial, no, name):
-    dir = "benchmark_results/"
+    dir = _RESULTS_DIR + "/"
     np.savez(dir + name +".npz", nnz=nnz, lengths=lengths, full=full,
                              partial=partial, no=no)
     plt.figure(figsize=(8,6))
@@ -60,7 +64,7 @@ def plot_3(nnz, lengths, full, partial, no, name):
     plt.show()
 
 def plot_2(size, lengths, full, partial, no, name):
-    dir = "benchmark_results/"
+    dir = _RESULTS_DIR + "/"
     np.savez(dir + name +".npz", size=size, lengths=lengths, full=full,
                              partial=partial, no=no)
     plt.figure(figsize=(8,6))
@@ -95,7 +99,7 @@ def plot_2(size, lengths, full, partial, no, name):
     plt.show()
 
 def plot(nnz, manual, cusparse, pytorch, name):
-    dir = "benchmark_results/"
+    dir = _RESULTS_DIR + "/"
     np.savez(dir + name +".npz", nnz=nnz, manual=manual,
                              cusparse=cusparse, pytorch=pytorch)
     plt.figure(figsize=(8,6))
@@ -130,7 +134,7 @@ def plot(nnz, manual, cusparse, pytorch, name):
     plt.show()
 
 def plot_bar_graph(size, lengths, full_lb, partial_lb, single_lb, name):
-    dir = "benchmark_results/"
+    dir = _RESULTS_DIR + "/"
 
 
     program_names = ['l.b (a,b,c)', 'l.b (a,b)', 'l.b (c)']
@@ -188,7 +192,7 @@ def load_and_plot2(file_names, plot_name):
     full_lb = []
     partial_lb = []
     single_lb = []
-    dir = "benchmark_results/"
+    dir = _RESULTS_DIR + "/"
     for file in file_names:
         data = np.load(dir + file + ".npz", allow_pickle=True)
         lengths_1 = data["lengths"].tolist()
@@ -206,7 +210,7 @@ def load_and_plot2(file_names, plot_name):
 
 
 def plot_bar_graph_2(size, lengths, full_lb, partial_lb, single_lb, name):
-    dir = "benchmark_results/"
+    dir = _RESULTS_DIR + "/"
 
     np.savez(dir + name +".npz", size, lengths=lengths, full_lb=full_lb,
                             partial_lb=partial_lb, single_lb=single_lb)

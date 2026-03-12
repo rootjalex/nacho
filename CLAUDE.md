@@ -73,19 +73,48 @@ GPU kernel generation from CIN → LLIR. Five components:
 
 Everything lives under `nacho::`. Backend code is in `nacho::backend::`. LLIR types are in `nacho::llir::`.
 
+## Setup
+
+```bash
+# Full setup (creates 'nacho' conda env, builds compiler + runtime)
+./setup.sh
+
+# Or just one component
+./setup.sh --compiler   # compiler only, no CUDA needed
+./setup.sh --runtime    # runtime only, needs CUDA + GPU
+```
+
+After setup, activate the environment: `conda activate nacho`
+
 ## Runtime (`runtime/`)
 
 The `runtime/` subdirectory (formerly the `sparse_gpu` repo) is the GPU runtime and benchmark suite. nacho generates CUDA kernel code via `CINLowerer`, which is placed into `runtime/src/` `.cu` files. The runtime compiles kernels with CUDA, exposes them via Python/nanobind, and benchmarks against cuSPARSE.
 
 Build systems are independent by default — nacho's CMakeLists.txt only builds the runtime when `-Dnacho_BUILD_RUNTIME=ON` is passed (requires CUDA).
 
-```bash
-# Build runtime Python package (requires CUDA)
-cd runtime && module load cuda && pip install .
+### Benchmarks
 
-# Or as part of nacho CMake build
-cmake -S . -B build -Dnacho_BUILD_RUNTIME=ON
-cmake --build build -j$(nproc)
+All benchmark commands can be run from the repo root (no `cd` needed). CUDA is auto-loaded.
+
+```bash
+conda activate nacho
+
+# Quick smoke test (~5 matrix pairs)
+python runtime/tests/run_benchmarks.py --quick
+
+# Specific benchmark(s)
+python runtime/tests/run_benchmarks.py csr_add spgemm
+
+# Custom matrix range
+python runtime/tests/run_benchmarks.py spgemm -s 500 -e 600
+
+# Full SuiteSparse sweep (1712 matrices), no plots
+python runtime/tests/run_benchmarks.py --no-plot
+
+# All benchmarks, full sweep (slow)
+python runtime/tests/run_benchmarks.py
 ```
+
+Available benchmarks: `csr_add`, `coo_add`, `spgemm`, `sparse_vectors`, `broadcast`.
 
 See `runtime/CLAUDE.md` for runtime-specific details.

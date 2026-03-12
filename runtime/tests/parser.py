@@ -3,8 +3,10 @@ import pandas as pd
 import torch
 import os
 
+_TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
+
 def matrix_list():
-    df = pd.read_csv("tests/suitesparse_stats.csv")
+    df = pd.read_csv(os.path.join(_TESTS_DIR, "suitesparse_stats.csv"))
 
     df.columns = ["name", "nnz", "percent_nnz", "total_elements", "rows", "columns"]
 

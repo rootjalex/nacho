@@ -8,24 +8,31 @@ GPU-accelerated sparse matrix computation library with Python bindings. Built wi
 
 ## Build & Run
 
-All commands should be run from the `runtime/` directory within the nacho monorepo.
+Preferred setup is via `./setup.sh --runtime` from the repo root (creates conda env, loads CUDA, installs everything). Otherwise:
 
 ```bash
 module load cuda
+pip install runtime/                          # from repo root
+pip install .                                 # or from runtime/ directory
 
-# Install (full build)
-pip install .
-
-# Development build (faster iteration)
+# Development build (faster iteration, from runtime/ directory)
 pip install nanobind scikit-build-core[pyproject] torch
 pip install --no-build-isolation -ve .
-
-# Run tests
-python tests/test_basic.py
-python tests/spgemm.py
-python tests/sparse_vectors.py
-python tests/coo_and_csr.py
 ```
+
+### Benchmarks
+
+Run from anywhere (CUDA is auto-loaded):
+
+```bash
+conda activate nacho
+python runtime/tests/run_benchmarks.py --quick              # smoke test
+python runtime/tests/run_benchmarks.py csr_add spgemm       # specific benchmarks
+python runtime/tests/run_benchmarks.py spgemm -s 500 -e 600 # custom range
+python runtime/tests/run_benchmarks.py                      # full sweep
+```
+
+Available: `csr_add`, `coo_add`, `spgemm`, `sparse_vectors`, `broadcast`.
 
 ## Architecture
 
