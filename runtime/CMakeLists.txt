@@ -21,6 +21,7 @@ set(NACHO_GENERATED_OPS
   sparse_vec_ab_pc
   dcsr_mul
   dcsr_add
+  csr_add
 )
 
 # Allow callers to provide a prebuilt compiler path. If omitted, default to

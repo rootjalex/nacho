@@ -159,6 +159,7 @@ if (nacho_BUILD_TESTING)
         sparse_vec_ab_pc
         dcsr_mul
         dcsr_add
+        csr_add
         format_inference
         lattice
         locator

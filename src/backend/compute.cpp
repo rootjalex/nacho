@@ -55,6 +55,9 @@ void ComputeKernelLowerer::add_partition_assignments(
 
     auto get_max_iterator = [&](const Index *idx) {
         TensorLowerer tlow(idx->tensor, idx->type);
+        if (!idx->is_sparse) {
+            return tlow.get_size_field(idx->level) - llir::lConst::make((int64_t)1);
+        }
         return get_partition_initializer_expr_for_boundary_cases(idx->level, tlow, true);
     };
 
@@ -165,6 +168,8 @@ std::vector<llir::Function::Argument> ComputeKernelLowerer::get_precompute_kerne
 
 llir::lStmt ComputeKernelLowerer::
     lower_precompute_function() {
+    declared_iter_symbols.clear();
+    declared_stop_symbols.clear();
     std::vector<std::string> generics = {"index_t", "value_t"};
 
     std::vector<llir::Function::Attribute> attributes = {
@@ -180,6 +185,24 @@ llir::lStmt ComputeKernelLowerer::
     ret_type = llir::Generic_t::make("void");
 
     std::vector<llir::lStmt> stmts;
+
+    auto collect_iter_stop_symbols = [&](const TensorLowerer &tensor) {
+        int levels = (int)tensor.tensor_type.format.levels.size();
+        for (int level = 0; level < levels; level++) {
+            declared_iter_symbols.insert(tensor.get_iter_name(level));
+            declared_stop_symbols.insert(tensor.get_stop_name(level));
+        }
+    };
+    collect_iter_stop_symbols(result_tensor);
+    for (const auto &it : operand_tensors) {
+        collect_iter_stop_symbols(it.second);
+    }
+    for (const auto &name : declared_iter_symbols) {
+        stmts.emplace_back(llir::Declare::make(index_t, name));
+    }
+    for (const auto &name : declared_stop_symbols) {
+        stmts.emplace_back(llir::Declare::make(index_t, name));
+    }
 
     // Add common initialization statements
     add_partition_assignments(stmts);
@@ -290,6 +313,8 @@ std::vector<llir::Function::Argument> ComputeKernelLowerer::get_compute_kernel_a
 
 llir::lStmt ComputeKernelLowerer::
     lower_compute_function() {
+    declared_iter_symbols.clear();
+    declared_stop_symbols.clear();
     llir::lType index_t = llir::Generic_t::make("index_t");
     llir::lType value_t = llir::Generic_t::make("value_t");
     std::vector<std::string> generics = {"index_t", "value_t"};
@@ -307,6 +332,24 @@ llir::lStmt ComputeKernelLowerer::
     ret_type = llir::Generic_t::make("void");
 
     std::vector<llir::lStmt> stmts;
+
+    auto collect_iter_stop_symbols = [&](const TensorLowerer &tensor) {
+        int levels = (int)tensor.tensor_type.format.levels.size();
+        for (int level = 0; level < levels; level++) {
+            declared_iter_symbols.insert(tensor.get_iter_name(level));
+            declared_stop_symbols.insert(tensor.get_stop_name(level));
+        }
+    };
+    collect_iter_stop_symbols(result_tensor);
+    for (const auto &it : operand_tensors) {
+        collect_iter_stop_symbols(it.second);
+    }
+    for (const auto &name : declared_iter_symbols) {
+        stmts.emplace_back(llir::Declare::make(index_t, name));
+    }
+    for (const auto &name : declared_stop_symbols) {
+        stmts.emplace_back(llir::Declare::make(index_t, name));
+    }
 
     // Add common initialization statements
     add_partition_assignments(stmts);
@@ -563,6 +606,26 @@ llir::lStmt ComputeKernelLowerer::lower_loop(
     }
 
     // llir::lExpr atleast_one_iter_cond;
+    auto emit_iter_decl_or_assign = [&](std::vector<llir::lStmt> &out,
+                                        const std::string &name,
+                                        llir::lExpr value) {
+        if (declared_iter_symbols.insert(name).second) {
+            out.push_back(llir::Declare::make(index_t, name, std::move(value)));
+        } else {
+            out.push_back(llir::Store::make(
+                llir::lVar::make(index_t, name), std::move(value)));
+        }
+    };
+    auto emit_stop_decl_or_assign = [&](std::vector<llir::lStmt> &out,
+                                        const std::string &name,
+                                        llir::lExpr value) {
+        if (declared_stop_symbols.insert(name).second) {
+            out.push_back(llir::Declare::make(index_t, name, std::move(value)));
+        } else {
+            out.push_back(llir::Store::make(
+                llir::lVar::make(index_t, name), std::move(value)));
+        }
+    };
 
     for (const auto &i : forall_iters) {
         const Index *idx = i.as<Index>();
@@ -653,11 +716,10 @@ llir::lStmt ComputeKernelLowerer::lower_loop(
                                              std::move(bound));
         }
 
-        stmts.push_back(llir::Declare::make(
-            index_t, tlower.get_iter_name(idx->level), start_value));
-        // This is const.
-        stmts.push_back(llir::Declare::make(
-            index_t, tlower.get_stop_name(idx->level), stop_value));
+        std::string iter_name = tlower.get_iter_name(idx->level);
+        emit_iter_decl_or_assign(stmts, iter_name, start_value);
+        std::string stop_name = tlower.get_stop_name(idx->level);
+        emit_stop_decl_or_assign(stmts, stop_name, stop_value);
 
            
         lExprPair p = {get_iter(idx->level), get_stop(idx->level)};
@@ -886,9 +948,12 @@ llir::lStmt ComputeKernelLowerer::lower_loop(
                     case_offset_write_cond = case_offset_write_cond || (llir::lVar::make(index_t, "thread_id") == llir::lVar::make(index_t, "max_thread_id"));
                 }
 
-                // Emit a row only if this iteration produced at least one
-                // inner-level output element (avoids empty sparse rows).
-                if (!next_level_count_start_name.empty()) {
+                // For sparse outer rows (e.g. DCSR), only emit when this
+                // iteration produced at least one inner output element.
+                // For dense outer rows (e.g. CSR), offsets must be emitted
+                // for every row, including empty rows.
+                if (!next_level_count_start_name.empty() &&
+                    result_tensor.is_sparse(forall->idx)) {
                     llir::lExpr next_level_count = llir::lVar::make(
                         index_t, (is_precompute ? "count_" : "offset_") +
                                      nextForall->idx);
@@ -1067,17 +1132,15 @@ llir::lStmt ComputeKernelLowerer::lower_loop(
                      const Index *idx = term.as<Index>();
                     internal_assert(idx) << term;
                     TensorLowerer tlower(idx->tensor, idx->type);
-                    stmts.push_back(
-                        llir::Declare::make(
-                            index_t,
-                            tlower.get_iter_name(idx->level),
-                            llir::lSelect::make(
-                                map_result_pos_to_operand_pos(forall, tlower,result_tensor.get_iter(idx->level)) != llir::lConst::make(-1),
-                                map_result_pos_to_operand_pos(forall, tlower,result_tensor.get_iter(idx->level)),
-                                tlower.get_size_field(idx->level)
-                            )
-                        )
-                    );
+                    std::string iter_name = tlower.get_iter_name(idx->level);
+                    emit_iter_decl_or_assign(
+                        stmts,
+                        iter_name,
+                        llir::lSelect::make(
+                            map_result_pos_to_operand_pos(forall, tlower,result_tensor.get_iter(idx->level)) != llir::lConst::make(-1),
+                            map_result_pos_to_operand_pos(forall, tlower,result_tensor.get_iter(idx->level)),
+                            tlower.get_size_field(idx->level)
+                        ));
                 }
             }
             // TODO: different eval for locators!!
@@ -1113,8 +1176,8 @@ llir::lStmt ComputeKernelLowerer::lower_loop(
                 // Iterators are the dense thing, this is necesary for reads
                 // later. Hopefully, copy propagation is good on this generated
                 // code.
-                stmts.push_back(llir::Declare::make(
-                    index_t, tlower.get_iter_name(idx->level), value));
+                std::string iter_name = tlower.get_iter_name(idx->level);
+                emit_iter_decl_or_assign(stmts, iter_name, value);
             }
 
             return stmts;

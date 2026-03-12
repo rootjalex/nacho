@@ -93,7 +93,9 @@ llir::lExpr BaseKernelLowerer::get_partition_initializer_expr_for_boundary_cases
     
     llir::lExpr init_value_expr = llir::lConst::make((int64_t)0) - (forall_level == current_sparse_intersection? 1 : 0);
     if(is_last_thread) {
-        init_value_expr = tensor.get_length_field(forall_idx)-1;
+        init_value_expr = tensor.is_sparse(forall_idx)
+                              ? tensor.get_length_field(forall_idx) - 1
+                              : tensor.get_size_field(forall_idx) - 1;
     }
     // For some cases initializers need to be the form
     // partitions.a_j_p[thread_id] = a.dim_j_offsets[Z.i_map_a[0]]-1;
@@ -159,7 +161,11 @@ llir::lExpr BaseKernelLowerer::get_partition_initializer_expr_for_boundary_cases
             init_value_expr = llir::lSelect::make(
                 check_expr,
                 init_value_expr,
-                is_last_thread? llir::lConst::make((int64_t)0) : tensor.get_length_field(forall_idx) -1
+                is_last_thread
+                    ? llir::lConst::make((int64_t)0)
+                    : (tensor.is_sparse(forall_idx)
+                           ? tensor.get_length_field(forall_idx) - 1
+                           : tensor.get_size_field(forall_idx) - 1)
             );
         }
     } 

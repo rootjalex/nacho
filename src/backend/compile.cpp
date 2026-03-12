@@ -488,10 +488,14 @@ namespace backend {
             index_t, "num_threads",
             llir::lVar::make(index_t, "num_blocks") *
                 llir::lVar::make(index_t, "threads_per_block")));
+        body_stmts.emplace_back(llir::RawCode::make(
+            "const cudaStream_t stream = cudaStreamPerThread;"));
 
         llir::lExpr num_blocks_var = llir::lVar::make(index_t, "num_blocks");
         llir::lExpr threads_per_block_var = llir::lVar::make(index_t, "threads_per_block");
         llir::lExpr num_threads_var = llir::lVar::make(index_t, "num_threads");
+        llir::lExpr stream_var = llir::lVar::make(
+            llir::Generic_t::make("cudaStream_t"), "stream");
 
         // For each phase, generate the host-side orchestration
         int num_phases = (int)phase_struct_infos.size();
@@ -551,9 +555,11 @@ namespace backend {
                 body_stmts.emplace_back(llir::RawCode::make(
                     "index_t total_work_" + std::to_string(phase) + ";"));
                 body_stmts.emplace_back(llir::RawCode::make(
-                    "cudaMemcpy(&total_work_" + std::to_string(phase) +
+                    "cudaMemcpyAsync(&total_work_" + std::to_string(phase) +
                     ", &T_work_offsets_prefix[" + prev_phase_outermost_nnz +
-                    "], sizeof(index_t), cudaMemcpyDeviceToHost);"));
+                    "], sizeof(index_t), cudaMemcpyDeviceToHost, stream);"));
+                body_stmts.emplace_back(llir::RawCode::make(
+                    "cudaStreamSynchronize(stream);"));
             }
 
             std::string total_work_name = "total_work_" + std::to_string(phase);
@@ -567,8 +573,8 @@ namespace backend {
                 partition_struct->name + "<index_t> " + partition_var + ";"));
             for (const auto &field : partition_struct->fields) {
                 body_stmts.emplace_back(llir::RawCode::make(
-                    "cudaMalloc((void**)&" + partition_var + "." + field.first +
-                    ", num_threads * sizeof(index_t));"));
+                    "cudaMallocAsync((void**)&" + partition_var + "." + field.first +
+                    ", num_threads * sizeof(index_t), stream);"));
             }
 
             // 3. Launch partition kernel
@@ -594,7 +600,9 @@ namespace backend {
                         body_stmts.emplace_back(llir::KernelLaunch::make(
                             ki.name, ki.template_args,
                             num_blocks_var, threads_per_block_var,
-                            std::move(launch_args)));
+                            std::move(launch_args),
+                            llir::lExpr(),
+                            stream_var));
                         break;
                     }
                 }
@@ -610,8 +618,8 @@ namespace backend {
                     counts_struct->name + "<index_t> " + counts_var + ";"));
                 for (const auto &field : counts_struct->fields) {
                     body_stmts.emplace_back(llir::RawCode::make(
-                        "cudaMalloc((void**)&" + counts_var + "." + field.first +
-                        ", num_threads * sizeof(index_t));"));
+                        "cudaMallocAsync((void**)&" + counts_var + "." + field.first +
+                        ", num_threads * sizeof(index_t), stream);"));
                 }
 
                 // 5. Launch precompute kernel
@@ -637,7 +645,9 @@ namespace backend {
                         body_stmts.emplace_back(llir::KernelLaunch::make(
                             ki.name, ki.template_args,
                             num_blocks_var, threads_per_block_var,
-                            std::move(launch_args)));
+                            std::move(launch_args),
+                            llir::lExpr(),
+                            stream_var));
                         break;
                     }
                 }
@@ -648,10 +658,10 @@ namespace backend {
                     body_stmts.emplace_back(llir::RawCode::make(
                         "index_t* " + prefix_var + ";"));
                     body_stmts.emplace_back(llir::RawCode::make(
-                        "cudaMalloc((void**)&" + prefix_var +
-                        ", (num_threads + 1) * sizeof(index_t));"));
+                        "cudaMallocAsync((void**)&" + prefix_var +
+                        ", (num_threads + 1) * sizeof(index_t), stream);"));
                     body_stmts.emplace_back(llir::RawCode::make(
-                        "cudaMemset(" + prefix_var + ", 0, (num_threads + 1) * sizeof(index_t));"));
+                        "cudaMemsetAsync(" + prefix_var + ", 0, (num_threads + 1) * sizeof(index_t), stream);"));
 
                     // CUB two-pass
                     std::string temp_var = "d_temp_storage_" + std::to_string(phase) + "_" + field.first;
@@ -663,25 +673,26 @@ namespace backend {
                     body_stmts.emplace_back(llir::RawCode::make(
                         "cub::DeviceScan::InclusiveSum(" + temp_var + ", " + temp_bytes +
                         ", " + counts_var + "." + field.first +
-                        ", " + prefix_var + " + 1, num_threads);"));
+                        ", " + prefix_var + " + 1, num_threads, stream);"));
                     body_stmts.emplace_back(llir::RawCode::make(
-                        "cudaMalloc(&" + temp_var + ", " + temp_bytes + ");"));
+                        "cudaMallocAsync(&" + temp_var + ", " + temp_bytes + ", stream);"));
                     body_stmts.emplace_back(llir::RawCode::make(
                         "cub::DeviceScan::InclusiveSum(" + temp_var + ", " + temp_bytes +
                         ", " + counts_var + "." + field.first +
-                        ", " + prefix_var + " + 1, num_threads);"));
+                        ", " + prefix_var + " + 1, num_threads, stream);"));
                     body_stmts.emplace_back(llir::RawCode::make(
-                        "cudaFree(" + temp_var + ");"));
+                        "cudaFreeAsync(" + temp_var + ", stream);"));
 
                     // Replace the count field with the prefix-summed version
                     body_stmts.emplace_back(llir::RawCode::make(
-                        "cudaFree(" + counts_var + "." + field.first + ");"));
+                        "cudaFreeAsync(" + counts_var + "." + field.first + ", stream);"));
                     body_stmts.emplace_back(llir::RawCode::make(
                         counts_var + "." + field.first + " = " + prefix_var + ";"));
                 }
 
                 // 7. Read nnz from device
                 // For each sparse dimension in the result, read the total count
+                bool has_nnz_read = false;
                 for (int lvl = 0; lvl <= phase_info.current_sparse_intersection; lvl++) {
                     auto idx = result_tensor.tensor_type.format.levels[lvl].index;
                     if (is_sparse_format(result_tensor.tensor_type.format.lvlfmt_of(idx))) {
@@ -691,9 +702,14 @@ namespace backend {
                         body_stmts.emplace_back(llir::RawCode::make(
                             "index_t " + nnz_name + ";"));
                         body_stmts.emplace_back(llir::RawCode::make(
-                            "cudaMemcpy(&" + nnz_name + ", " + prefix_var +
-                            " + num_threads, sizeof(index_t), cudaMemcpyDeviceToHost);"));
+                            "cudaMemcpyAsync(&" + nnz_name + ", " + prefix_var +
+                            " + num_threads, sizeof(index_t), cudaMemcpyDeviceToHost, stream);"));
+                        has_nnz_read = true;
                     }
+                }
+                if (has_nnz_read) {
+                    body_stmts.emplace_back(llir::RawCode::make(
+                        "cudaStreamSynchronize(stream);"));
                 }
 
                 // 8. Allocate output tensor arrays based on nnz
@@ -705,9 +721,9 @@ namespace backend {
                     if (is_sparse_format(result_tensor.tensor_type.format.lvlfmt_of(idx))) {
                         std::string nnz_name = "nnz_" + idx + "_" + std::to_string(phase);
                         body_stmts.emplace_back(llir::RawCode::make(
-                            "cudaMalloc((void**)&" + result_tensor.tensor_name + "." +
+                            "cudaMallocAsync((void**)&" + result_tensor.tensor_name + "." +
                             result_tensor.get_indices_field_name(idx) +
-                            ", " + nnz_name + " * sizeof(index_t));"));
+                            ", " + nnz_name + " * sizeof(index_t), stream);"));
                     }
                 }
                 // Allocate values if this is the last phase
@@ -723,8 +739,8 @@ namespace backend {
                     }
                     if (!values_nnz.empty()) {
                         body_stmts.emplace_back(llir::RawCode::make(
-                            "cudaMalloc((void**)&" + result_tensor.tensor_name + ".values" +
-                            ", " + values_nnz + " * sizeof(value_t));"));
+                            "cudaMallocAsync((void**)&" + result_tensor.tensor_name + ".values" +
+                            ", " + values_nnz + " * sizeof(value_t), stream);"));
                     }
                 }
 
@@ -743,13 +759,13 @@ namespace backend {
                                           result_tensor.get_size_field_name(parent_idx) + " + 1";
                         }
                         body_stmts.emplace_back(llir::RawCode::make(
-                            "cudaMalloc((void**)&" + result_tensor.tensor_name + "." +
+                            "cudaMallocAsync((void**)&" + result_tensor.tensor_name + "." +
                             result_tensor.get_offsets_field_name(idx) +
-                            ", (" + offsets_size + ") * sizeof(index_t));"));
+                            ", (" + offsets_size + ") * sizeof(index_t), stream);"));
                         body_stmts.emplace_back(llir::RawCode::make(
-                            "cudaMemset(" + result_tensor.tensor_name + "." +
+                            "cudaMemsetAsync(" + result_tensor.tensor_name + "." +
                             result_tensor.get_offsets_field_name(idx) +
-                            ", 0, (" + offsets_size + ") * sizeof(index_t));"));
+                            ", 0, (" + offsets_size + ") * sizeof(index_t), stream);"));
                     }
                 }
 
@@ -813,12 +829,12 @@ namespace backend {
                 guard += "  " + result_tensor.tensor_name + ".nnz = 0;\n";
                 // Free partition and count structs
                 for (const auto &field : partition_struct->fields) {
-                    guard += "  cudaFree(" + partition_var + "." + field.first + ");\n";
+                    guard += "  cudaFreeAsync(" + partition_var + "." + field.first + ", stream);\n";
                 }
                 if (phase_info.has_precompute) {
                     const llir::Struct_t *counts_struct = phase_info.counts_struct.as<llir::Struct_t>();
                     for (const auto &field : counts_struct->fields) {
-                        guard += "  cudaFree(" + counts_var + "." + field.first + ");\n";
+                        guard += "  cudaFreeAsync(" + counts_var + "." + field.first + ", stream);\n";
                     }
                 }
                 guard += "  return;\n";
@@ -845,8 +861,8 @@ namespace backend {
                         if (base_lowerer.exists_field_in_result_to_operand_pos_map(forall, tensor)) {
                             std::string field = tensor.get_iterator_suffix(forall_idx);
                             body_stmts.emplace_back(llir::RawCode::make(
-                                "cudaMalloc((void**)&" + pos_map_var + "." + field +
-                                ", " + phase_outermost_nnz + " * sizeof(index_t));"));
+                                "cudaMallocAsync((void**)&" + pos_map_var + "." + field +
+                                ", " + phase_outermost_nnz + " * sizeof(index_t), stream);"));
                         }
                     }
                 }
@@ -859,8 +875,8 @@ namespace backend {
                 body_stmts.emplace_back(llir::RawCode::make(
                     "index_t* T_work_offsets;"));
                 body_stmts.emplace_back(llir::RawCode::make(
-                    "cudaMalloc((void**)&T_work_offsets, " + phase_outermost_nnz +
-                    " * sizeof(index_t));"));
+                    "cudaMallocAsync((void**)&T_work_offsets, " + phase_outermost_nnz +
+                    " * sizeof(index_t), stream);"));
             }
 
             // 9. Launch compute kernel
@@ -886,7 +902,9 @@ namespace backend {
                     body_stmts.emplace_back(llir::KernelLaunch::make(
                         ki.name, ki.template_args,
                         num_blocks_var, threads_per_block_var,
-                        std::move(launch_args)));
+                        std::move(launch_args),
+                        llir::lExpr(),
+                        stream_var));
                     break;
                 }
             }
@@ -900,27 +918,27 @@ namespace backend {
                 body_stmts.emplace_back(llir::RawCode::make(
                     "index_t* T_work_offsets_prefix;"));
                 body_stmts.emplace_back(llir::RawCode::make(
-                    "cudaMalloc((void**)&T_work_offsets_prefix, (" +
-                    tw_size + " + 1) * sizeof(index_t));"));
+                    "cudaMallocAsync((void**)&T_work_offsets_prefix, (" +
+                    tw_size + " + 1) * sizeof(index_t), stream);"));
                 body_stmts.emplace_back(llir::RawCode::make(
-                    "cudaMemset(T_work_offsets_prefix, 0, (" +
-                    tw_size + " + 1) * sizeof(index_t));"));
+                    "cudaMemsetAsync(T_work_offsets_prefix, 0, (" +
+                    tw_size + " + 1) * sizeof(index_t), stream);"));
                 body_stmts.emplace_back(llir::RawCode::make(
                     "void* " + temp_var + " = nullptr;"));
                 body_stmts.emplace_back(llir::RawCode::make(
                     "size_t " + temp_bytes + " = 0;"));
                 body_stmts.emplace_back(llir::RawCode::make(
                     "cub::DeviceScan::InclusiveSum(" + temp_var + ", " + temp_bytes +
-                    ", T_work_offsets, T_work_offsets_prefix + 1, " + tw_size + ");"));
+                    ", T_work_offsets, T_work_offsets_prefix + 1, " + tw_size + ", stream);"));
                 body_stmts.emplace_back(llir::RawCode::make(
-                    "cudaMalloc(&" + temp_var + ", " + temp_bytes + ");"));
+                    "cudaMallocAsync(&" + temp_var + ", " + temp_bytes + ", stream);"));
                 body_stmts.emplace_back(llir::RawCode::make(
                     "cub::DeviceScan::InclusiveSum(" + temp_var + ", " + temp_bytes +
-                    ", T_work_offsets, T_work_offsets_prefix + 1, " + tw_size + ");"));
+                    ", T_work_offsets, T_work_offsets_prefix + 1, " + tw_size + ", stream);"));
                 body_stmts.emplace_back(llir::RawCode::make(
-                    "cudaFree(" + temp_var + ");"));
+                    "cudaFreeAsync(" + temp_var + ", stream);"));
                 body_stmts.emplace_back(llir::RawCode::make(
-                    "cudaFree(T_work_offsets);"));
+                    "cudaFreeAsync(T_work_offsets, stream);"));
                 // Reassign so next phase's kernels use the prefix sum result
                 body_stmts.emplace_back(llir::RawCode::make(
                     "T_work_offsets = T_work_offsets_prefix;"));
@@ -933,7 +951,7 @@ namespace backend {
             // 10. Free partition struct intermediates
             for (const auto &field : partition_struct->fields) {
                 body_stmts.emplace_back(llir::RawCode::make(
-                    "cudaFree(" + partition_var + "." + field.first + ");"));
+                    "cudaFreeAsync(" + partition_var + "." + field.first + ", stream);"));
             }
 
             // Free count struct intermediates (if precompute exists and this is the last phase)
@@ -942,7 +960,7 @@ namespace backend {
                 const llir::Struct_t *counts_struct = phase_info.counts_struct.as<llir::Struct_t>();
                 for (const auto &field : counts_struct->fields) {
                     body_stmts.emplace_back(llir::RawCode::make(
-                        "cudaFree(" + counts_var + "." + field.first + ");"));
+                        "cudaFreeAsync(" + counts_var + "." + field.first + ", stream);"));
                 }
             }
 

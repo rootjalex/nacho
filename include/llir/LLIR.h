@@ -447,11 +447,15 @@ struct KernelLaunch : lStmtNode<KernelLaunch> {
     std::vector<std::string> template_args;
     lExpr grid_dim;
     lExpr block_dim;
+    lExpr shared_mem;
+    lExpr stream;
     std::vector<lExpr> args;
 
     static lStmt make(std::string kernel_name,
                       std::vector<std::string> template_args, lExpr grid_dim,
-                      lExpr block_dim, std::vector<lExpr> args);
+                      lExpr block_dim, std::vector<lExpr> args,
+                      lExpr shared_mem = lExpr(),
+                      lExpr stream = lExpr());
 
     static const lStmtEnum node_type = lStmtEnum::KernelLaunch;
 };

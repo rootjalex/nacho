@@ -109,6 +109,19 @@ void test_dcsr_add() {
     compile_and_lower("DCSR Add: A+B  [runtime: csr_add.cu]", a + b);
 }
 
+// Element-wise add: A ∪ B  (dense i, sparse j)
+void test_csr_add() {
+    Format csr = Format::ordered({
+        {"i", LevelFormat::Dense},
+        {"j", LevelFormat::Compressed},
+    });
+    TensorType csr_f32(csr, dType::Float32);
+
+    Expr a = Tensor::make(csr_f32, "A");
+    Expr b = Tensor::make(csr_f32, "B");
+    compile_and_lower("CSR Add: A+B  [generated]", a + b);
+}
+
 // ===========================================================================
 // Format Inference Tests
 // ===========================================================================
@@ -301,6 +314,14 @@ const std::map<std::string, ExprBuilder> EXPRESSIONS = {
         TensorType dcsr_f32(dcsr, dType::Float32);
         return Tensor::make(dcsr_f32, "A") + Tensor::make(dcsr_f32, "B");
     }},
+    {"csr_add", []() {
+        Format csr = Format::ordered({
+            {"i", LevelFormat::Dense},
+            {"j", LevelFormat::Compressed},
+        });
+        TensorType csr_f32(csr, dType::Float32);
+        return Tensor::make(csr_f32, "A") + Tensor::make(csr_f32, "B");
+    }},
 };
 // clang-format on
 
@@ -416,6 +437,7 @@ const std::map<std::string, TestFunc> TESTS = {
     {"sparse_vec_ab_pc",  test_sparse_vec_ab_pc},
     {"dcsr_mul",          test_dcsr_mul},
     {"dcsr_add",          test_dcsr_add},
+    {"csr_add",           test_csr_add},
     {"format_inference",  test_format_inference},
     {"lattice",           test_lattice},
     {"locator",           test_locator_optimization},

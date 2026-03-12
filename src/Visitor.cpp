@@ -205,6 +205,12 @@ void Visitor::visit(const llir::Accumulate *node) {
 void Visitor::visit(const llir::KernelLaunch *node) {
     node->grid_dim.accept(this);
     node->block_dim.accept(this);
+    if (node->shared_mem.defined()) {
+        node->shared_mem.accept(this);
+    }
+    if (node->stream.defined()) {
+        node->stream.accept(this);
+    }
     for (const auto &arg : node->args) {
         arg.accept(this);
     }

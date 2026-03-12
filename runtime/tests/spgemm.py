@@ -7,31 +7,35 @@ import numpy as np
 import random
 from coo_and_csr import failure_reason
 
-def spgemm_benchmark(A_CSR, B_CSR, use_cusparse):
-    torch.cuda.synchronize()
-    iter = 14
-    times =[]
-    for i in range(iter):
-        start = torch.cuda.Event(enable_timing=True)
-        end = torch.cuda.Event(enable_timing=True, blocking=True)
-        start.record()
-    
-        C = nacho_runtime.spgemm(
-            A_CSR,
-            B_CSR,
-            use_cusparse,
-        )
-        end.record()
-        torch.cuda.synchronize()
-        times.append(start.elapsed_time(end))
-        
+def _time_on_stream(op, iterations=14, trim=2):
+    bench_stream = torch.cuda.Stream()
+    bench_stream.wait_stream(torch.cuda.current_stream())
+    times = []
+    C = None
+
+    with torch.cuda.stream(bench_stream):
+        for _ in range(iterations):
+            start = torch.cuda.Event(enable_timing=True)
+            end = torch.cuda.Event(enable_timing=True)
+            start.record(bench_stream)
+            C = op()
+            end.record(bench_stream)
+            end.synchronize()
+            times.append(start.elapsed_time(end))
+
+    torch.cuda.current_stream().wait_stream(bench_stream)
+
     arr = np.array(times)
-
-    trimmed = np.sort(arr)[2:-2]
-    np.std(trimmed)
+    trimmed = np.sort(arr)[trim:-trim] if arr.size > 2 * trim else arr
     avg = trimmed.mean()
-
     return C, avg
+
+def spgemm_benchmark(A_CSR, B_CSR, use_cusparse):
+    return _time_on_stream(
+        lambda: nacho_runtime.spgemm(A_CSR, B_CSR, use_cusparse),
+        iterations=14,
+        trim=2,
+    )
 
 
 

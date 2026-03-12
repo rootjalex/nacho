@@ -20,3 +20,6 @@ CVector<int, int, float> nacho_sparse_vec_ab_pc_nb(CVector<int, int, float> A,
 DCSR<int, float> nacho_dcsr_mul_nb(DCSR<int, float> A, DCSR<int, float> B);
 
 DCSR<int, float> nacho_dcsr_add_nb(DCSR<int, float> A, DCSR<int, float> B);
+
+// CSR operations (CSR in, CSR out)
+CSR<int, float> nacho_csr_add_nb(CSR<int, float> A, CSR<int, float> B);

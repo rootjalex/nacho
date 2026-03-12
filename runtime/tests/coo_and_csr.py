@@ -5,6 +5,30 @@ from parser import parse_matrix, matrix_list , parse_vector
 from plotter import plot, load_and_plot, plot_3, plot_2, plot_bar_graph, plot_bar_graph_2, load_and_plot2
 import numpy as np
 
+def _time_on_stream(op, iterations=14, trim=2):
+    bench_stream = torch.cuda.Stream()
+    bench_stream.wait_stream(torch.cuda.current_stream())
+    times = []
+    C = None
+
+    with torch.cuda.stream(bench_stream):
+        for _ in range(iterations):
+            start = torch.cuda.Event(enable_timing=True)
+            end = torch.cuda.Event(enable_timing=True)
+            start.record(bench_stream)
+            C = op()
+            end.record(bench_stream)
+            end.synchronize()
+            times.append(start.elapsed_time(end))
+
+    # Hand off work completion so callers can safely consume C on default stream.
+    torch.cuda.current_stream().wait_stream(bench_stream)
+
+    arr = np.array(times)
+    trimmed = np.sort(arr)[trim:-trim] if arr.size > 2 * trim else arr
+    avg = trimmed.mean()
+    return C, avg
+
 
 def benchmark_coo_add(start, end, save_and_plot = True):
     df = matrix_list()
@@ -170,78 +194,21 @@ def benchmark_csr_add(start,end, save_and_plot=True):
 
 
 def csr_add(A_CSR, B_CSR, use_cusparse):
-    torch.cuda.synchronize()
-    iter = 14
-    times =[]
-    for i in range(iter):
-        start = torch.cuda.Event(enable_timing=True)
-        end = torch.cuda.Event(enable_timing=True, blocking=True)
-        start.record()
-    
-        C = nacho_runtime.gpu_csr_add_f32(
-            A_CSR,
-            B_CSR,
-            use_cusparse,
-        )
-        end.record()
-        torch.cuda.synchronize()
-        times.append(start.elapsed_time(end))
-
-    arr = np.array(times)
-
-    trimmed = np.sort(arr)[2:-2]
-    avg = trimmed.mean()
-
-    return C, avg
+    return _time_on_stream(
+        lambda: nacho_runtime.gpu_csr_add_f32(A_CSR, B_CSR, use_cusparse),
+        iterations=14,
+        trim=2,
+    )
 
 def coo_add(A_COO, B_COO, use_pytorch):
-    torch.cuda.synchronize()
-    iter = 14
-    times =[]
-    for i in range(iter):
-        start = torch.cuda.Event(enable_timing=True)
-        end = torch.cuda.Event(enable_timing=True, blocking=True)
-        start.record()
-
-        if use_pytorch:
-            C = (A_COO + B_COO).coalesce()
-
-        else:
-            C = nacho_runtime.gpu_coo_add_f32(
-                A_COO,
-                B_COO,
-            )
-        end.record()
-        torch.cuda.synchronize()
-        times.append(start.elapsed_time(end))
-
-    arr = np.array(times)
-
-    trimmed = np.sort(arr)[2:-2]
-    avg = trimmed.mean()
-
-    return C, avg
+    if use_pytorch:
+        op = lambda: (A_COO + B_COO).coalesce()
+    else:
+        op = lambda: nacho_runtime.gpu_coo_add_f32(A_COO, B_COO)
+    return _time_on_stream(op, iterations=14, trim=2)
 
 def torch_add(A,B):
-    torch.cuda.synchronize()
-    iter = 14
-    times =[]
-    for i in range(iter):
-        start = torch.cuda.Event(enable_timing=True)
-        end = torch.cuda.Event(enable_timing=True, blocking=True)
-        start.record()
-    
-        C = A + B
-        end.record()
-        torch.cuda.synchronize()
-        times.append(start.elapsed_time(end))
-
-    arr = np.array(times)
-
-    trimmed = np.sort(arr)[2:-2]
-    avg = trimmed.mean()
-
-    return C, avg
+    return _time_on_stream(lambda: A + B, iterations=14, trim=2)
 
 
 

@@ -18,6 +18,15 @@ static void alloc_empty_dcsr(int *&row_indices, int *&row_offsets,
     CHECK_CUDA(cudaMalloc((void **)&values, sizeof(float)));
 }
 
+// Helper: allocate minimal buffers for empty CSR results
+static void alloc_empty_csr(int nrows, int *&row_offsets,
+                            int *&col_indices, float *&values) {
+    CHECK_CUDA(cudaMalloc((void **)&row_offsets, sizeof(int) * (nrows + 1)));
+    CHECK_CUDA(cudaMemset(row_offsets, 0, sizeof(int) * (nrows + 1)));
+    CHECK_CUDA(cudaMalloc((void **)&col_indices, sizeof(int)));
+    CHECK_CUDA(cudaMalloc((void **)&values, sizeof(float)));
+}
+
 // ===== Sparse vector 2-operand: a * b =====
 
 CVector<int, int, float> nacho_sparse_vec_mul_nb(CVector<int, int, float> A,
@@ -190,4 +199,33 @@ DCSR<int, float> nacho_dcsr_add_nb(DCSR<int, float> A, DCSR<int, float> B) {
                              out_dim_j_indices, out_values,
                              A.nrows, A.ncols,
                              out_dim_i_length, out_nnz);
+}
+
+// ===== CSR 2-operand: A + B =====
+
+CSR<int, float> nacho_csr_add_nb(CSR<int, float> A, CSR<int, float> B) {
+    int out_nnz;
+    int *out_dim_j_offsets;
+    int *out_dim_j_indices;
+    float *out_values;
+
+    csr_add<int, float>(
+        A.shape(0), A.shape(1),
+        (int *)A.indptr.data(), (int)A.indices.shape(0),
+        (int *)A.indices.data(), (float *)A.data.data(),
+        (int)A.indices.shape(0),
+        B.shape(0), B.shape(1),
+        (int *)B.indptr.data(), (int)B.indices.shape(0),
+        (int *)B.indices.data(), (float *)B.data.data(),
+        (int)B.indices.shape(0),
+        A.shape(0), A.shape(1),
+        out_nnz, out_dim_j_indices, out_dim_j_offsets, out_values);
+
+    if (out_nnz == 0) {
+        alloc_empty_csr(A.shape(0), out_dim_j_offsets, out_dim_j_indices,
+                        out_values);
+    }
+
+    return CSR<int, float>(out_dim_j_offsets, out_dim_j_indices, out_values,
+                           A.shape(0), A.shape(1), out_nnz);
 }

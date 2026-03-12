@@ -2,12 +2,14 @@
 import pytest
 import random
 import torch
-from nacho_runtime import CVector, DCSR
+from conftest import make_random_csr
+from nacho_runtime import CVector, CSR, DCSR
 from nacho_runtime import (
     nacho_sparse_vec_mul,
     nacho_sparse_vec_add,
     nacho_sparse_vec_apb_c,
     nacho_sparse_vec_ab_pc,
+    nacho_csr_add,
     nacho_dcsr_mul,
     nacho_dcsr_add,
 )
@@ -29,6 +31,61 @@ def make_dcsr(row_indices, row_offsets, col_indices, values, nrows, ncols):
     ci = torch.tensor(col_indices, dtype=torch.int32, device="cuda")
     v = torch.tensor(values, dtype=torch.float32, device="cuda")
     return DCSR(ri, ro, ci, v, nrows, ncols)
+
+
+def make_csr(row_offsets, col_indices, values, nrows, ncols):
+    """Create a CSR from Python lists."""
+    ro = torch.tensor(row_offsets, dtype=torch.int32, device="cuda")
+    ci = torch.tensor(col_indices, dtype=torch.int32, device="cuda")
+    v = torch.tensor(values, dtype=torch.float32, device="cuda")
+    shape = torch.tensor([nrows, ncols], dtype=torch.int32)
+    return CSR(ro, ci, v, shape)
+
+
+def torch_csr_to_nb(t):
+    """Convert torch sparse CSR tensor to runtime CSR."""
+    return CSR(
+        t.crow_indices().to(torch.int32),
+        t.col_indices().to(torch.int32),
+        t.values().to(torch.float32),
+        torch.tensor([t.shape[0], t.shape[1]], dtype=torch.int32),
+    )
+
+
+def cvector_to_dense(vec):
+    """Convert CVector to dense CUDA tensor."""
+    dense = torch.zeros(vec.size, dtype=torch.float32, device="cuda")
+    if vec.indices.numel() > 0:
+        dense[vec.indices.to(torch.int64)] = vec.data
+    return dense
+
+
+def dcsr_to_dense(mat):
+    """Convert DCSR to dense CUDA tensor."""
+    dense = torch.zeros((mat.nrows, mat.ncols), dtype=torch.float32, device="cuda")
+    ri = mat.row_indices
+    ro = mat.row_offsets
+    ci = mat.col_indices
+    vals = mat.data
+    for i in range(ri.shape[0]):
+        row = int(ri[i].item())
+        start = int(ro[i].item())
+        end = int(ro[i + 1].item())
+        if end > start:
+            dense[row, ci[start:end].to(torch.int64)] = vals[start:end]
+    return dense
+
+
+def csr_to_dense(mat):
+    """Convert CSR to dense CUDA tensor."""
+    nrows = int(mat.shape[0].item())
+    ncols = int(mat.shape[1].item())
+    return torch.sparse_csr_tensor(
+        mat.indptr.to(torch.int64),
+        mat.indices.to(torch.int64),
+        mat.data,
+        size=(nrows, ncols),
+    ).to_dense()
 
 
 def random_sparse_vec(size, nnz, seed=None):
@@ -207,11 +264,9 @@ class TestNachoSparseVecMul:
         B = make_cvector(b_idx, b_val, size)
         result = nacho_sparse_vec_mul(A, B)
         torch.cuda.synchronize()
-        ref_idx, ref_val = reference_sparse_vec_mul(a_idx, a_val, b_idx, b_val)
-        assert result.indices.shape[0] == len(ref_idx)
-        if len(ref_idx) > 0:
-            assert result.indices.cpu().tolist() == ref_idx
-            assert pytest.approx(result.data.cpu().tolist(), rel=1e-4) == ref_val
+        got_dense = cvector_to_dense(result)
+        expected_dense = cvector_to_dense(A) * cvector_to_dense(B)
+        assert torch.allclose(got_dense, expected_dense, rtol=1e-4, atol=1e-5)
 
 
 # ===== sparse_vec_add tests =====
@@ -260,11 +315,9 @@ class TestNachoSparseVecAdd:
         B = make_cvector(b_idx, b_val, size)
         result = nacho_sparse_vec_add(A, B)
         torch.cuda.synchronize()
-        ref_idx, ref_val = reference_sparse_vec_add(a_idx, a_val, b_idx, b_val)
-        assert result.indices.shape[0] == len(ref_idx)
-        if len(ref_idx) > 0:
-            assert result.indices.cpu().tolist() == ref_idx
-            assert pytest.approx(result.data.cpu().tolist(), rel=1e-4) == ref_val
+        got_dense = cvector_to_dense(result)
+        expected_dense = cvector_to_dense(A) + cvector_to_dense(B)
+        assert torch.allclose(got_dense, expected_dense, rtol=1e-4, atol=1e-5)
 
 
 # ===== sparse_vec_apb_c tests =====
@@ -305,13 +358,9 @@ class TestNachoSparseVecApbC:
         C = make_cvector(c_idx, c_val, size)
         result = nacho_sparse_vec_apb_c(A, B, C)
         torch.cuda.synchronize()
-        ref_idx, ref_val = reference_sparse_vec_apb_c(
-            a_idx, a_val, b_idx, b_val, c_idx, c_val
-        )
-        assert result.indices.shape[0] == len(ref_idx)
-        if len(ref_idx) > 0:
-            assert result.indices.cpu().tolist() == ref_idx
-            assert pytest.approx(result.data.cpu().tolist(), rel=1e-4) == ref_val
+        got_dense = cvector_to_dense(result)
+        expected_dense = (cvector_to_dense(A) + cvector_to_dense(B)) * cvector_to_dense(C)
+        assert torch.allclose(got_dense, expected_dense, rtol=1e-4, atol=1e-5)
 
 
 # ===== sparse_vec_ab_pc tests =====
@@ -354,13 +403,49 @@ class TestNachoSparseVecAbPc:
         C = make_cvector(c_idx, c_val, size)
         result = nacho_sparse_vec_ab_pc(A, B, C)
         torch.cuda.synchronize()
-        ref_idx, ref_val = reference_sparse_vec_ab_pc(
-            a_idx, a_val, b_idx, b_val, c_idx, c_val
+        got_dense = cvector_to_dense(result)
+        expected_dense = (cvector_to_dense(A) * cvector_to_dense(B)) + cvector_to_dense(C)
+        assert torch.allclose(got_dense, expected_dense, rtol=1e-4, atol=1e-5)
+
+
+# ===== dcsr_mul tests =====
+
+# ===== csr_add tests =====
+
+class TestNachoCsrAdd:
+    """Tests for the nacho-generated csr_add operation."""
+
+    def test_basic_union(self):
+        A = make_csr([0, 1, 2], [0, 1], [1.0, 2.0], 2, 3)
+        B = make_csr([0, 1, 2], [1, 2], [3.0, 4.0], 2, 3)
+        result = nacho_csr_add(A, B)
+        expected = torch.tensor(
+            [[1.0, 3.0, 0.0],
+             [0.0, 2.0, 4.0]],
+            dtype=torch.float32,
+            device="cuda",
         )
-        assert result.indices.shape[0] == len(ref_idx)
-        if len(ref_idx) > 0:
-            assert result.indices.cpu().tolist() == ref_idx
-            assert pytest.approx(result.data.cpu().tolist(), rel=1e-4) == ref_val
+        assert torch.allclose(csr_to_dense(result), expected, rtol=1e-5, atol=1e-6)
+
+    @pytest.mark.parametrize("seed", range(20))
+    def test_random_correctness(self, seed):
+        rng = random.Random(seed)
+        nrows = rng.randint(5, 100)
+        ncols = rng.randint(5, 100)
+        max_nnz = max(0, min(5, ncols))
+        A_torch = make_random_csr(
+            nrows, ncols, nnz_per_row_range=(0, max_nnz), seed=seed * 1000
+        )
+        B_torch = make_random_csr(
+            nrows, ncols, nnz_per_row_range=(0, max_nnz), seed=seed * 1000 + 1
+        )
+        A = torch_csr_to_nb(A_torch)
+        B = torch_csr_to_nb(B_torch)
+        result = nacho_csr_add(A, B)
+        torch.cuda.synchronize()
+        got_dense = csr_to_dense(result)
+        expected_dense = (A_torch + B_torch).to_dense()
+        assert torch.allclose(got_dense, expected_dense, rtol=1e-4, atol=1e-5)
 
 
 # ===== dcsr_mul tests =====
@@ -417,17 +502,9 @@ class TestNachoDcsrMul:
         B = make_dcsr(b_ri, b_ro, b_ci, b_val, nrows, ncols)
         result = nacho_dcsr_mul(A, B)
         torch.cuda.synchronize()
-
-        ref_ri, ref_ro, ref_ci, ref_val = reference_dcsr_mul(
-            a_ri, a_ro, a_ci, a_val, b_ri, b_ro, b_ci, b_val
-        )
-
-        got_nnz = result.col_indices.shape[0]
-        assert got_nnz == len(ref_ci), f"nnz mismatch: got {got_nnz}, expected {len(ref_ci)}"
-        if got_nnz > 0:
-            assert result.row_indices.cpu().tolist() == ref_ri
-            assert result.col_indices.cpu().tolist() == ref_ci
-            assert pytest.approx(result.data.cpu().tolist(), rel=1e-4) == ref_val
+        got_dense = dcsr_to_dense(result)
+        expected_dense = dcsr_to_dense(A) * dcsr_to_dense(B)
+        assert torch.allclose(got_dense, expected_dense, rtol=1e-4, atol=1e-5)
 
 
 # ===== dcsr_add tests =====
@@ -480,14 +557,6 @@ class TestNachoDcsrAdd:
         B = make_dcsr(b_ri, b_ro, b_ci, b_val, nrows, ncols)
         result = nacho_dcsr_add(A, B)
         torch.cuda.synchronize()
-
-        ref_ri, ref_ro, ref_ci, ref_val = reference_dcsr_add(
-            a_ri, a_ro, a_ci, a_val, b_ri, b_ro, b_ci, b_val
-        )
-
-        got_nnz = result.col_indices.shape[0]
-        assert got_nnz == len(ref_ci), f"nnz mismatch: got {got_nnz}, expected {len(ref_ci)}"
-        if got_nnz > 0:
-            assert result.row_indices.cpu().tolist() == ref_ri
-            assert result.col_indices.cpu().tolist() == ref_ci
-            assert pytest.approx(result.data.cpu().tolist(), rel=1e-4) == ref_val
+        got_dense = dcsr_to_dense(result)
+        expected_dense = dcsr_to_dense(A) + dcsr_to_dense(B)
+        assert torch.allclose(got_dense, expected_dense, rtol=1e-4, atol=1e-5)

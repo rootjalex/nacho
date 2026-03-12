@@ -20,6 +20,10 @@ namespace backend {
         // Memoized lattices, used for both compute and precompute.
         std::map<Seq, Lattice, SeqLessThan> lattices;
         bool need_operand_pos_map;
+        // Track iterator symbols already declared within the generated kernel
+        // body so nested lowering can assign without redeclaring.
+        std::set<std::string> declared_iter_symbols;
+        std::set<std::string> declared_stop_symbols;
 
         ComputeKernelLowerer(
             std::map<std::string, TensorLowerer> &operand_tensors,

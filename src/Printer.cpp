@@ -716,6 +716,18 @@ void Printer::visit(const llir::KernelLaunch *node) {
     print_no_parens(node->grid_dim);
     os << ", ";
     print_no_parens(node->block_dim);
+    if (node->shared_mem.defined() || node->stream.defined()) {
+        os << ", ";
+        if (node->shared_mem.defined()) {
+            print_no_parens(node->shared_mem);
+        } else {
+            os << "0";
+        }
+    }
+    if (node->stream.defined()) {
+        os << ", ";
+        print_no_parens(node->stream);
+    }
     os << ">>>(";
     for (size_t i = 0; i < node->args.size(); i++) {
         if (i > 0)
