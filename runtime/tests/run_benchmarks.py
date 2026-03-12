@@ -3,14 +3,10 @@
 Run nacho runtime benchmarks against SuiteSparse matrices.
 
 Usage:
-    python tests/run_benchmarks.py                  # all benchmarks, full sweep
-    python tests/run_benchmarks.py csr_add          # just CSR add
-    python tests/run_benchmarks.py spgemm -s 982 -e 988   # SpGEMM on a range
-    python tests/run_benchmarks.py --quick           # quick smoke test (~5 matrix pairs)
-
-Run from the runtime/ directory:
-    cd runtime && conda activate nacho && module load cuda
-    python tests/run_benchmarks.py
+    python runtime/tests/run_benchmarks.py                       # all benchmarks, full sweep
+    python runtime/tests/run_benchmarks.py csr_add               # just CSR add
+    python runtime/tests/run_benchmarks.py spgemm -s 982 -e 988  # SpGEMM on a range
+    python runtime/tests/run_benchmarks.py --quick               # quick smoke test (~5 matrix pairs)
 """
 
 import argparse
@@ -29,7 +25,6 @@ def ensure_cuda():
     if any(os.path.isfile(os.path.join(d, 'nvcc')) for d in os.environ.get('PATH', '').split(':')):
         return
 
-    # Source the module system and load cuda, then apply the env changes
     for init in ['/etc/profile.d/modules.sh', '/usr/share/modules/init/bash']:
         if os.path.isfile(init):
             try:
@@ -52,6 +47,8 @@ def ensure_cuda():
 
 ensure_cuda()
 
+from tqdm import tqdm
+
 
 def get_num_matrices():
     from parser import matrix_list
@@ -59,41 +56,181 @@ def get_num_matrices():
 
 
 def run_csr_add(start, end, save_and_plot):
-    from coo_and_csr import benchmark_csr_add
-    print(f"\n{'='*60}")
-    print(f"CSR Add benchmark  (matrices {start}–{end})")
-    print(f"{'='*60}")
-    benchmark_csr_add(start, end, save_and_plot=save_and_plot)
+    import torch
+    import nanobind_cuda_example
+    from parser import matrix_list, parse_matrix
+    from coo_and_csr import csr_add, torch_add, failure_reason
+    from plotter import plot
+
+    df = matrix_list()
+    nnz, manual_rt, cusparse_rt, pytorch_rt, failed = [], [], [], [], []
+    skip = {611}
+
+    indices = [i for i in range(start + 1, end) if i not in skip]
+    for i in tqdm(indices, desc="CSR Add", unit="pair"):
+        A = parse_matrix(df.iloc[i - 1]['name'])
+        B = parse_matrix(df.iloc[i]['name'])
+        M = min(A.size(0), B.size(0))
+        N = max(A.size(1), B.size(1))
+
+        A_t = torch.sparse_csr_tensor(A.crow_indices()[:M+1], A.col_indices()[:A.crow_indices()[M]], A.values()[:A.crow_indices()[M]], (M, N))
+        B_t = torch.sparse_csr_tensor(B.crow_indices()[:M+1], B.col_indices()[:B.crow_indices()[M]], B.values()[:B.crow_indices()[M]], (M, N))
+        plus_row = A_t.crow_indices() + B_t.crow_indices()
+
+        A_CSR = nanobind_cuda_example.CSR(A_t.crow_indices(), A_t.col_indices(), A_t.values(), torch.tensor([M, N], dtype=torch.int32))
+        B_CSR = nanobind_cuda_example.CSR(B_t.crow_indices(), B_t.col_indices(), B_t.values(), torch.tensor([M, N], dtype=torch.int32))
+
+        C_pytorch, pytorch = torch_add(A_t, B_t)
+        C_cusparse, cusparse = csr_add(A_CSR, B_CSR, True)
+        C_manual, manual = csr_add(A_CSR, B_CSR, False)
+
+        ans = (torch.equal(C_cusparse.indptr, C_manual.indptr)
+               and torch.equal(C_cusparse.indices, C_manual.indices)
+               and torch.equal(C_cusparse.data, C_manual.data)
+               and torch.equal(C_pytorch.crow_indices(), C_manual.indptr)
+               and torch.equal(C_pytorch.col_indices(), C_manual.indices)
+               and torch.equal(C_pytorch.values(), C_manual.data))
+
+        if not ans:
+            tqdm.write(f"FAILED at {i}: {df.iloc[i-1]['name']} x {df.iloc[i]['name']}")
+            failed.append(i)
+            failure_reason(C_manual, C_cusparse)
+
+        nnz.append(plus_row.max().item())
+        manual_rt.append(manual)
+        cusparse_rt.append(cusparse)
+        pytorch_rt.append(pytorch)
+
+    if save_and_plot and nnz:
+        plot(nnz, manual_rt, cusparse_rt, pytorch_rt, f"torch_nnz_{start}-{end}")
+    if failed:
+        print(f"Failed: {failed}")
 
 
 def run_coo_add(start, end, save_and_plot):
-    from coo_and_csr import benchmark_coo_add
-    print(f"\n{'='*60}")
-    print(f"COO Add benchmark  (matrices {start}–{end})")
-    print(f"{'='*60}")
-    benchmark_coo_add(start, end, save_and_plot=save_and_plot)
+    import torch
+    import nanobind_cuda_example
+    from parser import matrix_list, parse_matrix
+    from coo_and_csr import coo_add
+    from plotter import plot
+
+    df = matrix_list()
+    nnz, manual_rt, pytorch_rt, failed = [], [], [], []
+
+    indices = list(range(start + 1, end))
+    for i in tqdm(indices, desc="COO Add", unit="pair"):
+        A = parse_matrix(df.iloc[i - 1]['name'], True).coalesce()
+        B = parse_matrix(df.iloc[i]['name'], True).coalesce()
+        M = max(A.size(0), B.size(0))
+        N = max(A.size(1), B.size(1))
+
+        A_t = torch.sparse_coo_tensor(A.indices(), A.values(), (M, N)).coalesce()
+        B_t = torch.sparse_coo_tensor(B.indices(), B.values(), (M, N)).coalesce()
+
+        A_COO = nanobind_cuda_example.COO(A.indices()[0], A.indices()[1], A.values(), torch.tensor([M, N], dtype=torch.int32))
+        B_COO = nanobind_cuda_example.COO(B.indices()[0], B.indices()[1], B.values(), torch.tensor([M, N], dtype=torch.int32))
+
+        C_pytorch, pytorch = coo_add(A_t, B_t, True)
+        C_manual, manual = coo_add(A_COO, B_COO, False)
+
+        ans = (torch.equal(C_pytorch.indices()[0], C_manual.row)
+               and torch.equal(C_pytorch.indices()[1], C_manual.col)
+               and torch.equal(C_pytorch.values(), C_manual.data))
+
+        if not ans:
+            tqdm.write(f"FAILED at {i}: {df.iloc[i-1]['name']} x {df.iloc[i]['name']}")
+            failed.append(i)
+
+        nnz.append(A_COO.data.numel() + B_COO.data.numel())
+        manual_rt.append(manual)
+        pytorch_rt.append(pytorch)
+
+    if save_and_plot and nnz:
+        plot(nnz, manual_rt, [], pytorch_rt, f"coo_rows_nnz_{start}-{end}")
+    if failed:
+        print(f"Failed: {failed}")
 
 
 def run_spgemm(start, end, save_and_plot):
-    from spgemm import spgemm
-    print(f"\n{'='*60}")
-    print(f"SpGEMM benchmark  (matrices {start}–{end})")
-    print(f"{'='*60}")
-    spgemm(start, end, save_and_plot=save_and_plot)
+    import torch
+    import nanobind_cuda_example
+    from parser import matrix_list, parse_matrix
+    from spgemm import spgemm_benchmark
+    from coo_and_csr import failure_reason
+    from plotter import plot
+
+    df = matrix_list()
+    nnz, manual_rt, cusparse_rt, failed = [], [], [], []
+    skip = {611}
+
+    indices = [i for i in range(start + 1, end) if i not in skip]
+    for i in tqdm(indices, desc="SpGEMM", unit="pair"):
+        A = parse_matrix(df.iloc[i - 1]['name'])
+        B = parse_matrix(df.iloc[i]['name'])
+
+        # AxA benchmark for square matrices
+        if A.size(0) == A.size(1):
+            M = A.size(0)
+            A_CSR = nanobind_cuda_example.CSR(A.crow_indices(), A.col_indices(), A.values(), torch.tensor([M, M], dtype=torch.int32))
+            C_cusparse, cusparse = spgemm_benchmark(A_CSR, A_CSR, True)
+            C_manual, manual = spgemm_benchmark(A_CSR, A_CSR, False)
+            ans = (torch.equal(C_cusparse.indptr, C_manual.indptr)
+                   and torch.equal(C_cusparse.indices, C_manual.indices))
+            if not ans:
+                tqdm.write(f"FAILED AxA at {i}: {df.iloc[i-1]['name']}")
+                failed.append(i)
+                failure_reason(C_manual, C_cusparse)
+                break
+            nnz.append(A.crow_indices().max().item() * 2)
+            manual_rt.append(manual)
+            cusparse_rt.append(cusparse)
+
+        # AxB benchmark
+        M = A.size(0)
+        K = min(A.size(1), B.size(0))
+        if K != A.size(1):
+            continue
+        N = B.size(1)
+
+        A_t = torch.sparse_csr_tensor(A.crow_indices()[:M+1], A.col_indices()[:A.crow_indices()[M]], A.values()[:A.crow_indices()[M]], (M, K))
+        B_t = torch.sparse_csr_tensor(B.crow_indices()[:K+1], B.col_indices()[:B.crow_indices()[K]], B.values()[:B.crow_indices()[K]], (K, N))
+        plus_row = A_t.crow_indices().max() + B_t.crow_indices().max()
+
+        A_CSR = nanobind_cuda_example.CSR(A_t.crow_indices(), A_t.col_indices(), A_t.values(), torch.tensor([M, K], dtype=torch.int32))
+        B_CSR = nanobind_cuda_example.CSR(B_t.crow_indices(), B_t.col_indices(), B_t.values(), torch.tensor([K, N], dtype=torch.int32))
+
+        C_cusparse, cusparse = spgemm_benchmark(A_CSR, B_CSR, True)
+        C_manual, manual = spgemm_benchmark(A_CSR, B_CSR, False)
+
+        ans = (torch.equal(C_cusparse.indptr, C_manual.indptr)
+               and torch.equal(C_cusparse.indices, C_manual.indices))
+        if not ans:
+            tqdm.write(f"FAILED at {i}: {df.iloc[i-1]['name']} x {df.iloc[i]['name']}")
+            failed.append(i)
+            failure_reason(C_manual, C_cusparse)
+            break
+
+        nnz.append(plus_row.max().item())
+        manual_rt.append(manual)
+        cusparse_rt.append(cusparse)
+
+    if save_and_plot and nnz:
+        plot(nnz, manual_rt, cusparse_rt, [], f"spgemm_{start}-{end}")
+    if failed:
+        print(f"Failed: {failed}")
 
 
 def run_sparse_vectors(start, end, _save_and_plot):
     from parser import matrix_list
     from sparse_vectors import test_mergepath
+
     df = matrix_list()
     n = len(df)
-    end = min(end, n - 2)  # needs triplets of matrices
-    print(f"\n{'='*60}")
-    print(f"Sparse vector (a*b+c) benchmark  (matrices {start}–{end})")
-    print(f"{'='*60}")
+    end = min(end, n - 2)
     failed = []
-    for i in range(start, end):
-        print(f"iteration {i}")
+
+    indices = list(range(start, end))
+    for i in tqdm(indices, desc="Sparse Vectors", unit="triplet"):
         result = test_mergepath(
             0, 0,
             df.iloc[i]['name'],
@@ -106,17 +243,13 @@ def run_sparse_vectors(start, end, _save_and_plot):
         ans, full, partial, no, total_nnz = result
         if not ans:
             failed.append(i)
-        else:
-            print(f"  nnz={total_nnz}  full={full}  partial={partial}  nofusion={no}")
     if failed:
-        print(f"FAILED iterations: {failed}")
+        print(f"Failed: {failed}")
 
 
 def run_broadcast(_start, _end, _save_and_plot):
     from broadcasts import benchmark_broadcast
-    print(f"\n{'='*60}")
-    print(f"Broadcast (x*A) benchmark")
-    print(f"{'='*60}")
+    print("Running broadcast (x*A) benchmark...")
     ans, xa_time, csr_time = benchmark_broadcast()
     print(f"  correct={ans}  broadcast={xa_time:.3f}ms  csr_add={csr_time:.3f}ms")
 
@@ -147,10 +280,10 @@ benchmarks:
   all              Run all benchmarks (default)
 
 examples:
-  python tests/run_benchmarks.py --quick
-  python tests/run_benchmarks.py csr_add spgemm
-  python tests/run_benchmarks.py spgemm -s 500 -e 600
-  python tests/run_benchmarks.py --no-plot
+  python runtime/tests/run_benchmarks.py --quick
+  python runtime/tests/run_benchmarks.py csr_add spgemm
+  python runtime/tests/run_benchmarks.py spgemm -s 500 -e 600
+  python runtime/tests/run_benchmarks.py --no-plot
 """,
     )
     parser.add_argument(
@@ -175,7 +308,6 @@ examples:
     )
     args = parser.parse_args()
 
-    # Resolve which benchmarks to run
     if 'all' in args.benchmarks:
         to_run = list(BENCHMARKS.keys())
     else:
@@ -187,7 +319,6 @@ examples:
                 sys.exit(1)
             to_run.append(b)
 
-    # Resolve matrix range
     num_matrices = get_num_matrices()
     if args.quick:
         start = args.start if args.start is not None else QUICK_RANGE[0]
@@ -202,12 +333,12 @@ examples:
     print(f"Matrix range: {start}–{end} (of {num_matrices} available)")
     if not save_and_plot:
         print("Plots disabled")
+    print()
 
     for name in to_run:
         BENCHMARKS[name](start, end, save_and_plot)
 
-    print(f"\n{'='*60}")
-    print("Done.")
+    print("\nDone.")
 
 
 if __name__ == '__main__':

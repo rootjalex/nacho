@@ -171,7 +171,7 @@ setup_runtime() {
     fi
 
     info "Installing Python dependencies..."
-    pip install --quiet numpy pandas matplotlib
+    pip install --quiet numpy pandas matplotlib tqdm
 
     # Install PyTorch with CUDA support
     info "Installing PyTorch (CUDA)..."
