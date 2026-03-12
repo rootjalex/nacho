@@ -700,7 +700,7 @@ llir::lStmt ComputeKernelLowerer::lower_loop(
             iters.push_back(miter->second);
             if (cond.defined()) {
                 cond = cond && miter->second.first <= miter->second.second;
-                offset_write_cond = offset_write_cond || (miter->second.first != miter->second.second);
+                offset_write_cond = offset_write_cond || (miter->second.first < miter->second.second);
             } else {
                 cond = miter->second.first <= miter->second.second;
                 offset_write_cond = (miter->second.first != miter->second.second);
@@ -713,6 +713,7 @@ llir::lStmt ComputeKernelLowerer::lower_loop(
             offset_write_cond = llir::lVar::make(index_t, forall->idx) !=
                                 llir::lVar::make(index_t, "end_" + forall->idx);
         }
+        offset_write_cond = offset_write_cond || (llir::lVar::make(index_t, "thread_id") == llir::lVar::make(index_t, "max_thread_id"));
         internal_assert(cond.defined()) << s;
 
         auto get_body_epilogue_stmt = [&](const CIN nextCin, Seq seq, const Forall *forall) {
@@ -764,8 +765,6 @@ llir::lStmt ComputeKernelLowerer::lower_loop(
                                 )],
                         llir::lVar::make(index_t, "offset_" + nextForall->idx));
                 }
-
-                offset_write_cond = offset_write_cond || (llir::lVar::make(index_t, "thread_id") == llir::lVar::make(index_t, "max_thread_id"));
 
                 if(store_stmt.defined() && stmt.defined()) {
                     stmt = llir::IfElse::make(offset_write_cond, llir::Sequence::make({std::move(store_stmt),std::move(stmt)}), nullptr);
