@@ -311,30 +311,38 @@ static void emit_to_file(const std::string &dir, const std::string &op_name,
                          Expr expr) {
     std::filesystem::create_directories(dir);
     std::string filepath = dir + "/" + op_name + ".cu";
-    std::ofstream ofs(filepath);
-    if (!ofs) {
-        std::cerr << "Failed to open " << filepath << " for writing\n";
-        exit(1);
-    }
 
-    // DCSR multiply currently uses a handwritten kernel implementation to
-    // guarantee correctness and predictable performance.
+    // DCSR multiply uses a handwritten kernel template to guarantee
+    // correctness and predictable performance.
     if (op_name == "dcsr_mul") {
         std::filesystem::path repo_root =
             std::filesystem::path(__FILE__).parent_path();
         std::filesystem::path handwritten_kernel =
-            repo_root / "runtime" / "src" / "nacho_generated" / "dcsr_mul.cu";
+            repo_root / "runtime" / "src" / "dcsr_mul" /
+            "dcsr_mul_template.cu";
         std::ifstream kernel_ifs(handwritten_kernel);
         if (!kernel_ifs) {
             std::cerr << "Failed to open handwritten kernel template at "
                       << handwritten_kernel << "\n";
             exit(1);
         }
+
+        std::ofstream ofs(filepath);
+        if (!ofs) {
+            std::cerr << "Failed to open " << filepath << " for writing\n";
+            exit(1);
+        }
         ofs << kernel_ifs.rdbuf();
         ofs.close();
         std::cout << "Generated " << filepath
-                  << " (handwritten dcsr_mul kernel)\n";
+                  << " (handwritten dcsr_mul template)\n";
         return;
+    }
+
+    std::ofstream ofs(filepath);
+    if (!ofs) {
+        std::cerr << "Failed to open " << filepath << " for writing\n";
+        exit(1);
     }
 
     ofs << "#pragma once\n\n";
