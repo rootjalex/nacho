@@ -568,6 +568,13 @@ namespace backend {
         }
 
 
+        // In later phases, keep innermost sparse loop partitions aligned to row
+        // boundaries. Splitting rows across threads can break row compaction in
+        // compute kernels.
+        if (previous_sparse_intersection != -1 && is_last_loop) {
+            return lower_row_aligned_last_loop_partition(loop_index);
+        }
+
         // Optimization Case : Can Use normal balanced mergepath to optimize partitioning
         // When no dim is sparse the general scheme is best as that will require just 1 binary search.
         if(!need_to_exclude_tensors_at_runtime && included_tensors.size()==2 && tensors_with_curr_dim_sparse.size()==2 && is_last_loop) {
@@ -983,6 +990,34 @@ namespace backend {
             );
         }
         return llir::Sequence::make(std::move(stmts)); 
+    }
+
+    llir::lStmt PartitionKernelLowerer::lower_row_aligned_last_loop_partition(int loop_index) {
+        std::vector<llir::lStmt> stmts;
+        const Forall* forall = forall_list[loop_index].as<Forall>();
+        std::string forall_idx = forall->idx;
+
+        // Populate last-loop sparse iterator fields with per-row starts (-1 based).
+        // End bounds are taken from the next thread's start, so this keeps rows
+        // intact for a thread.
+        for (const auto& it : operand_tensors) {
+            TensorLowerer tensor = it.second;
+            if (!tensor.tensor_type.format.level_exists(forall_idx) ||
+                !tensor.tensor_type.format.is_sparse(forall_idx)) {
+                continue;
+            }
+            stmts.emplace_back(llir::Store::make(
+                get_partition_struct_current_thread_field(
+                    tensor.get_iterator_suffix(forall_idx)),
+                get_sparse_dim_start_expr(tensor, forall_idx)));
+        }
+
+        if (stmts.empty()) {
+            // Dense-only fallback: preserve previous behavior.
+            return lower_trivial_partition_loop(loop_index, /*is_last_loop=*/true);
+        }
+
+        return llir::Sequence::make(std::move(stmts));
     }
 
     llir::lStmt PartitionKernelLowerer::lower_partition_loop_from_work_offsets(int loop_index, bool need_to_exclude_tensors_at_runtime) {

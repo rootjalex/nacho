@@ -705,7 +705,9 @@ llir::lStmt ComputeKernelLowerer::lower_loop(
         }
         internal_assert(cond.defined()) << s;
 
-        auto get_body_epilogue_stmt = [&](const CIN nextCin, Seq seq, const Forall *forall) {
+        auto get_body_epilogue_stmt = [&](const CIN nextCin, Seq seq,
+                                          const Forall *forall,
+                                          const std::string &next_level_count_start_name) {
 
             // epilogue statement only required for loops >= previous_sparse_intersection_loops
             if(loop_level < previous_sparse_intersection) {
@@ -765,31 +767,58 @@ llir::lStmt ComputeKernelLowerer::lower_loop(
                 // For both:   check iter_A != stop_A && iter_B != stop_B
                 llir::lExpr case_offset_write_cond;
                 auto [case_idxs, _2] = partition_iterators_locators(seq);
+                if (is_loop_before_prev_intersection) {
+                    case_idxs.clear();
+                }
                 bool all_found = true;
                 for (const auto &ci : case_idxs) {
-                    if (imap.find(ci) == imap.end()) {
+                    const Index *idx_node = ci.as<Index>();
+                    if (!idx_node) {
                         all_found = false;
                         break;
                     }
                 }
                 if (all_found && !case_idxs.empty()) {
                     for (const auto &ci : case_idxs) {
-                        const auto &miter = imap.find(ci);
-                        llir::lExpr sub = miter->second.first != miter->second.second;
                         const Index *idx_node = ci.as<Index>();
-                        if (idx_node) {
-                            TensorLowerer tlower(idx_node->tensor, idx_node->type);
-                            if (tlower.tensor_type.format.level_exists(nextForall->idx) &&
-                                tlower.is_sparse(nextForall->idx)) {
-                                llir::lExpr start_var = tlower.get_start(nextForall->idx);
-                                llir::lExpr end_var = tlower.get_end(nextForall->idx);
-                                llir::lExpr iter_outer = tlower.get_iter(forall->idx);
-                                llir::lExpr start_outer = tlower.get_start(forall->idx);
-                                llir::lExpr actual_end = tlower.get_offsets_field(nextForall->idx)[iter_outer + 1] - 1;
-                                llir::lExpr row_has_work = (start_var <= end_var) && (start_var <= actual_end);
-                                // If this thread's first outer row has no inner work,
-                                // don't treat it as an interior-complete row.
-                                sub = sub && ((iter_outer != start_outer) || row_has_work);
+                        if (!idx_node) {
+                            all_found = false;
+                            break;
+                        }
+                        TensorLowerer tlower(idx_node->tensor, idx_node->type);
+
+                        llir::lExpr sub = llir::lConst::make((int64_t)1);
+                        bool has_partition_bounds = false;
+                        auto miter = imap.find(ci);
+                        if (miter != imap.end()) {
+                            has_partition_bounds = true;
+                            sub = miter->second.first != miter->second.second;
+                        }
+
+                        if (tlower.tensor_type.format.level_exists(nextForall->idx) &&
+                            tlower.is_sparse(nextForall->idx)) {
+                            llir::lExpr start_var =
+                                tlower.get_start(nextForall->idx);
+                            llir::lExpr end_var =
+                                tlower.get_end(nextForall->idx);
+                            llir::lExpr iter_outer =
+                                tlower.get_iter(forall->idx);
+                            llir::lExpr start_outer =
+                                tlower.get_start(forall->idx);
+                            llir::lExpr actual_end =
+                                tlower.get_offsets_field(nextForall->idx)
+                                    [iter_outer + 1] -
+                                1;
+                            llir::lExpr row_has_work =
+                                (start_var <= end_var) &&
+                                (start_var <= actual_end);
+                            if (has_partition_bounds) {
+                                // If this thread's first outer row has no
+                                // inner work, don't treat it as
+                                // interior-complete.
+                                sub =
+                                    sub &&
+                                    ((iter_outer != start_outer) || row_has_work);
                             }
                         }
                         if (case_offset_write_cond.defined()) {
@@ -809,8 +838,19 @@ llir::lStmt ComputeKernelLowerer::lower_loop(
                 // it should complete the row even if iter_i == stop_i.
                 llir::lExpr boundary_complete_cond;
                 llir::lExpr any_operand_has_work;
-                if (all_found && !case_idxs.empty()) {
-                    for (const auto &ci : case_idxs) {
+                std::vector<Seq> boundary_idxs = case_idxs;
+                if (boundary_idxs.empty()) {
+                    for (const auto &[name, tensor] : operand_tensors) {
+                        if (tensor.tensor_type.format.level_exists(forall->idx) &&
+                            tensor.is_sparse(forall->idx)) {
+                            boundary_idxs.push_back(Index::make(
+                                tensor.tensor_name, tensor.tensor_type,
+                                loop_level));
+                        }
+                    }
+                }
+                if (!boundary_idxs.empty()) {
+                    for (const auto &ci : boundary_idxs) {
                         const Index *idx_node = ci.as<Index>();
                         if (!idx_node) continue;
                         TensorLowerer tlower(idx_node->tensor, idx_node->type);
@@ -846,6 +886,19 @@ llir::lStmt ComputeKernelLowerer::lower_loop(
                     case_offset_write_cond = case_offset_write_cond || (llir::lVar::make(index_t, "thread_id") == llir::lVar::make(index_t, "max_thread_id"));
                 }
 
+                // Emit a row only if this iteration produced at least one
+                // inner-level output element (avoids empty sparse rows).
+                if (!next_level_count_start_name.empty()) {
+                    llir::lExpr next_level_count = llir::lVar::make(
+                        index_t, (is_precompute ? "count_" : "offset_") +
+                                     nextForall->idx);
+                    llir::lExpr next_level_count_start =
+                        llir::lVar::make(index_t, next_level_count_start_name);
+                    case_offset_write_cond =
+                        case_offset_write_cond &&
+                        (next_level_count > next_level_count_start);
+                }
+
                 std::vector<llir::lStmt> guarded_stmts;
                 if (store_stmt.defined()) guarded_stmts.push_back(std::move(store_stmt));
                 if (stmt.defined()) guarded_stmts.push_back(std::move(stmt));
@@ -859,11 +912,6 @@ llir::lStmt ComputeKernelLowerer::lower_loop(
 
         
         auto make_assign_indices = [&](llir::lExpr index, std::set<Seq, SeqLessThan>& as) {
-            // only assign for new loops, indexes for loops <= previous_sparse_intersection has already been calculated
-            if(loop_level <= previous_sparse_intersection) {
-                return llir::lStmt();
-            }
-
             std::vector<llir::lStmt> stmts;
             auto offset_var = llir::lVar::make(index_t, "offset_" + forall->idx);
             if (result_tensor.tensor_type.format.level_exists(forall->idx)){
@@ -926,20 +974,44 @@ llir::lStmt ComputeKernelLowerer::lower_loop(
 
 
             llir::lStmt body;
+            std::string next_level_count_start_name;
+            llir::lStmt next_level_count_start_stmt;
+            const Forall *next_forall = cin.as<Forall>();
+            if (next_forall && result_tensor.is_sparse(next_forall->idx)) {
+                next_level_count_start_name =
+                    (is_precompute ? "count_" : "offset_") + next_forall->idx +
+                    "_row_start_l" + std::to_string(loop_level);
+                next_level_count_start_stmt = llir::Declare::make(
+                    index_t, next_level_count_start_name,
+                    llir::lVar::make(index_t,
+                                     (is_precompute ? "count_" : "offset_") +
+                                         next_forall->idx));
+            }
             if (cin.as<Forall>()) {
                 body = lower_loop(cin, new_def, is_precompute, loop_level + 1);
             } else {
                 body = lower_assign_statement(cin, is_precompute);
             }
 
+            if (next_level_count_start_stmt.defined()) {
+                if (body.defined()) {
+                    body = llir::Sequence::make(
+                        {std::move(next_level_count_start_stmt), std::move(body)});
+                } else {
+                    body = std::move(next_level_count_start_stmt);
+                }
+            }
+
             // Store the index value in the result
             llir::lStmt assign_indices_stmt;
         
-            if(!is_precompute && previous_sparse_intersection < loop_level){
+            if(!is_precompute && previous_sparse_intersection <= loop_level){
                 assign_indices_stmt = make_assign_indices(llir::lVar::make(index_t, forall->idx), new_def);
             }
 
-            auto epilogue_stmt = get_body_epilogue_stmt(cin, a, forall);
+            auto epilogue_stmt =
+                get_body_epilogue_stmt(cin, a, forall,
+                                       next_level_count_start_name);
             // Move assign_indices_stmt inside the epilogue guard to prevent
             // spurious writes from threads that don't own the row completion.
             if (epilogue_stmt.defined() && epilogue_stmt.as<llir::IfElse>() && assign_indices_stmt.defined()) {

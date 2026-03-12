@@ -500,6 +500,7 @@ namespace backend {
         for (int phase = 0; phase < num_phases; phase++) {
             const auto &phase_info = phase_struct_infos[phase];
             const llir::Struct_t *partition_struct = phase_info.partition_struct.as<llir::Struct_t>();
+            std::vector<std::string> delayed_result_field_updates;
 
             body_stmts.emplace_back(llir::RawCode::make(
                 "// ========== Phase " + std::to_string(phase) + " =========="));
@@ -752,16 +753,17 @@ namespace backend {
                     }
                 }
 
-                // Set result tensor nnz/length fields from precompute results
-                // Skip levels already set in previous phases
-                for (int lvl = alloc_start; lvl <= phase_info.current_sparse_intersection; lvl++) {
+                // Defer result length/nnz updates until after compute launch.
+                // Compute kernels in later phases may still need previous phase
+                // length fields while traversing intermediate buffers.
+                for (int lvl = 0; lvl <= phase_info.current_sparse_intersection; lvl++) {
                     auto idx = result_tensor.tensor_type.format.levels[lvl].index;
                     if (is_sparse_format(result_tensor.tensor_type.format.lvlfmt_of(idx))) {
                         std::string nnz_name = "nnz_" + idx + "_" + std::to_string(phase);
-                        body_stmts.emplace_back(llir::RawCode::make(
+                        delayed_result_field_updates.push_back(
                             result_tensor.tensor_name + "." +
                             result_tensor.get_length_field_name(idx) +
-                            " = " + nnz_name + ";"));
+                            " = " + nnz_name + ";");
                     }
                 }
                 if (phase == num_phases - 1) {
@@ -769,9 +771,9 @@ namespace backend {
                     for (int lvl = phase_info.current_sparse_intersection; lvl >= 0; lvl--) {
                         auto idx = result_tensor.tensor_type.format.levels[lvl].index;
                         if (is_sparse_format(result_tensor.tensor_type.format.lvlfmt_of(idx))) {
-                            body_stmts.emplace_back(llir::RawCode::make(
+                            delayed_result_field_updates.push_back(
                                 result_tensor.tensor_name + ".nnz = nnz_" +
-                                idx + "_" + std::to_string(phase) + ";"));
+                                idx + "_" + std::to_string(phase) + ";");
                             break;
                         }
                     }
@@ -922,6 +924,10 @@ namespace backend {
                 // Reassign so next phase's kernels use the prefix sum result
                 body_stmts.emplace_back(llir::RawCode::make(
                     "T_work_offsets = T_work_offsets_prefix;"));
+            }
+
+            for (const auto &stmt : delayed_result_field_updates) {
+                body_stmts.emplace_back(llir::RawCode::make(stmt));
             }
 
             // 10. Free partition struct intermediates

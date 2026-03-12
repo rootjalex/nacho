@@ -244,6 +244,7 @@ void precompute_ij_kernel(const A_tensor_format<index_t, value_t> A, const B_ten
     index_t B_i = B.dim_i_indices[iter_B_i_p];
     index_t i = min(B_i, A_i);
     if ((i == A_i) && (i == B_i)) {
+      index_t count_j_row_start_l0 = count_j;
       index_t iter_A_j_p = (iter_A_i_p == start_A_i_p) ? start_A_j_p : A.dim_j_offsets[iter_A_i_p];
       index_t stop_A_j_p = (iter_A_i_p == end_A_i_p) ? end_A_j_p : (A.dim_j_offsets[(iter_A_i_p + 1)] - 1);
       index_t iter_B_j_p = (iter_B_i_p == start_B_i_p) ? start_B_j_p : B.dim_j_offsets[iter_B_i_p];
@@ -272,27 +273,29 @@ void precompute_ij_kernel(const A_tensor_format<index_t, value_t> A, const B_ten
       for (; iter_B_j_p <= stop_B_j_p; iter_B_j_p += 1) {
         count_j++;
       }
-      if ((((iter_A_i_p != stop_A_i_p) && ((iter_A_i_p != start_A_i_p) || ((start_A_j_p <= end_A_j_p) && (start_A_j_p <= (A.dim_j_offsets[iter_A_i_p + 1] - 1))))) && ((iter_B_i_p != stop_B_i_p) && ((iter_B_i_p != start_B_i_p) || ((start_B_j_p <= end_B_j_p) && (start_B_j_p <= (B.dim_j_offsets[iter_B_i_p + 1] - 1)))))) || ((((((A.dim_j_offsets[iter_A_i_p + 1] - 1) <= end_A_j_p) && (start_A_j_p <= end_A_j_p)) || ((A.dim_j_offsets[iter_A_i_p + 1] - 1) < start_A_j_p)) && ((((B.dim_j_offsets[iter_B_i_p + 1] - 1) <= end_B_j_p) && (start_B_j_p <= end_B_j_p)) || ((B.dim_j_offsets[iter_B_i_p + 1] - 1) < start_B_j_p))) && (((start_A_j_p <= end_A_j_p) && (start_A_j_p <= (A.dim_j_offsets[iter_A_i_p + 1] - 1))) || ((start_B_j_p <= end_B_j_p) && (start_B_j_p <= (B.dim_j_offsets[iter_B_i_p + 1] - 1)))))) {
+      if (((((iter_A_i_p != stop_A_i_p) && ((iter_A_i_p != start_A_i_p) || ((start_A_j_p <= end_A_j_p) && (start_A_j_p <= (A.dim_j_offsets[iter_A_i_p + 1] - 1))))) && ((iter_B_i_p != stop_B_i_p) && ((iter_B_i_p != start_B_i_p) || ((start_B_j_p <= end_B_j_p) && (start_B_j_p <= (B.dim_j_offsets[iter_B_i_p + 1] - 1)))))) || ((((((A.dim_j_offsets[iter_A_i_p + 1] - 1) <= end_A_j_p) && (start_A_j_p <= end_A_j_p)) || ((A.dim_j_offsets[iter_A_i_p + 1] - 1) < start_A_j_p)) && ((((B.dim_j_offsets[iter_B_i_p + 1] - 1) <= end_B_j_p) && (start_B_j_p <= end_B_j_p)) || ((B.dim_j_offsets[iter_B_i_p + 1] - 1) < start_B_j_p))) && (((start_A_j_p <= end_A_j_p) && (start_A_j_p <= (A.dim_j_offsets[iter_A_i_p + 1] - 1))) || ((start_B_j_p <= end_B_j_p) && (start_B_j_p <= (B.dim_j_offsets[iter_B_i_p + 1] - 1)))))) && (count_j_row_start_l0 < count_j)) {
         count_i++;
       }
     } else {
       if (i == A_i) {
+        index_t count_j_row_start_l0 = count_j;
         index_t iter_A_j_p = (iter_A_i_p == start_A_i_p) ? start_A_j_p : A.dim_j_offsets[iter_A_i_p];
         index_t stop_A_j_p = (iter_A_i_p == end_A_i_p) ? end_A_j_p : (A.dim_j_offsets[(iter_A_i_p + 1)] - 1);
         for (; iter_A_j_p <= stop_A_j_p; iter_A_j_p += 1) {
           count_j++;
         }
-        if (((iter_A_i_p != stop_A_i_p) && ((iter_A_i_p != start_A_i_p) || ((start_A_j_p <= end_A_j_p) && (start_A_j_p <= (A.dim_j_offsets[iter_A_i_p + 1] - 1))))) || (((((A.dim_j_offsets[iter_A_i_p + 1] - 1) <= end_A_j_p) && (start_A_j_p <= end_A_j_p)) || ((A.dim_j_offsets[iter_A_i_p + 1] - 1) < start_A_j_p)) && ((start_A_j_p <= end_A_j_p) && (start_A_j_p <= (A.dim_j_offsets[iter_A_i_p + 1] - 1))))) {
+        if ((((iter_A_i_p != stop_A_i_p) && ((iter_A_i_p != start_A_i_p) || ((start_A_j_p <= end_A_j_p) && (start_A_j_p <= (A.dim_j_offsets[iter_A_i_p + 1] - 1))))) || (((((A.dim_j_offsets[iter_A_i_p + 1] - 1) <= end_A_j_p) && (start_A_j_p <= end_A_j_p)) || ((A.dim_j_offsets[iter_A_i_p + 1] - 1) < start_A_j_p)) && ((start_A_j_p <= end_A_j_p) && (start_A_j_p <= (A.dim_j_offsets[iter_A_i_p + 1] - 1))))) && (count_j_row_start_l0 < count_j)) {
           count_i++;
         }
       } else {
         if (i == B_i) {
+          index_t count_j_row_start_l0 = count_j;
           index_t iter_B_j_p = (iter_B_i_p == start_B_i_p) ? start_B_j_p : B.dim_j_offsets[iter_B_i_p];
           index_t stop_B_j_p = (iter_B_i_p == end_B_i_p) ? end_B_j_p : (B.dim_j_offsets[(iter_B_i_p + 1)] - 1);
           for (; iter_B_j_p <= stop_B_j_p; iter_B_j_p += 1) {
             count_j++;
           }
-          if (((iter_B_i_p != stop_B_i_p) && ((iter_B_i_p != start_B_i_p) || ((start_B_j_p <= end_B_j_p) && (start_B_j_p <= (B.dim_j_offsets[iter_B_i_p + 1] - 1))))) || (((((B.dim_j_offsets[iter_B_i_p + 1] - 1) <= end_B_j_p) && (start_B_j_p <= end_B_j_p)) || ((B.dim_j_offsets[iter_B_i_p + 1] - 1) < start_B_j_p)) && ((start_B_j_p <= end_B_j_p) && (start_B_j_p <= (B.dim_j_offsets[iter_B_i_p + 1] - 1))))) {
+          if ((((iter_B_i_p != stop_B_i_p) && ((iter_B_i_p != start_B_i_p) || ((start_B_j_p <= end_B_j_p) && (start_B_j_p <= (B.dim_j_offsets[iter_B_i_p + 1] - 1))))) || (((((B.dim_j_offsets[iter_B_i_p + 1] - 1) <= end_B_j_p) && (start_B_j_p <= end_B_j_p)) || ((B.dim_j_offsets[iter_B_i_p + 1] - 1) < start_B_j_p)) && ((start_B_j_p <= end_B_j_p) && (start_B_j_p <= (B.dim_j_offsets[iter_B_i_p + 1] - 1))))) && (count_j_row_start_l0 < count_j)) {
             count_i++;
           }
         }
@@ -302,22 +305,24 @@ void precompute_ij_kernel(const A_tensor_format<index_t, value_t> A, const B_ten
     iter_B_i_p += (B_i == i);
   }
   for (; iter_A_i_p <= stop_A_i_p; iter_A_i_p += 1) {
+    index_t count_j_row_start_l0 = count_j;
     index_t iter_A_j_p = (iter_A_i_p == start_A_i_p) ? start_A_j_p : A.dim_j_offsets[iter_A_i_p];
     index_t stop_A_j_p = (iter_A_i_p == end_A_i_p) ? end_A_j_p : (A.dim_j_offsets[(iter_A_i_p + 1)] - 1);
     for (; iter_A_j_p <= stop_A_j_p; iter_A_j_p += 1) {
       count_j++;
     }
-    if (((iter_A_i_p != stop_A_i_p) && ((iter_A_i_p != start_A_i_p) || ((start_A_j_p <= end_A_j_p) && (start_A_j_p <= (A.dim_j_offsets[iter_A_i_p + 1] - 1))))) || (((((A.dim_j_offsets[iter_A_i_p + 1] - 1) <= end_A_j_p) && (start_A_j_p <= end_A_j_p)) || ((A.dim_j_offsets[iter_A_i_p + 1] - 1) < start_A_j_p)) && ((start_A_j_p <= end_A_j_p) && (start_A_j_p <= (A.dim_j_offsets[iter_A_i_p + 1] - 1))))) {
+    if ((((iter_A_i_p != stop_A_i_p) && ((iter_A_i_p != start_A_i_p) || ((start_A_j_p <= end_A_j_p) && (start_A_j_p <= (A.dim_j_offsets[iter_A_i_p + 1] - 1))))) || (((((A.dim_j_offsets[iter_A_i_p + 1] - 1) <= end_A_j_p) && (start_A_j_p <= end_A_j_p)) || ((A.dim_j_offsets[iter_A_i_p + 1] - 1) < start_A_j_p)) && ((start_A_j_p <= end_A_j_p) && (start_A_j_p <= (A.dim_j_offsets[iter_A_i_p + 1] - 1))))) && (count_j_row_start_l0 < count_j)) {
       count_i++;
     }
   }
   for (; iter_B_i_p <= stop_B_i_p; iter_B_i_p += 1) {
+    index_t count_j_row_start_l0 = count_j;
     index_t iter_B_j_p = (iter_B_i_p == start_B_i_p) ? start_B_j_p : B.dim_j_offsets[iter_B_i_p];
     index_t stop_B_j_p = (iter_B_i_p == end_B_i_p) ? end_B_j_p : (B.dim_j_offsets[(iter_B_i_p + 1)] - 1);
     for (; iter_B_j_p <= stop_B_j_p; iter_B_j_p += 1) {
       count_j++;
     }
-    if (((iter_B_i_p != stop_B_i_p) && ((iter_B_i_p != start_B_i_p) || ((start_B_j_p <= end_B_j_p) && (start_B_j_p <= (B.dim_j_offsets[iter_B_i_p + 1] - 1))))) || (((((B.dim_j_offsets[iter_B_i_p + 1] - 1) <= end_B_j_p) && (start_B_j_p <= end_B_j_p)) || ((B.dim_j_offsets[iter_B_i_p + 1] - 1) < start_B_j_p)) && ((start_B_j_p <= end_B_j_p) && (start_B_j_p <= (B.dim_j_offsets[iter_B_i_p + 1] - 1))))) {
+    if ((((iter_B_i_p != stop_B_i_p) && ((iter_B_i_p != start_B_i_p) || ((start_B_j_p <= end_B_j_p) && (start_B_j_p <= (B.dim_j_offsets[iter_B_i_p + 1] - 1))))) || (((((B.dim_j_offsets[iter_B_i_p + 1] - 1) <= end_B_j_p) && (start_B_j_p <= end_B_j_p)) || ((B.dim_j_offsets[iter_B_i_p + 1] - 1) < start_B_j_p)) && ((start_B_j_p <= end_B_j_p) && (start_B_j_p <= (B.dim_j_offsets[iter_B_i_p + 1] - 1))))) && (count_j_row_start_l0 < count_j)) {
       count_i++;
     }
   }
@@ -351,6 +356,7 @@ void compute_ij_kernel(const A_tensor_format<index_t, value_t> A, const B_tensor
     index_t B_i = B.dim_i_indices[iter_B_i_p];
     index_t i = min(B_i, A_i);
     if ((i == A_i) && (i == B_i)) {
+      index_t offset_j_row_start_l0 = offset_j;
       index_t iter_A_j_p = (iter_A_i_p == start_A_i_p) ? start_A_j_p : A.dim_j_offsets[iter_A_i_p];
       index_t stop_A_j_p = (iter_A_i_p == end_A_i_p) ? end_A_j_p : (A.dim_j_offsets[(iter_A_i_p + 1)] - 1);
       index_t iter_B_j_p = (iter_B_i_p == start_B_i_p) ? start_B_j_p : B.dim_j_offsets[iter_B_i_p];
@@ -391,13 +397,14 @@ void compute_ij_kernel(const A_tensor_format<index_t, value_t> A, const B_tensor
         Z.values[offset_j] = B.values[iter_B_j_p];
         offset_j++;
       }
-      if ((((iter_A_i_p != stop_A_i_p) && ((iter_A_i_p != start_A_i_p) || ((start_A_j_p <= end_A_j_p) && (start_A_j_p <= (A.dim_j_offsets[iter_A_i_p + 1] - 1))))) && ((iter_B_i_p != stop_B_i_p) && ((iter_B_i_p != start_B_i_p) || ((start_B_j_p <= end_B_j_p) && (start_B_j_p <= (B.dim_j_offsets[iter_B_i_p + 1] - 1)))))) || ((((((A.dim_j_offsets[iter_A_i_p + 1] - 1) <= end_A_j_p) && (start_A_j_p <= end_A_j_p)) || ((A.dim_j_offsets[iter_A_i_p + 1] - 1) < start_A_j_p)) && ((((B.dim_j_offsets[iter_B_i_p + 1] - 1) <= end_B_j_p) && (start_B_j_p <= end_B_j_p)) || ((B.dim_j_offsets[iter_B_i_p + 1] - 1) < start_B_j_p))) && (((start_A_j_p <= end_A_j_p) && (start_A_j_p <= (A.dim_j_offsets[iter_A_i_p + 1] - 1))) || ((start_B_j_p <= end_B_j_p) && (start_B_j_p <= (B.dim_j_offsets[iter_B_i_p + 1] - 1)))))) {
+      if (((((iter_A_i_p != stop_A_i_p) && ((iter_A_i_p != start_A_i_p) || ((start_A_j_p <= end_A_j_p) && (start_A_j_p <= (A.dim_j_offsets[iter_A_i_p + 1] - 1))))) && ((iter_B_i_p != stop_B_i_p) && ((iter_B_i_p != start_B_i_p) || ((start_B_j_p <= end_B_j_p) && (start_B_j_p <= (B.dim_j_offsets[iter_B_i_p + 1] - 1)))))) || ((((((A.dim_j_offsets[iter_A_i_p + 1] - 1) <= end_A_j_p) && (start_A_j_p <= end_A_j_p)) || ((A.dim_j_offsets[iter_A_i_p + 1] - 1) < start_A_j_p)) && ((((B.dim_j_offsets[iter_B_i_p + 1] - 1) <= end_B_j_p) && (start_B_j_p <= end_B_j_p)) || ((B.dim_j_offsets[iter_B_i_p + 1] - 1) < start_B_j_p))) && (((start_A_j_p <= end_A_j_p) && (start_A_j_p <= (A.dim_j_offsets[iter_A_i_p + 1] - 1))) || ((start_B_j_p <= end_B_j_p) && (start_B_j_p <= (B.dim_j_offsets[iter_B_i_p + 1] - 1)))))) && (offset_j_row_start_l0 < offset_j)) {
         Z.dim_i_indices[offset_i] = i;
         Z.dim_j_offsets[offset_i + 1] = offset_j;
         offset_i++;
       }
     } else {
       if (i == A_i) {
+        index_t offset_j_row_start_l0 = offset_j;
         index_t iter_A_j_p = (iter_A_i_p == start_A_i_p) ? start_A_j_p : A.dim_j_offsets[iter_A_i_p];
         index_t stop_A_j_p = (iter_A_i_p == end_A_i_p) ? end_A_j_p : (A.dim_j_offsets[(iter_A_i_p + 1)] - 1);
         for (; iter_A_j_p <= stop_A_j_p; iter_A_j_p += 1) {
@@ -406,13 +413,14 @@ void compute_ij_kernel(const A_tensor_format<index_t, value_t> A, const B_tensor
           Z.values[offset_j] = A.values[iter_A_j_p];
           offset_j++;
         }
-        if (((iter_A_i_p != stop_A_i_p) && ((iter_A_i_p != start_A_i_p) || ((start_A_j_p <= end_A_j_p) && (start_A_j_p <= (A.dim_j_offsets[iter_A_i_p + 1] - 1))))) || (((((A.dim_j_offsets[iter_A_i_p + 1] - 1) <= end_A_j_p) && (start_A_j_p <= end_A_j_p)) || ((A.dim_j_offsets[iter_A_i_p + 1] - 1) < start_A_j_p)) && ((start_A_j_p <= end_A_j_p) && (start_A_j_p <= (A.dim_j_offsets[iter_A_i_p + 1] - 1))))) {
+        if ((((iter_A_i_p != stop_A_i_p) && ((iter_A_i_p != start_A_i_p) || ((start_A_j_p <= end_A_j_p) && (start_A_j_p <= (A.dim_j_offsets[iter_A_i_p + 1] - 1))))) || (((((A.dim_j_offsets[iter_A_i_p + 1] - 1) <= end_A_j_p) && (start_A_j_p <= end_A_j_p)) || ((A.dim_j_offsets[iter_A_i_p + 1] - 1) < start_A_j_p)) && ((start_A_j_p <= end_A_j_p) && (start_A_j_p <= (A.dim_j_offsets[iter_A_i_p + 1] - 1))))) && (offset_j_row_start_l0 < offset_j)) {
           Z.dim_i_indices[offset_i] = i;
           Z.dim_j_offsets[offset_i + 1] = offset_j;
           offset_i++;
         }
       } else {
         if (i == B_i) {
+          index_t offset_j_row_start_l0 = offset_j;
           index_t iter_B_j_p = (iter_B_i_p == start_B_i_p) ? start_B_j_p : B.dim_j_offsets[iter_B_i_p];
           index_t stop_B_j_p = (iter_B_i_p == end_B_i_p) ? end_B_j_p : (B.dim_j_offsets[(iter_B_i_p + 1)] - 1);
           for (; iter_B_j_p <= stop_B_j_p; iter_B_j_p += 1) {
@@ -421,7 +429,7 @@ void compute_ij_kernel(const A_tensor_format<index_t, value_t> A, const B_tensor
             Z.values[offset_j] = B.values[iter_B_j_p];
             offset_j++;
           }
-          if (((iter_B_i_p != stop_B_i_p) && ((iter_B_i_p != start_B_i_p) || ((start_B_j_p <= end_B_j_p) && (start_B_j_p <= (B.dim_j_offsets[iter_B_i_p + 1] - 1))))) || (((((B.dim_j_offsets[iter_B_i_p + 1] - 1) <= end_B_j_p) && (start_B_j_p <= end_B_j_p)) || ((B.dim_j_offsets[iter_B_i_p + 1] - 1) < start_B_j_p)) && ((start_B_j_p <= end_B_j_p) && (start_B_j_p <= (B.dim_j_offsets[iter_B_i_p + 1] - 1))))) {
+          if ((((iter_B_i_p != stop_B_i_p) && ((iter_B_i_p != start_B_i_p) || ((start_B_j_p <= end_B_j_p) && (start_B_j_p <= (B.dim_j_offsets[iter_B_i_p + 1] - 1))))) || (((((B.dim_j_offsets[iter_B_i_p + 1] - 1) <= end_B_j_p) && (start_B_j_p <= end_B_j_p)) || ((B.dim_j_offsets[iter_B_i_p + 1] - 1) < start_B_j_p)) && ((start_B_j_p <= end_B_j_p) && (start_B_j_p <= (B.dim_j_offsets[iter_B_i_p + 1] - 1))))) && (offset_j_row_start_l0 < offset_j)) {
             Z.dim_i_indices[offset_i] = i;
             Z.dim_j_offsets[offset_i + 1] = offset_j;
             offset_i++;
@@ -434,6 +442,7 @@ void compute_ij_kernel(const A_tensor_format<index_t, value_t> A, const B_tensor
   }
   for (; iter_A_i_p <= stop_A_i_p; iter_A_i_p += 1) {
     index_t i = A.dim_i_indices[iter_A_i_p];
+    index_t offset_j_row_start_l0 = offset_j;
     index_t iter_A_j_p = (iter_A_i_p == start_A_i_p) ? start_A_j_p : A.dim_j_offsets[iter_A_i_p];
     index_t stop_A_j_p = (iter_A_i_p == end_A_i_p) ? end_A_j_p : (A.dim_j_offsets[(iter_A_i_p + 1)] - 1);
     for (; iter_A_j_p <= stop_A_j_p; iter_A_j_p += 1) {
@@ -442,7 +451,7 @@ void compute_ij_kernel(const A_tensor_format<index_t, value_t> A, const B_tensor
       Z.values[offset_j] = A.values[iter_A_j_p];
       offset_j++;
     }
-    if (((iter_A_i_p != stop_A_i_p) && ((iter_A_i_p != start_A_i_p) || ((start_A_j_p <= end_A_j_p) && (start_A_j_p <= (A.dim_j_offsets[iter_A_i_p + 1] - 1))))) || (((((A.dim_j_offsets[iter_A_i_p + 1] - 1) <= end_A_j_p) && (start_A_j_p <= end_A_j_p)) || ((A.dim_j_offsets[iter_A_i_p + 1] - 1) < start_A_j_p)) && ((start_A_j_p <= end_A_j_p) && (start_A_j_p <= (A.dim_j_offsets[iter_A_i_p + 1] - 1))))) {
+    if ((((iter_A_i_p != stop_A_i_p) && ((iter_A_i_p != start_A_i_p) || ((start_A_j_p <= end_A_j_p) && (start_A_j_p <= (A.dim_j_offsets[iter_A_i_p + 1] - 1))))) || (((((A.dim_j_offsets[iter_A_i_p + 1] - 1) <= end_A_j_p) && (start_A_j_p <= end_A_j_p)) || ((A.dim_j_offsets[iter_A_i_p + 1] - 1) < start_A_j_p)) && ((start_A_j_p <= end_A_j_p) && (start_A_j_p <= (A.dim_j_offsets[iter_A_i_p + 1] - 1))))) && (offset_j_row_start_l0 < offset_j)) {
       Z.dim_i_indices[offset_i] = i;
       Z.dim_j_offsets[offset_i + 1] = offset_j;
       offset_i++;
@@ -450,6 +459,7 @@ void compute_ij_kernel(const A_tensor_format<index_t, value_t> A, const B_tensor
   }
   for (; iter_B_i_p <= stop_B_i_p; iter_B_i_p += 1) {
     index_t i = B.dim_i_indices[iter_B_i_p];
+    index_t offset_j_row_start_l0 = offset_j;
     index_t iter_B_j_p = (iter_B_i_p == start_B_i_p) ? start_B_j_p : B.dim_j_offsets[iter_B_i_p];
     index_t stop_B_j_p = (iter_B_i_p == end_B_i_p) ? end_B_j_p : (B.dim_j_offsets[(iter_B_i_p + 1)] - 1);
     for (; iter_B_j_p <= stop_B_j_p; iter_B_j_p += 1) {
@@ -458,7 +468,7 @@ void compute_ij_kernel(const A_tensor_format<index_t, value_t> A, const B_tensor
       Z.values[offset_j] = B.values[iter_B_j_p];
       offset_j++;
     }
-    if (((iter_B_i_p != stop_B_i_p) && ((iter_B_i_p != start_B_i_p) || ((start_B_j_p <= end_B_j_p) && (start_B_j_p <= (B.dim_j_offsets[iter_B_i_p + 1] - 1))))) || (((((B.dim_j_offsets[iter_B_i_p + 1] - 1) <= end_B_j_p) && (start_B_j_p <= end_B_j_p)) || ((B.dim_j_offsets[iter_B_i_p + 1] - 1) < start_B_j_p)) && ((start_B_j_p <= end_B_j_p) && (start_B_j_p <= (B.dim_j_offsets[iter_B_i_p + 1] - 1))))) {
+    if ((((iter_B_i_p != stop_B_i_p) && ((iter_B_i_p != start_B_i_p) || ((start_B_j_p <= end_B_j_p) && (start_B_j_p <= (B.dim_j_offsets[iter_B_i_p + 1] - 1))))) || (((((B.dim_j_offsets[iter_B_i_p + 1] - 1) <= end_B_j_p) && (start_B_j_p <= end_B_j_p)) || ((B.dim_j_offsets[iter_B_i_p + 1] - 1) < start_B_j_p)) && ((start_B_j_p <= end_B_j_p) && (start_B_j_p <= (B.dim_j_offsets[iter_B_i_p + 1] - 1))))) && (offset_j_row_start_l0 < offset_j)) {
       Z.dim_i_indices[offset_i] = i;
       Z.dim_j_offsets[offset_i + 1] = offset_j;
       offset_i++;
@@ -516,10 +526,10 @@ void Z_compute(const A_tensor_format<index_t, value_t> A, const B_tensor_format<
   cudaMalloc((void**)&Z.values, nnz_j_0 * sizeof(value_t));
   cudaMalloc((void**)&Z.dim_j_offsets, (nnz_i_0 + 1) * sizeof(index_t));
   cudaMemset(Z.dim_j_offsets, 0, (nnz_i_0 + 1) * sizeof(index_t));
+  compute_ij_kernel<index_t, value_t><<<num_blocks, threads_per_block>>>(A, B, partitions_0, count_offsets_0, per_thread_work_0, Z);
   Z.dim_i_length = nnz_i_0;
   Z.dim_j_length = nnz_j_0;
   Z.nnz = nnz_j_0;
-  compute_ij_kernel<index_t, value_t><<<num_blocks, threads_per_block>>>(A, B, partitions_0, count_offsets_0, per_thread_work_0, Z);
   cudaFree(partitions_0.A_i_p);
   cudaFree(partitions_0.B_i_p);
   cudaFree(partitions_0.A_j_p);

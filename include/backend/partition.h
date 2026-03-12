@@ -44,6 +44,8 @@ struct PartitionKernelLowerer: public BaseKernelLowerer {
 
     llir::lStmt lower_trivial_partition_loop(int loop_index, bool is_last_loop);
 
+    llir::lStmt lower_row_aligned_last_loop_partition(int loop_index);
+
     llir::lStmt get_store_partition_statements(int loop_index, llir::lExpr index_value, bool need_to_exclude_tensors_at_runtime, bool is_last_loop);
 
     llir::lExpr get_call_work_function_expr(int loop_index, bool is_last_loop, TensorLowerer& tensor, llir::lExpr index_value);
