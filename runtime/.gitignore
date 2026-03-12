@@ -1,0 +1,23 @@
+nanobind_test.egg-info
+_skbuild
+/dist
+__pycache__
+build
+*.pyd
+*.egg-info
+.vscode
+.vs
+
+# Assorted build files
+**/build/
+venv/
+.vscode
+**/__pycache__/
+
+# Profiling artifacts
+*.nsys-rep
+*.sqlite
+*.ncu-rep
+
+# Benchmark results
+benchmark_results/
