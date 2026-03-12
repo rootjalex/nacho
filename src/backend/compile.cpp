@@ -495,6 +495,8 @@ namespace backend {
 
         // For each phase, generate the host-side orchestration
         int num_phases = (int)phase_struct_infos.size();
+        std::string prev_phase_outermost_nnz;  // tracks nnz from previous phase for T_work_offsets indexing
+        int prev_phase_max_sparse = -1;  // highest sparse level allocated in previous phases
         for (int phase = 0; phase < num_phases; phase++) {
             const auto &phase_info = phase_struct_infos[phase];
             const llir::Struct_t *partition_struct = phase_info.partition_struct.as<llir::Struct_t>();
@@ -543,13 +545,14 @@ namespace backend {
                 body_stmts.emplace_back(llir::RawCode::make(
                     "index_t total_work_" + std::to_string(phase) + " = " + total_work_expr + ";"));
             } else {
-                // Phase N>0: total_work comes from prefix sum result of previous phase
+                // Phase N>0: total_work comes from prefix sum result of previous phase.
+                // Read from the last valid entry (indexed by previous phase's output nnz).
                 body_stmts.emplace_back(llir::RawCode::make(
                     "index_t total_work_" + std::to_string(phase) + ";"));
                 body_stmts.emplace_back(llir::RawCode::make(
                     "cudaMemcpy(&total_work_" + std::to_string(phase) +
-                    ", &T_work_offsets_prefix[total_work_" + std::to_string(phase - 1) +
-                    " - 1], sizeof(index_t), cudaMemcpyDeviceToHost);"));
+                    ", &T_work_offsets_prefix[" + prev_phase_outermost_nnz +
+                    "], sizeof(index_t), cudaMemcpyDeviceToHost);"));
             }
 
             std::string total_work_name = "total_work_" + std::to_string(phase);
@@ -694,7 +697,9 @@ namespace backend {
 
                 // 8. Allocate output tensor arrays based on nnz
                 // Allocate indices and values arrays for sparse dimensions
-                for (int lvl = 0; lvl <= phase_info.current_sparse_intersection; lvl++) {
+                // Skip levels already allocated in previous phases
+                int alloc_start = prev_phase_max_sparse + 1;
+                for (int lvl = alloc_start; lvl <= phase_info.current_sparse_intersection; lvl++) {
                     auto idx = result_tensor.tensor_type.format.levels[lvl].index;
                     if (is_sparse_format(result_tensor.tensor_type.format.lvlfmt_of(idx))) {
                         std::string nnz_name = "nnz_" + idx + "_" + std::to_string(phase);
@@ -748,7 +753,8 @@ namespace backend {
                 }
 
                 // Set result tensor nnz/length fields from precompute results
-                for (int lvl = 0; lvl <= phase_info.current_sparse_intersection; lvl++) {
+                // Skip levels already set in previous phases
+                for (int lvl = alloc_start; lvl <= phase_info.current_sparse_intersection; lvl++) {
                     auto idx = result_tensor.tensor_type.format.levels[lvl].index;
                     if (is_sparse_format(result_tensor.tensor_type.format.lvlfmt_of(idx))) {
                         std::string nnz_name = "nnz_" + idx + "_" + std::to_string(phase);
@@ -772,13 +778,86 @@ namespace backend {
                 }
             }
 
-            // Allocate T_work_offsets if this is not the last phase
+            // For multi-phase expressions, compute the output nnz variable name
+            // for the outermost sparse dim of this phase. This is used for
+            // pos_map allocation and T_work_offsets sizing.
             bool is_last_phase = (phase == num_phases - 1);
+            std::string phase_outermost_nnz;
+            if (!is_last_phase) {
+                for (int lvl = 0; lvl <= phase_info.current_sparse_intersection; lvl++) {
+                    auto idx = result_tensor.tensor_type.format.levels[lvl].index;
+                    if (is_sparse_format(result_tensor.tensor_type.format.lvlfmt_of(idx))) {
+                        phase_outermost_nnz = "nnz_" + idx + "_" + std::to_string(phase);
+                        break;
+                    }
+                }
+            }
+
+            // Early return if this phase produced zero output elements
+            // and there are more phases to come (prevents out-of-bounds reads).
+            if (!is_last_phase && !phase_outermost_nnz.empty()) {
+                // Emit: if (nnz == 0) { set remaining fields to 0, free intermediates, return; }
+                std::string guard;
+                guard += "if (" + phase_outermost_nnz + " == 0) {\n";
+                // Set remaining output fields to zero
+                for (int lvl = phase_info.current_sparse_intersection + 1;
+                     lvl < (int)result_tensor.tensor_type.format.levels.size(); lvl++) {
+                    auto idx = result_tensor.tensor_type.format.levels[lvl].index;
+                    if (is_sparse_format(result_tensor.tensor_type.format.lvlfmt_of(idx))) {
+                        guard += "  " + result_tensor.tensor_name + "." +
+                                 result_tensor.get_length_field_name(idx) + " = 0;\n";
+                    }
+                }
+                guard += "  " + result_tensor.tensor_name + ".nnz = 0;\n";
+                // Free partition and count structs
+                for (const auto &field : partition_struct->fields) {
+                    guard += "  cudaFree(" + partition_var + "." + field.first + ");\n";
+                }
+                if (phase_info.has_precompute) {
+                    const llir::Struct_t *counts_struct = phase_info.counts_struct.as<llir::Struct_t>();
+                    for (const auto &field : counts_struct->fields) {
+                        guard += "  cudaFree(" + counts_var + "." + field.first + ");\n";
+                    }
+                }
+                guard += "  return;\n";
+                guard += "}";
+                body_stmts.emplace_back(llir::RawCode::make(guard));
+            }
+
+            // Allocate result_to_operand_pos_map if this is not the last phase.
+            if (!is_last_phase && !phase_outermost_nnz.empty()) {
+                auto forall_list = get_forall_list();
+                auto empty_map = std::map<std::string, TensorLowerer>();
+                BaseKernelLowerer base_lowerer(operand_tensors, result_tensor, empty_map,
+                                               forall_list, -1, -1, -1);
+                std::string pos_map_struct = base_lowerer.get_result_to_operand_pos_map_struct_name();
+                std::string pos_map_var = base_lowerer.get_result_to_operand_pos_map_var_name();
+
+                body_stmts.emplace_back(llir::RawCode::make(
+                    pos_map_struct + "<index_t> " + pos_map_var + ";"));
+                for (int lvl = 0; lvl <= phase_info.current_sparse_intersection; lvl++) {
+                    if (lvl >= (int)forall_list.size() - 1) continue;
+                    const Forall *forall = forall_list[lvl].as<Forall>();
+                    std::string forall_idx = forall->idx;
+                    for (auto &[name, tensor] : operand_tensors) {
+                        if (base_lowerer.exists_field_in_result_to_operand_pos_map(forall, tensor)) {
+                            std::string field = tensor.get_iterator_suffix(forall_idx);
+                            body_stmts.emplace_back(llir::RawCode::make(
+                                "cudaMalloc((void**)&" + pos_map_var + "." + field +
+                                ", " + phase_outermost_nnz + " * sizeof(index_t));"));
+                        }
+                    }
+                }
+            }
+
+            // Allocate T_work_offsets if this is not the last phase.
+            // Size is the output nnz of the outermost sparse dim (not total_work),
+            // since the compute kernel only writes one entry per output element.
             if (!is_last_phase) {
                 body_stmts.emplace_back(llir::RawCode::make(
                     "index_t* T_work_offsets;"));
                 body_stmts.emplace_back(llir::RawCode::make(
-                    "cudaMalloc((void**)&T_work_offsets, " + total_work_name +
+                    "cudaMalloc((void**)&T_work_offsets, " + phase_outermost_nnz +
                     " * sizeof(index_t));"));
             }
 
@@ -810,31 +889,39 @@ namespace backend {
                 }
             }
 
-            // Prefix sum T_work_offsets if not the last phase
+            // Prefix sum T_work_offsets if not the last phase.
+            // Use the output nnz (not total_work) since only nnz entries are valid.
             if (!is_last_phase) {
+                std::string tw_size = phase_outermost_nnz;
                 std::string temp_var = "d_temp_tw_" + std::to_string(phase);
                 std::string temp_bytes = "temp_bytes_tw_" + std::to_string(phase);
                 body_stmts.emplace_back(llir::RawCode::make(
                     "index_t* T_work_offsets_prefix;"));
                 body_stmts.emplace_back(llir::RawCode::make(
-                    "cudaMalloc((void**)&T_work_offsets_prefix, " +
-                    total_work_name + " * sizeof(index_t));"));
+                    "cudaMalloc((void**)&T_work_offsets_prefix, (" +
+                    tw_size + " + 1) * sizeof(index_t));"));
+                body_stmts.emplace_back(llir::RawCode::make(
+                    "cudaMemset(T_work_offsets_prefix, 0, (" +
+                    tw_size + " + 1) * sizeof(index_t));"));
                 body_stmts.emplace_back(llir::RawCode::make(
                     "void* " + temp_var + " = nullptr;"));
                 body_stmts.emplace_back(llir::RawCode::make(
                     "size_t " + temp_bytes + " = 0;"));
                 body_stmts.emplace_back(llir::RawCode::make(
                     "cub::DeviceScan::InclusiveSum(" + temp_var + ", " + temp_bytes +
-                    ", T_work_offsets, T_work_offsets_prefix, " + total_work_name + ");"));
+                    ", T_work_offsets, T_work_offsets_prefix + 1, " + tw_size + ");"));
                 body_stmts.emplace_back(llir::RawCode::make(
                     "cudaMalloc(&" + temp_var + ", " + temp_bytes + ");"));
                 body_stmts.emplace_back(llir::RawCode::make(
                     "cub::DeviceScan::InclusiveSum(" + temp_var + ", " + temp_bytes +
-                    ", T_work_offsets, T_work_offsets_prefix, " + total_work_name + ");"));
+                    ", T_work_offsets, T_work_offsets_prefix + 1, " + tw_size + ");"));
                 body_stmts.emplace_back(llir::RawCode::make(
                     "cudaFree(" + temp_var + ");"));
                 body_stmts.emplace_back(llir::RawCode::make(
                     "cudaFree(T_work_offsets);"));
+                // Reassign so next phase's kernels use the prefix sum result
+                body_stmts.emplace_back(llir::RawCode::make(
+                    "T_work_offsets = T_work_offsets_prefix;"));
             }
 
             // 10. Free partition struct intermediates
@@ -852,6 +939,12 @@ namespace backend {
                         "cudaFree(" + counts_var + "." + field.first + ");"));
                 }
             }
+
+            // Track outermost nnz for next phase's T_work_offsets indexing
+            if (!phase_outermost_nnz.empty()) {
+                prev_phase_outermost_nnz = phase_outermost_nnz;
+            }
+            prev_phase_max_sparse = phase_info.current_sparse_intersection;
         }
 
         llir::lStmt body = llir::Sequence::make(std::move(body_stmts));
@@ -900,6 +993,31 @@ namespace backend {
             .type = index_t,
             .name = "out_nnz"
         });
+
+        // Output references: length for non-innermost sparse dims
+        // (innermost sparse dim length == nnz, already covered by out_nnz)
+        {
+            // Find innermost sparse level
+            int innermost_sparse = -1;
+            for (int i = (int)result_tensor.tensor_type.format.levels.size() - 1; i >= 0; i--) {
+                auto idx = result_tensor.tensor_type.format.levels[i].index;
+                if (is_sparse_format(result_tensor.tensor_type.format.lvlfmt_of(idx))) {
+                    innermost_sparse = i;
+                    break;
+                }
+            }
+            for (int i = 0; i < (int)result_tensor.tensor_type.format.levels.size(); i++) {
+                auto idx = result_tensor.tensor_type.format.levels[i].index;
+                if (is_sparse_format(result_tensor.tensor_type.format.lvlfmt_of(idx)) && i != innermost_sparse) {
+                    args.push_back({
+                        .mutating = true,
+                        .by_reference = true,
+                        .type = index_t,
+                        .name = "out_" + result_tensor.get_length_field_name(idx)
+                    });
+                }
+            }
+        }
 
         // Output references: indices (and offsets for non-outermost) for each sparse dim
         for (int i = (int)result_tensor.tensor_type.format.levels.size() - 1; i >= 0; i--) {
@@ -971,6 +1089,26 @@ namespace backend {
         // Extract outputs
         body_stmts.push_back(llir::RawCode::make(
             "out_nnz = " + result_tensor.tensor_name + ".nnz;"));
+        // Extract length for non-innermost sparse dims
+        {
+            int innermost_sparse = -1;
+            for (int i = (int)result_tensor.tensor_type.format.levels.size() - 1; i >= 0; i--) {
+                auto idx = result_tensor.tensor_type.format.levels[i].index;
+                if (is_sparse_format(result_tensor.tensor_type.format.lvlfmt_of(idx))) {
+                    innermost_sparse = i;
+                    break;
+                }
+            }
+            for (int i = 0; i < (int)result_tensor.tensor_type.format.levels.size(); i++) {
+                auto idx = result_tensor.tensor_type.format.levels[i].index;
+                if (is_sparse_format(result_tensor.tensor_type.format.lvlfmt_of(idx)) && i != innermost_sparse) {
+                    body_stmts.push_back(llir::RawCode::make(
+                        "out_" + result_tensor.get_length_field_name(idx) + " = " +
+                        result_tensor.tensor_name + "." +
+                        result_tensor.get_length_field_name(idx) + ";"));
+                }
+            }
+        }
         for (int i = (int)result_tensor.tensor_type.format.levels.size() - 1; i >= 0; i--) {
             auto idx = result_tensor.tensor_type.format.levels[i].index;
             if (is_sparse_format(result_tensor.tensor_type.format.lvlfmt_of(idx))) {

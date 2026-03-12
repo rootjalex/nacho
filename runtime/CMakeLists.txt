@@ -58,6 +58,11 @@ set(nanobind_cuda_example_CUDA_SRC
   src/broadcasts/broadcasts.cu
   src/spgemm/spgemm.cu
   src/nacho_generated/sparse_vec_mul.cu
+  src/nacho_generated/sparse_vec_add.cu
+  src/nacho_generated/sparse_vec_apb_c.cu
+  src/nacho_generated/sparse_vec_ab_pc.cu
+  src/nacho_generated/dcsr_mul.cu
+  src/nacho_generated/dcsr_add.cu
 )
 
 set(CPM_DOWNLOAD_VERSION 0.39.0)

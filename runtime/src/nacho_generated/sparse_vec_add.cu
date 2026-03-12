@@ -3,7 +3,7 @@
 #include <cuda_runtime.h>
 #include <cub/cub.cuh>
 
-namespace sparse_vec_mul_ns {
+namespace sparse_vec_add_ns {
 
 template<typename index_t>
 __device__ __inline__ 
@@ -154,9 +154,23 @@ void precompute_i_kernel(const a_tensor_format<index_t, value_t> a, const b_tens
     index_t i = min(b_i, a_i);
     if ((i == a_i) && (i == b_i)) {
       count_i++;
+    } else {
+      if (i == a_i) {
+        count_i++;
+      } else {
+        if (i == b_i) {
+          count_i++;
+        }
+      }
     }
     iter_a_i_p += (a_i == i);
     iter_b_i_p += (b_i == i);
+  }
+  for (; iter_a_i_p <= stop_a_i_p; iter_a_i_p += 1) {
+    count_i++;
+  }
+  for (; iter_b_i_p <= stop_b_i_p; iter_b_i_p += 1) {
+    count_i++;
   }
   count_offsets.dim_i_count[thread_id] = count_i;
   return;
@@ -183,11 +197,35 @@ void compute_i_kernel(const a_tensor_format<index_t, value_t> a, const b_tensor_
     index_t i = min(b_i, a_i);
     if ((i == a_i) && (i == b_i)) {
       Z.dim_i_indices[offset_i] = i;
-      Z.values[offset_i] = a.values[iter_a_i_p] * b.values[iter_b_i_p];
+      Z.values[offset_i] = a.values[iter_a_i_p] + b.values[iter_b_i_p];
       offset_i++;
+    } else {
+      if (i == a_i) {
+        Z.dim_i_indices[offset_i] = i;
+        Z.values[offset_i] = a.values[iter_a_i_p];
+        offset_i++;
+      } else {
+        if (i == b_i) {
+          Z.dim_i_indices[offset_i] = i;
+          Z.values[offset_i] = b.values[iter_b_i_p];
+          offset_i++;
+        }
+      }
     }
     iter_a_i_p += (a_i == i);
     iter_b_i_p += (b_i == i);
+  }
+  for (; iter_a_i_p <= stop_a_i_p; iter_a_i_p += 1) {
+    index_t i = a.dim_i_indices[iter_a_i_p];
+    Z.dim_i_indices[offset_i] = i;
+    Z.values[offset_i] = a.values[iter_a_i_p];
+    offset_i++;
+  }
+  for (; iter_b_i_p <= stop_b_i_p; iter_b_i_p += 1) {
+    index_t i = b.dim_i_indices[iter_b_i_p];
+    Z.dim_i_indices[offset_i] = i;
+    Z.values[offset_i] = b.values[iter_b_i_p];
+    offset_i++;
   }
   return;
 }
@@ -230,13 +268,13 @@ void Z_compute(const a_tensor_format<index_t, value_t> a, const b_tensor_format<
   cudaFree(count_offsets_0.dim_i_count);
 }
 
-} // namespace sparse_vec_mul_ns
+} // namespace sparse_vec_add_ns
 
-using namespace sparse_vec_mul_ns;
+using namespace sparse_vec_add_ns;
 
 template<typename index_t, typename value_t>
 __host__ 
-void sparse_vec_mul(index_t a_dim_i_size, index_t a_dim_i_length, index_t* a_dim_i_indices, value_t* a_values, index_t a_nnz, index_t b_dim_i_size, index_t b_dim_i_length, index_t* b_dim_i_indices, value_t* b_values, index_t b_nnz, index_t result_dim_i_size, index_t& out_nnz, index_t*& out_dim_i_indices, value_t*& out_values) {
+void sparse_vec_add(index_t a_dim_i_size, index_t a_dim_i_length, index_t* a_dim_i_indices, value_t* a_values, index_t a_nnz, index_t b_dim_i_size, index_t b_dim_i_length, index_t* b_dim_i_indices, value_t* b_values, index_t b_nnz, index_t result_dim_i_size, index_t& out_nnz, index_t*& out_dim_i_indices, value_t*& out_values) {
   a_tensor_format<index_t, value_t> a;
   a.dim_i_size = a_dim_i_size;
   a.dim_i_length = a_dim_i_length;
@@ -258,4 +296,4 @@ void sparse_vec_mul(index_t a_dim_i_size, index_t a_dim_i_length, index_t* a_dim
 }
 
 // Explicit template instantiation
-template void sparse_vec_mul<int, float>(int, int, int*, float*, int, int, int, int*, float*, int, int, int&, int*&, float*&);
+template void sparse_vec_add<int, float>(int, int, int*, float*, int, int, int, int*, float*, int, int, int&, int*&, float*&);

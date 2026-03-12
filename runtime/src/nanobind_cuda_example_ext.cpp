@@ -74,6 +74,15 @@ NB_MODULE(nanobind_cuda_example_ext, m) {
         .def_ro("time_2", &CVector<int32_t, int64_t, float>::time_2, nb::rv_policy::reference)
         .def_ro("time_3", &CVector<int32_t, int64_t, float>::time_3, nb::rv_policy::reference);
 
+    nb::class_<DCSR<int32_t, float>>(m, "DCSR")
+        .def(nb::init<const Int32Vector &, const Int32Vector &, const Int32Vector &, const Float32Vector &, const int32_t &, const int32_t &>())
+        .def_ro("row_indices", &DCSR<int32_t, float>::row_indices, nb::rv_policy::reference)
+        .def_ro("row_offsets", &DCSR<int32_t, float>::row_offsets, nb::rv_policy::reference)
+        .def_ro("col_indices", &DCSR<int32_t, float>::col_indices, nb::rv_policy::reference)
+        .def_ro("data", &DCSR<int32_t, float>::data, nb::rv_policy::reference)
+        .def_ro("nrows", &DCSR<int32_t, float>::nrows, nb::rv_policy::reference)
+        .def_ro("ncols", &DCSR<int32_t, float>::ncols, nb::rv_policy::reference);
+
     // Add CSR matrix addition function
     m.def("gpu_csr_add_f32", &nb_gpu_csr_add_f32);
     m.def("gpu_coo_add_f32", &nb_gpu_coo_add_f32);
@@ -84,6 +93,11 @@ NB_MODULE(nanobind_cuda_example_ext, m) {
 
     // nacho-generated operations
     m.def("nacho_sparse_vec_mul", &nacho_sparse_vec_mul_nb);
+    m.def("nacho_sparse_vec_add", &nacho_sparse_vec_add_nb);
+    m.def("nacho_sparse_vec_apb_c", &nacho_sparse_vec_apb_c_nb);
+    m.def("nacho_sparse_vec_ab_pc", &nacho_sparse_vec_ab_pc_nb);
+    m.def("nacho_dcsr_mul", &nacho_dcsr_mul_nb);
+    m.def("nacho_dcsr_add", &nacho_dcsr_add_nb);
 
     // handwritten
     // m.def("cv_collapse_coo", &cv_collapse_coo<uint32_t, uint32_t, float>);

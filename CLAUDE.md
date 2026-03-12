@@ -8,26 +8,34 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Build Commands
 
+Always use the `nacho` conda environment for all build and run commands: `conda run -n nacho <cmd>` or `conda activate nacho` first.
+
 ```bash
 # Normal build
-cmake -S . -B build
-cmake --build build -j$(nproc)
+conda run -n nacho cmake -S . -B build
+conda run -n nacho cmake --build build -j$(nproc)
 
 # Debug build (includes UBSan)
-cmake -S . -B build-dbg -DCMAKE_BUILD_TYPE=Debug
-cmake --build build-dbg --config Debug -j$(nproc)
+conda run -n nacho cmake -S . -B build-dbg -DCMAKE_BUILD_TYPE=Debug
+conda run -n nacho cmake --build build-dbg --config Debug -j$(nproc)
 
 # Run all tests
-ctest --test-dir build
+conda run -n nacho ctest --test-dir build
 
 # Run a single test
-./build/compiler --test sparse_vec_mul
+conda run -n nacho ./build/compiler --test sparse_vec_mul
 
 # List available tests
-./build/compiler --list
+conda run -n nacho ./build/compiler --list
 
 # Run everything (all tests, verbose output)
-./build/compiler
+conda run -n nacho ./build/compiler
+
+# Install runtime (requires CUDA)
+conda run -n nacho pip install runtime/
+
+# Run runtime tests
+conda run -n nacho pytest runtime/tests/
 ```
 
 Requires CMake 3.30+. Tests are defined in `compiler.cpp` and registered via CTest.

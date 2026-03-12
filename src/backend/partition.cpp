@@ -299,17 +299,17 @@ namespace backend {
 
         // Add bookeeping boolean variables to keep track of what tensors are currently considered
         // if tensors can get excluded at runtime (if they are already fully inside the partition boundary)
-        if(need_to_exclude_tensors_at_runtime) {
-            for(auto it : operand_tensors) {
-                std::string var_name = "is_" + it.second.tensor_name + "_partitioned";
-                stmts.emplace_back(
-                    llir::Declare::make(
-                        llir::Generic_t::make("bool"),
-                        var_name,
-                        llir::lConst::make(false)
-                    )
-                );
-            }
+        // Always declare these to avoid undefined variable errors when they are referenced
+        // in the partition loop narrowing code.
+        for(auto it : operand_tensors) {
+            std::string var_name = "is_" + it.second.tensor_name + "_partitioned";
+            stmts.emplace_back(
+                llir::Declare::make(
+                    llir::Generic_t::make("bool"),
+                    var_name,
+                    llir::lConst::make(false)
+                )
+            );
         }
 
 

@@ -321,10 +321,19 @@ static void emit_to_file(const std::string &dir, const std::string &op_name,
     ofs << "#include <cuda_runtime.h>\n";
     ofs << "#include <cub/cub.cuh>\n\n";
 
+    // Wrap internal symbols in a unique namespace to avoid collisions
+    // when multiple generated .cu files are compiled into the same library.
+    ofs << "namespace " << op_name << "_ns {\n\n";
+
     CIN cin = compile_to_cin(expr);
     backend::CINLowerer lowerer(cin, ofs);
     lowerer.lower_cin();
     ofs << "\n";
+
+    ofs << "} // namespace " << op_name << "_ns\n\n";
+    ofs << "using namespace " << op_name << "_ns;\n\n";
+
+    // Flat wrapper at global scope (uses internal types via using namespace)
     lowerer.lower_flat_wrapper(op_name);
     ofs << "\n";
 
@@ -359,6 +368,23 @@ static void emit_to_file(const std::string &dir, const std::string &op_name,
     }
     // Output refs: nnz
     ofs << ", int&";
+    // Output refs: length for non-innermost sparse dims
+    {
+        int innermost_sparse = -1;
+        for (int i = (int)lowerer.result_tensor.tensor_type.format.levels.size() - 1; i >= 0; i--) {
+            auto idx = lowerer.result_tensor.tensor_type.format.levels[i].index;
+            if (is_sparse_format(lowerer.result_tensor.tensor_type.format.lvlfmt_of(idx))) {
+                innermost_sparse = i;
+                break;
+            }
+        }
+        for (int i = 0; i < (int)lowerer.result_tensor.tensor_type.format.levels.size(); i++) {
+            auto idx = lowerer.result_tensor.tensor_type.format.levels[i].index;
+            if (is_sparse_format(lowerer.result_tensor.tensor_type.format.lvlfmt_of(idx)) && i != innermost_sparse) {
+                ofs << ", int&";
+            }
+        }
+    }
     // Output refs: indices (and offsets for non-outermost)
     for (int i = (int)lowerer.result_tensor.tensor_type.format.levels.size() - 1; i >= 0; i--) {
         auto idx = lowerer.result_tensor.tensor_type.format.levels[i].index;

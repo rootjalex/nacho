@@ -174,6 +174,47 @@ struct CVector {
     }
 };
 
+template<typename index_t, typename value_t>
+struct DCSR {
+    using IntVector = nb::ndarray<nb::pytorch, index_t, nb::shape<-1>, nb::c_contig, nb::device::cuda>;
+    using FloatVector = nb::ndarray<nb::pytorch, value_t, nb::shape<-1>, nb::c_contig, nb::device::cuda>;
+    IntVector row_indices;   // dim_i_indices
+    IntVector row_offsets;   // dim_j_offsets
+    IntVector col_indices;   // dim_j_indices
+    FloatVector data;        // values
+    index_t nrows = 0;       // dim_i_size
+    index_t ncols = 0;       // dim_j_size
+
+    DCSR(const IntVector &_row_indices, const IntVector &_row_offsets,
+         const IntVector &_col_indices, const FloatVector &_data,
+         const index_t &_nrows, const index_t &_ncols)
+        : row_indices(_row_indices), row_offsets(_row_offsets),
+          col_indices(_col_indices), data(_data),
+          nrows(_nrows), ncols(_ncols) {}
+
+    DCSR(index_t *_row_indices, index_t *_row_offsets,
+         index_t *_col_indices, value_t *_data,
+         const index_t _nrows, const index_t _ncols,
+         const index_t nrows_compressed, const index_t nnz) {
+        nrows = _nrows;
+        ncols = _ncols;
+
+        size_t shape_nrows_comp[1] = { (size_t)nrows_compressed };
+        size_t shape_offsets[1] = { (size_t)(nrows_compressed + 1) };
+        size_t shape_nnz[1] = { (size_t)nnz };
+
+        nb::capsule owner_ri(_row_indices, cudaFreeWrapper);
+        nb::capsule owner_ro(_row_offsets, cudaFreeWrapper);
+        nb::capsule owner_ci(_col_indices, cudaFreeWrapper);
+        nb::capsule owner_data(_data, cudaFreeWrapper);
+
+        row_indices = IntVector(_row_indices, 1, shape_nrows_comp, owner_ri, nullptr, nb::dtype<index_t>(), nb::device::cuda::value);
+        row_offsets = IntVector(_row_offsets, 1, shape_offsets, owner_ro, nullptr, nb::dtype<index_t>(), nb::device::cuda::value);
+        col_indices = IntVector(_col_indices, 1, shape_nnz, owner_ci, nullptr, nb::dtype<index_t>(), nb::device::cuda::value);
+        data = FloatVector(_data, 1, shape_nnz, owner_data, nullptr, nb::dtype<value_t>(), nb::device::cuda::value);
+    }
+};
+
 // std::min does weird stuff sometimes, use this instead.
 // template<typename T, typename S>
 // uint64_t min(const T &t, const S &s) {
