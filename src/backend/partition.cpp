@@ -56,23 +56,8 @@ namespace backend {
                                     std::move(generics));
 }
 
-    llir::lStmt PartitionKernelLowerer::lower_partition_kernel() {
-
-        std::vector<std::string> generics = {"index_t", "value_t"};
-
-        std::vector<llir::Function::Attribute> attributes = {
-            llir::Function::global};
-
+    std::vector<llir::Function::Argument> PartitionKernelLowerer::get_kernel_args() {
         std::vector<llir::Function::Argument> args;
-        llir::lType ret_type;
-        std::string name;
-        llir::lStmt body;
-
-        name = get_partition_function_name();
-
-        ret_type = llir::Generic_t::make("void");
-
-
 
         for(auto it: operand_tensors) {
             args.emplace_back(llir::Function::Argument{
@@ -87,7 +72,6 @@ namespace backend {
         args.emplace_back(llir::Function::Argument{
             .mutating = true, .type = llir::Generic_t::make(get_partition_struct_name()+"<index_t>"), .name = "partitions"
         });
-
 
         args.emplace_back(llir::Function::Argument{
             .mutating = false, .type = index_t, .name = "per_thread_work"
@@ -123,6 +107,25 @@ namespace backend {
                 .name = get_result_to_operand_pos_map_var_name()
             });
         }
+
+        return args;
+    }
+
+    llir::lStmt PartitionKernelLowerer::lower_partition_kernel() {
+
+        std::vector<std::string> generics = {"index_t", "value_t"};
+
+        std::vector<llir::Function::Attribute> attributes = {
+            llir::Function::global};
+
+        std::vector<llir::Function::Argument> args = get_kernel_args();
+        llir::lType ret_type;
+        std::string name;
+        llir::lStmt body;
+
+        name = get_partition_function_name();
+
+        ret_type = llir::Generic_t::make("void");
 
         std::vector<llir::lStmt> stmts;
 

@@ -202,4 +202,14 @@ void Visitor::visit(const llir::Accumulate *node) {
     node->value.accept(this);
 }
 
+void Visitor::visit(const llir::KernelLaunch *node) {
+    node->grid_dim.accept(this);
+    node->block_dim.accept(this);
+    for (const auto &arg : node->args) {
+        arg.accept(this);
+    }
+}
+
+void Visitor::visit(const llir::RawCode *node) { (void)node; }
+
 } // namespace nacho

@@ -31,6 +31,7 @@ struct PartitionKernelLowerer: public BaseKernelLowerer {
         }
 
     llir::lStmt lower_partition_kernel();
+    std::vector<llir::Function::Argument> get_kernel_args();
 
     /// Lower the struct definition which holds the partition values for this kernel
     llir::lType lower_partition_struct_definition();

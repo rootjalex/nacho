@@ -17,11 +17,20 @@ cmake --build build -j$(nproc)
 cmake -S . -B build-dbg -DCMAKE_BUILD_TYPE=Debug
 cmake --build build-dbg --config Debug -j$(nproc)
 
-# Run
+# Run all tests
+ctest --test-dir build
+
+# Run a single test
+./build/compiler --test sparse_vec_mul
+
+# List available tests
+./build/compiler --list
+
+# Run everything (all tests, verbose output)
 ./build/compiler
 ```
 
-Requires CMake 3.30+. No formal test suite yet — `compiler.cpp` contains ad-hoc test functions invoked from `main()`.
+Requires CMake 3.30+. Tests are defined in `compiler.cpp` and registered via CTest.
 
 ## Code Style
 

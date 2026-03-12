@@ -30,8 +30,10 @@ namespace backend {
             : BaseKernelLowerer(operand_tensors, result_tensor, included_tensors, forall_list, previous_sparse_intersection, current_sparse_intersection, next_sparse_intersection), cin(cin) {}
 
         llir::lStmt lower_precompute_function();
+        std::vector<llir::Function::Argument> get_precompute_kernel_args();
 
         llir::lStmt lower_compute_function();
+        std::vector<llir::Function::Argument> get_compute_kernel_args();
 
         llir::lStmt lower_loop(CIN loop,
             const std::set<Seq, SeqLessThan> &defined,

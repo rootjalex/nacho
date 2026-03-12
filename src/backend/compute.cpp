@@ -110,21 +110,8 @@ void ComputeKernelLowerer::add_partition_assignments(
     return;
 }
 
-llir::lStmt ComputeKernelLowerer::
-    lower_precompute_function() {
-    std::vector<std::string> generics = {"index_t", "value_t"};
-
-    std::vector<llir::Function::Attribute> attributes = {
-        llir::Function::global};
-
+std::vector<llir::Function::Argument> ComputeKernelLowerer::get_precompute_kernel_args() {
     std::vector<llir::Function::Argument> args;
-    llir::lType ret_type;
-    std::string name;
-    llir::lStmt body;
-
-    name = get_precompute_function_name();
-
-    ret_type = llir::Generic_t::make("void");
 
     for (auto tensor : operand_tensors) {
         args.emplace_back(llir::Function::Argument{
@@ -134,7 +121,6 @@ llir::lStmt ComputeKernelLowerer::
             .name = tensor.second.tensor_name});
     }
 
-    // Add a partitions_{loops} argument type.
     args.emplace_back(llir::Function::Argument{
         .mutating = false,
         .type =
@@ -173,6 +159,25 @@ llir::lStmt ComputeKernelLowerer::
             .name = get_result_to_operand_pos_map_var_name()
         });
     }
+
+    return args;
+}
+
+llir::lStmt ComputeKernelLowerer::
+    lower_precompute_function() {
+    std::vector<std::string> generics = {"index_t", "value_t"};
+
+    std::vector<llir::Function::Attribute> attributes = {
+        llir::Function::global};
+
+    std::vector<llir::Function::Argument> args = get_precompute_kernel_args();
+    llir::lType ret_type;
+    std::string name;
+    llir::lStmt body;
+
+    name = get_precompute_function_name();
+
+    ret_type = llir::Generic_t::make("void");
 
     std::vector<llir::lStmt> stmts;
 
@@ -223,23 +228,8 @@ llir::lStmt ComputeKernelLowerer::
                                 std::move(body));
 }
 
-llir::lStmt ComputeKernelLowerer::
-    lower_compute_function() {
-    llir::lType index_t = llir::Generic_t::make("index_t");
-    llir::lType value_t = llir::Generic_t::make("value_t");
-    std::vector<std::string> generics = {"index_t", "value_t"};
-
-    std::vector<llir::Function::Attribute> attributes = {
-        llir::Function::global};
-
+std::vector<llir::Function::Argument> ComputeKernelLowerer::get_compute_kernel_args() {
     std::vector<llir::Function::Argument> args;
-    llir::lType ret_type;
-    std::string name;
-    llir::lStmt body;
-
-    name = get_compute_function_name();
-
-    ret_type = llir::Generic_t::make("void");
 
     for (auto tensor : operand_tensors) {
         args.emplace_back(llir::Function::Argument{
@@ -249,7 +239,6 @@ llir::lStmt ComputeKernelLowerer::
             .name = tensor.second.tensor_name});
     }
 
-    // Add partition argument.
     args.emplace_back(llir::Function::Argument{
         .mutating = false,
         .type =
@@ -269,8 +258,8 @@ llir::lStmt ComputeKernelLowerer::
         .type = llir::Generic_t::make(result_tensor.get_struct_name() +
                                       "<index_t, value_t>"),
         .name = result_tensor.tensor_name});
-    
-    if(next_sparse_intersection != forall_list.size()) {
+
+    if(next_sparse_intersection != (int)forall_list.size()) {
         args.emplace_back(llir::Function::Argument{
             .mutating = true,
             .type = llir::Ptr_t::make(index_t),
@@ -278,7 +267,7 @@ llir::lStmt ComputeKernelLowerer::
     }
 
     bool need_operand_pos_map_arg = false;
-    int level = next_sparse_intersection==forall_list.size() ? previous_sparse_intersection: current_sparse_intersection;
+    int level = next_sparse_intersection==(int)forall_list.size() ? previous_sparse_intersection: current_sparse_intersection;
     for(int i =0; i<=level; i++) {
         for(auto it: operand_tensors) {
             if(exists_field_in_result_to_operand_pos_map(forall_list[i].as<Forall>(), it.second)){
@@ -295,6 +284,27 @@ llir::lStmt ComputeKernelLowerer::
             .name = get_result_to_operand_pos_map_var_name()
         });
     }
+
+    return args;
+}
+
+llir::lStmt ComputeKernelLowerer::
+    lower_compute_function() {
+    llir::lType index_t = llir::Generic_t::make("index_t");
+    llir::lType value_t = llir::Generic_t::make("value_t");
+    std::vector<std::string> generics = {"index_t", "value_t"};
+
+    std::vector<llir::Function::Attribute> attributes = {
+        llir::Function::global};
+
+    std::vector<llir::Function::Argument> args = get_compute_kernel_args();
+    llir::lType ret_type;
+    std::string name;
+    llir::lStmt body;
+
+    name = get_compute_function_name();
+
+    ret_type = llir::Generic_t::make("void");
 
     std::vector<llir::lStmt> stmts;
 

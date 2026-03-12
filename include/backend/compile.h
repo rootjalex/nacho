@@ -3,6 +3,7 @@
 #include "IRFwdDecl.h"
 #include "CIN.h"
 #include "llir/LLIR.h"
+#include "llir/Function.h"
 #include "Printer.h"
 #include "Type.h"
 #include "backend/tensor.h"
@@ -12,6 +13,14 @@
 
 namespace nacho {
 namespace backend {
+
+        struct KernelInfo {
+            std::string name;
+            std::vector<std::string> template_args;
+            std::vector<llir::Function::Argument> args;
+            enum Kind { Partition, Precompute, Compute } kind;
+            int phase;
+        };
 
         struct CINLowerer {
 
@@ -33,6 +42,22 @@ namespace backend {
             void lower_binary_search_function();
             llir::lType lower_result_pos_to_operand_pos_map_struct(int last_sparse_intersection);
             std::map<std::string, TensorLowerer> get_included_tensors_for_level(int level);
+
+            // Host function generation
+            std::vector<KernelInfo> kernel_infos;
+
+            // Struct types collected during lowering for field enumeration
+            struct PhaseStructInfo {
+                llir::lType partition_struct;
+                llir::lType counts_struct;
+                int previous_sparse_intersection;
+                int current_sparse_intersection;
+                int next_sparse_intersection;
+                bool has_precompute;
+            };
+            std::vector<PhaseStructInfo> phase_struct_infos;
+
+            void lower_host_function();
 
         };
 

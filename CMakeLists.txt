@@ -151,9 +151,26 @@ target_link_libraries(nacho_compiler PRIVATE nacho::library)
 ##
 # Testing
 
-# if (nacho_BUILD_TESTING)
-#     add_subdirectory(tests)
-# endif ()
+if (nacho_BUILD_TESTING)
+    set(NACHO_TESTS
+        sparse_vec_mul
+        sparse_vec_add
+        sparse_vec_apb_c
+        sparse_vec_ab_pc
+        dcsr_mul
+        dcsr_add
+        format_inference
+        lattice
+        locator
+    )
+
+    foreach(test_name IN LISTS NACHO_TESTS)
+        add_test(
+            NAME ${test_name}
+            COMMAND nacho_compiler --test ${test_name}
+        )
+    endforeach()
+endif ()
 
 ##
 # Installation rules

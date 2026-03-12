@@ -6,6 +6,7 @@
 #   ./setup.sh              # Full setup (compiler + runtime)
 #   ./setup.sh --compiler   # Compiler only (no CUDA needed)
 #   ./setup.sh --runtime    # Runtime only (needs CUDA)
+#   ./setup.sh --test       # Build (if needed) and run tests
 #
 set -euo pipefail
 
@@ -135,6 +136,10 @@ setup_compiler() {
     cmake --build "$REPO_DIR/build" -j"$(nproc)"
 
     info "Compiler built: $REPO_DIR/build/compiler"
+
+    info "Running tests..."
+    ctest --test-dir "$REPO_DIR/build" --output-on-failure
+    info "All tests passed."
 }
 
 # ---------------------------------------------------------------------------
@@ -203,6 +208,17 @@ setup_runtime() {
 # Main
 # ---------------------------------------------------------------------------
 
+run_tests() {
+    if [[ ! -f "$REPO_DIR/build/compiler" ]]; then
+        info "Compiler not built yet, building first..."
+        setup_compiler
+    else
+        info "Running tests..."
+        ctest --test-dir "$REPO_DIR/build" --output-on-failure
+        info "All tests passed."
+    fi
+}
+
 case "$MODE" in
     --compiler)
         setup_env
@@ -212,6 +228,10 @@ case "$MODE" in
         setup_env
         setup_runtime
         ;;
+    --test)
+        setup_env
+        run_tests
+        ;;
     --all|"")
         setup_env
         setup_compiler || warn "Compiler setup failed (see above), continuing with runtime..."
@@ -219,14 +239,18 @@ case "$MODE" in
         ;;
     -h|--help)
         cat <<'USAGE'
-Usage: ./setup.sh [--compiler|--runtime|--all]
+Usage: ./setup.sh [--compiler|--runtime|--test|--all]
 
   --compiler   Build the nacho compiler only (no CUDA needed)
   --runtime    Install the CUDA runtime + Python package (needs CUDA + GPU)
-  --all        Both (default)
+  --test       Build (if needed) and run compiler tests
+  --all        Both compiler + runtime (default)
 
 Creates a conda environment called 'nacho' with all dependencies.
 After setup, activate it with: conda activate nacho
+
+Quick start:
+  ./setup.sh --compiler && ctest --test-dir build
 USAGE
         exit 0
         ;;
