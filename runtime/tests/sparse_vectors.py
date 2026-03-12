@@ -18,9 +18,6 @@ def test_mergepath(size, length, a = "", b="",c =""):
     C_index, C_data, size_C = parse_vector(c)
 
     size = max(size_A, size_B, size_C)
-    print(f"Vector sizes: A {size_A}, B {size_B}, C {size_C}, unified size {size}")
-
-    print(f"Vector nnz: A {A_index.shape[0]}, B {B_index.shape[0]}, C {C_index.shape[0]}")
     # Generate random sparse vectors A, B, C
     # print(length)
     # a_length = int(length)#int(size * sparsity_a)
@@ -109,7 +106,6 @@ def test_mergepath(size, length, a = "", b="",c =""):
         size
         )
     torch.cuda.empty_cache()
-    print("Starting Benchmarks")
 
     iter = 14
     torch.cuda.synchronize()
@@ -142,7 +138,6 @@ def test_mergepath(size, length, a = "", b="",c =""):
     
 
     full_lb = result
-    print("-----------------full done-----------------------")
     torch.cuda.synchronize()
 
     times =[]
@@ -171,7 +166,6 @@ def test_mergepath(size, length, a = "", b="",c =""):
 
     partial_lb = result
     # print(D_partial_fusion.indices, D_partial_fusion.data)
-    print("-----------------partial done------------------------")
 
     torch.cuda.synchronize()
 
@@ -200,7 +194,6 @@ def test_mergepath(size, length, a = "", b="",c =""):
 
     nofusion_lb = result
     # print(D_nofusion.indices, D_nofusion.data)
-    print("------------------no done-----------------------")
 
     ans = torch.equal(D_full_fusion.indices, D_partial_fusion.indices)
     ans = ans and torch.equal(D_full_fusion.data, D_partial_fusion.data)
@@ -212,20 +205,7 @@ def test_mergepath(size, length, a = "", b="",c =""):
     # print(" full nofusion data", torch.equal(D_full_fusion.data, D_nofusion.data))
     #print(D_full_fusion.data != D_partial_fusion.data)
     if(not ans):
-        print("Mismatch detected in results!")
-        print(D_nofusion.indices.shape[0], D_partial_fusion.indices.shape[0])
-        
-        print(torch.equal(D_full_fusion.indices[:D_nofusion.indices.shape[0]], D_nofusion.indices))
-        print(D_full_fusion.indices[-20:], D_nofusion.indices[-20:])
-        for i in range(D_full_fusion.indices.shape[0]):
-            if D_full_fusion.indices[i] != D_nofusion.indices[i]:
-                print(f"Mismatch at index {i} in indices: full {D_full_fusion.indices[i]}, nofusion {D_nofusion.indices[i]}")
-                break
-        for i in range(D_full_fusion.indices.shape[0]):
-            if D_full_fusion.indices[i] != D_partial_fusion.indices[i]:
-                print(f"Mismatch at index {i} in indices: full {D_full_fusion.indices[i]}, partial {D_partial_fusion.indices[i]}")
-                break
-        return
+        return ans, full_lb, partial_lb, nofusion_lb, A_index.shape[0]+B_index.shape[0]+C_index.shape[0]
 
     # print(D_full_fusion.indices, D_full_fusion.data)
     # print(D_partial_fusion.indices, D_partial_fusion.data)

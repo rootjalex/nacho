@@ -112,8 +112,6 @@ def benchmark_broadcast():
         print("DATA MISMATCH")
         print(D.data)
         print(C.data)
-    print(ans)
-
     return ans, xA_time, csr_time
 
 def broadcast_test_xA():

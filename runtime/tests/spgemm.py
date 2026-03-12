@@ -25,11 +25,6 @@ def spgemm_benchmark(A_CSR, B_CSR, use_cusparse):
         torch.cuda.synchronize()
         times.append(start.elapsed_time(end))
         
-    print("time1 :", C.time_1)
-    print("time2 :", C.time_2)
-    print("time3 :", C.time_3)
-    print("time4 :", C.time_4)
-
     arr = np.array(times)
 
     trimmed = np.sort(arr)[2:-2]

@@ -356,9 +356,6 @@ def run_sparse_vectors(start, end, save_and_plot, continue_mode=False):
                 df.iloc[i + 1]['name'],
                 df.iloc[i + 2]['name'],
             )
-            if result is None:
-                failed.append(i)
-                continue
             ans, full, partial, no, total_nnz = result
             if not ans:
                 failed.append(i)
