@@ -25,7 +25,8 @@ The repository has two primary parts:
   - `lower_case`: functions, variables, parameters, members.
   - `UPPER_CASE`: `constexpr` variables.
 - Generated kernels are build artifacts; do not hand-edit generated `.cu` files.
-- Add concise comments for non-obvious logic (especially build/codegen wiring) so control flow is human-readable.
+- Add concise comments for non-obvious logic across the codebase so intent and control flow stay human-readable.
+- Prefer short intent comments for complex blocks; avoid comments that restate obvious code.
 
 ## Testing Guidelines
 - Compiler tests are registered through CTest and executed via `build/compiler`.
