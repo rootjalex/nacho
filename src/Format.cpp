@@ -152,40 +152,40 @@ make_format(const Format &a, const Format &b,
 
 } // namespace
 
-int Format::get_prev_sparse_level(int curr_level) const {
-    for (int i = curr_level - 1; i >= 0; --i) {
-        if (is_sparse_format(levels[i].format)) {
+TensorLevelNum Format::get_prev_sparse_level(TensorLevelNum curr_level) const {
+    for (TensorLevelNum i = curr_level - 1; i > BEFORE_FIRST_LEVEL; --i) {
+        if (is_sparse_format(levels[i.get()].format)) {
+            return TensorLevelNum(i);
+        }
+    }
+    return BEFORE_FIRST_LEVEL;
+}
+
+TensorLevelNum Format::get_next_sparse_level(TensorLevelNum curr_level) const {
+    for (TensorLevelNum i = curr_level + 1; i < TensorLevelNum(static_cast<int>(levels.size())); ++i) {
+        if (is_sparse_format(levels[i.get()].format)) {
             return i;
         }
     }
-    return -1;
+    return TensorLevelNum(static_cast<int>(levels.size()));
 }
 
-int Format::get_next_sparse_level(int curr_level) const {
-    for (size_t i = curr_level + 1; i < levels.size(); ++i) {
-        if (is_sparse_format(levels[i].format)) {
-            return static_cast<int>(i);
-        }
-    }
-    return static_cast<int>(levels.size());
-}
-
-int Format::get_last_sparse_level() const {
+TensorLevelNum Format::get_last_sparse_level() const {
     for (int i = static_cast<int>(levels.size()) - 1; i >= 0; --i) {
         if (is_sparse_format(levels[i].format)) {
-            return i;
+            return TensorLevelNum(i);
         }
     }
-    return -1;
+    return BEFORE_FIRST_LEVEL;
 }
 
-int Format::get_level_order(const std::string &idx) const {
+TensorLevelNum Format::get_level_order(const std::string &idx) const {
     for (size_t i = 0; i < levels.size(); ++i) {
         if (levels[i].index == idx) {
-            return static_cast<int>(i);
+            return TensorLevelNum(static_cast<int>(i));
         }
     }
-    return -1;
+    return BEFORE_FIRST_LEVEL;
 }
 
 LevelFormat Format::lvlfmt_of(const std::string &idx) const {
