@@ -1,11 +1,13 @@
-name: Wheels
+name: Runtime Wheels
 
 on:
   workflow_dispatch:
   pull_request:
+    paths: ['runtime/**']
   push:
     branches:
-     - master
+     - main
+    paths: ['runtime/**']
   release:
     types:
       - published
@@ -20,15 +22,17 @@ jobs:
         submodules: true
 
     - name: Build SDist
+      working-directory: runtime
       run: pipx run build --sdist
 
     - name: Check metadata
+      working-directory: runtime
       run: pipx run twine check dist/*
 
     - uses: actions/upload-artifact@v4
       with:
         name: dist-sdist
-        path: dist/*.tar.gz
+        path: runtime/dist/*.tar.gz
 
 
   build_wheels:
@@ -45,6 +49,8 @@ jobs:
         submodules: true
 
     - uses: pypa/cibuildwheel@v2.22
+      with:
+        package-dir: runtime
 
     - name: Verify clean directory
       run: git diff --exit-code

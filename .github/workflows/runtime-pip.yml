@@ -1,11 +1,13 @@
-name: Pip
+name: Runtime Pip
 
 on:
   workflow_dispatch:
   pull_request:
+    paths: ['runtime/**']
   push:
     branches:
-      - master
+      - main
+    paths: ['runtime/**']
 
 jobs:
   build:
@@ -30,9 +32,11 @@ jobs:
         echo "MACOSX_DEPLOYMENT_TARGET=10.14" >> $GITHUB_ENV
 
     - name: Build and install
+      working-directory: runtime
       run: |
         python -m pip install pytest
         pip install --verbose .
 
     - name: Test
+      working-directory: runtime
       run: python -m pytest
