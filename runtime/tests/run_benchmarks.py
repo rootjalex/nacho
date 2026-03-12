@@ -68,38 +68,43 @@ def run_csr_add(start, end, save_and_plot):
 
     indices = [i for i in range(start + 1, end) if i not in skip]
     for i in tqdm(indices, desc="CSR Add", unit="pair"):
-        A = parse_matrix(df.iloc[i - 1]['name'])
-        B = parse_matrix(df.iloc[i]['name'])
-        M = min(A.size(0), B.size(0))
-        N = max(A.size(1), B.size(1))
+        try:
+            A = parse_matrix(df.iloc[i - 1]['name'])
+            B = parse_matrix(df.iloc[i]['name'])
+            M = min(A.size(0), B.size(0))
+            N = max(A.size(1), B.size(1))
 
-        A_t = torch.sparse_csr_tensor(A.crow_indices()[:M+1], A.col_indices()[:A.crow_indices()[M]], A.values()[:A.crow_indices()[M]], (M, N))
-        B_t = torch.sparse_csr_tensor(B.crow_indices()[:M+1], B.col_indices()[:B.crow_indices()[M]], B.values()[:B.crow_indices()[M]], (M, N))
-        plus_row = A_t.crow_indices() + B_t.crow_indices()
+            A_t = torch.sparse_csr_tensor(A.crow_indices()[:M+1], A.col_indices()[:A.crow_indices()[M]], A.values()[:A.crow_indices()[M]], (M, N))
+            B_t = torch.sparse_csr_tensor(B.crow_indices()[:M+1], B.col_indices()[:B.crow_indices()[M]], B.values()[:B.crow_indices()[M]], (M, N))
+            plus_row = A_t.crow_indices() + B_t.crow_indices()
 
-        A_CSR = nanobind_cuda_example.CSR(A_t.crow_indices(), A_t.col_indices(), A_t.values(), torch.tensor([M, N], dtype=torch.int32))
-        B_CSR = nanobind_cuda_example.CSR(B_t.crow_indices(), B_t.col_indices(), B_t.values(), torch.tensor([M, N], dtype=torch.int32))
+            A_CSR = nanobind_cuda_example.CSR(A_t.crow_indices(), A_t.col_indices(), A_t.values(), torch.tensor([M, N], dtype=torch.int32))
+            B_CSR = nanobind_cuda_example.CSR(B_t.crow_indices(), B_t.col_indices(), B_t.values(), torch.tensor([M, N], dtype=torch.int32))
 
-        C_pytorch, pytorch = torch_add(A_t, B_t)
-        C_cusparse, cusparse = csr_add(A_CSR, B_CSR, True)
-        C_manual, manual = csr_add(A_CSR, B_CSR, False)
+            C_pytorch, pytorch = torch_add(A_t, B_t)
+            C_cusparse, cusparse = csr_add(A_CSR, B_CSR, True)
+            C_manual, manual = csr_add(A_CSR, B_CSR, False)
 
-        ans = (torch.equal(C_cusparse.indptr, C_manual.indptr)
-               and torch.equal(C_cusparse.indices, C_manual.indices)
-               and torch.equal(C_cusparse.data, C_manual.data)
-               and torch.equal(C_pytorch.crow_indices(), C_manual.indptr)
-               and torch.equal(C_pytorch.col_indices(), C_manual.indices)
-               and torch.equal(C_pytorch.values(), C_manual.data))
+            ans = (torch.equal(C_cusparse.indptr, C_manual.indptr)
+                   and torch.equal(C_cusparse.indices, C_manual.indices)
+                   and torch.equal(C_cusparse.data, C_manual.data)
+                   and torch.equal(C_pytorch.crow_indices(), C_manual.indptr)
+                   and torch.equal(C_pytorch.col_indices(), C_manual.indices)
+                   and torch.equal(C_pytorch.values(), C_manual.data))
 
-        if not ans:
-            tqdm.write(f"FAILED at {i}: {df.iloc[i-1]['name']} x {df.iloc[i]['name']}")
-            failed.append(i)
-            failure_reason(C_manual, C_cusparse)
+            if not ans:
+                tqdm.write(f"FAILED at {i}: {df.iloc[i-1]['name']} x {df.iloc[i]['name']}")
+                failed.append(i)
+                failure_reason(C_manual, C_cusparse)
 
-        nnz.append(plus_row.max().item())
-        manual_rt.append(manual)
-        cusparse_rt.append(cusparse)
-        pytorch_rt.append(pytorch)
+            nnz.append(plus_row.max().item())
+            manual_rt.append(manual)
+            cusparse_rt.append(cusparse)
+            pytorch_rt.append(pytorch)
+        except (RuntimeError, MemoryError) as e:
+            tqdm.write(f"Skipping {i} ({df.iloc[i-1]['name']} x {df.iloc[i]['name']}): {e}")
+            torch.cuda.empty_cache()
+            continue
 
     if save_and_plot and nnz:
         plot(nnz, manual_rt, cusparse_rt, pytorch_rt, f"torch_nnz_{start}-{end}")
@@ -119,31 +124,36 @@ def run_coo_add(start, end, save_and_plot):
 
     indices = list(range(start + 1, end))
     for i in tqdm(indices, desc="COO Add", unit="pair"):
-        A = parse_matrix(df.iloc[i - 1]['name'], True).coalesce()
-        B = parse_matrix(df.iloc[i]['name'], True).coalesce()
-        M = max(A.size(0), B.size(0))
-        N = max(A.size(1), B.size(1))
+        try:
+            A = parse_matrix(df.iloc[i - 1]['name'], True).coalesce()
+            B = parse_matrix(df.iloc[i]['name'], True).coalesce()
+            M = max(A.size(0), B.size(0))
+            N = max(A.size(1), B.size(1))
 
-        A_t = torch.sparse_coo_tensor(A.indices(), A.values(), (M, N)).coalesce()
-        B_t = torch.sparse_coo_tensor(B.indices(), B.values(), (M, N)).coalesce()
+            A_t = torch.sparse_coo_tensor(A.indices(), A.values(), (M, N)).coalesce()
+            B_t = torch.sparse_coo_tensor(B.indices(), B.values(), (M, N)).coalesce()
 
-        A_COO = nanobind_cuda_example.COO(A.indices()[0], A.indices()[1], A.values(), torch.tensor([M, N], dtype=torch.int32))
-        B_COO = nanobind_cuda_example.COO(B.indices()[0], B.indices()[1], B.values(), torch.tensor([M, N], dtype=torch.int32))
+            A_COO = nanobind_cuda_example.COO(A.indices()[0], A.indices()[1], A.values(), torch.tensor([M, N], dtype=torch.int32))
+            B_COO = nanobind_cuda_example.COO(B.indices()[0], B.indices()[1], B.values(), torch.tensor([M, N], dtype=torch.int32))
 
-        C_pytorch, pytorch = coo_add(A_t, B_t, True)
-        C_manual, manual = coo_add(A_COO, B_COO, False)
+            C_pytorch, pytorch = coo_add(A_t, B_t, True)
+            C_manual, manual = coo_add(A_COO, B_COO, False)
 
-        ans = (torch.equal(C_pytorch.indices()[0], C_manual.row)
-               and torch.equal(C_pytorch.indices()[1], C_manual.col)
-               and torch.equal(C_pytorch.values(), C_manual.data))
+            ans = (torch.equal(C_pytorch.indices()[0], C_manual.row)
+                   and torch.equal(C_pytorch.indices()[1], C_manual.col)
+                   and torch.equal(C_pytorch.values(), C_manual.data))
 
-        if not ans:
-            tqdm.write(f"FAILED at {i}: {df.iloc[i-1]['name']} x {df.iloc[i]['name']}")
-            failed.append(i)
+            if not ans:
+                tqdm.write(f"FAILED at {i}: {df.iloc[i-1]['name']} x {df.iloc[i]['name']}")
+                failed.append(i)
 
-        nnz.append(A_COO.data.numel() + B_COO.data.numel())
-        manual_rt.append(manual)
-        pytorch_rt.append(pytorch)
+            nnz.append(A_COO.data.numel() + B_COO.data.numel())
+            manual_rt.append(manual)
+            pytorch_rt.append(pytorch)
+        except (RuntimeError, MemoryError) as e:
+            tqdm.write(f"Skipping {i} ({df.iloc[i-1]['name']} x {df.iloc[i]['name']}): {e}")
+            torch.cuda.empty_cache()
+            continue
 
     if save_and_plot and nnz:
         plot(nnz, manual_rt, [], pytorch_rt, f"coo_rows_nnz_{start}-{end}")
@@ -165,54 +175,59 @@ def run_spgemm(start, end, save_and_plot):
 
     indices = [i for i in range(start + 1, end) if i not in skip]
     for i in tqdm(indices, desc="SpGEMM", unit="pair"):
-        A = parse_matrix(df.iloc[i - 1]['name'])
-        B = parse_matrix(df.iloc[i]['name'])
+        try:
+            A = parse_matrix(df.iloc[i - 1]['name'])
+            B = parse_matrix(df.iloc[i]['name'])
 
-        # AxA benchmark for square matrices
-        if A.size(0) == A.size(1):
+            # AxA benchmark for square matrices
+            if A.size(0) == A.size(1):
+                M = A.size(0)
+                A_CSR = nanobind_cuda_example.CSR(A.crow_indices(), A.col_indices(), A.values(), torch.tensor([M, M], dtype=torch.int32))
+                C_cusparse, cusparse = spgemm_benchmark(A_CSR, A_CSR, True)
+                C_manual, manual = spgemm_benchmark(A_CSR, A_CSR, False)
+                ans = (torch.equal(C_cusparse.indptr, C_manual.indptr)
+                       and torch.equal(C_cusparse.indices, C_manual.indices))
+                if not ans:
+                    tqdm.write(f"FAILED AxA at {i}: {df.iloc[i-1]['name']}")
+                    failed.append(i)
+                    failure_reason(C_manual, C_cusparse)
+                    break
+                nnz.append(A.crow_indices().max().item() * 2)
+                manual_rt.append(manual)
+                cusparse_rt.append(cusparse)
+
+            # AxB benchmark
             M = A.size(0)
-            A_CSR = nanobind_cuda_example.CSR(A.crow_indices(), A.col_indices(), A.values(), torch.tensor([M, M], dtype=torch.int32))
-            C_cusparse, cusparse = spgemm_benchmark(A_CSR, A_CSR, True)
-            C_manual, manual = spgemm_benchmark(A_CSR, A_CSR, False)
+            K = min(A.size(1), B.size(0))
+            if K != A.size(1):
+                continue
+            N = B.size(1)
+
+            A_t = torch.sparse_csr_tensor(A.crow_indices()[:M+1], A.col_indices()[:A.crow_indices()[M]], A.values()[:A.crow_indices()[M]], (M, K))
+            B_t = torch.sparse_csr_tensor(B.crow_indices()[:K+1], B.col_indices()[:B.crow_indices()[K]], B.values()[:B.crow_indices()[K]], (K, N))
+            plus_row = A_t.crow_indices().max() + B_t.crow_indices().max()
+
+            A_CSR = nanobind_cuda_example.CSR(A_t.crow_indices(), A_t.col_indices(), A_t.values(), torch.tensor([M, K], dtype=torch.int32))
+            B_CSR = nanobind_cuda_example.CSR(B_t.crow_indices(), B_t.col_indices(), B_t.values(), torch.tensor([K, N], dtype=torch.int32))
+
+            C_cusparse, cusparse = spgemm_benchmark(A_CSR, B_CSR, True)
+            C_manual, manual = spgemm_benchmark(A_CSR, B_CSR, False)
+
             ans = (torch.equal(C_cusparse.indptr, C_manual.indptr)
                    and torch.equal(C_cusparse.indices, C_manual.indices))
             if not ans:
-                tqdm.write(f"FAILED AxA at {i}: {df.iloc[i-1]['name']}")
+                tqdm.write(f"FAILED at {i}: {df.iloc[i-1]['name']} x {df.iloc[i]['name']}")
                 failed.append(i)
                 failure_reason(C_manual, C_cusparse)
                 break
-            nnz.append(A.crow_indices().max().item() * 2)
+
+            nnz.append(plus_row.max().item())
             manual_rt.append(manual)
             cusparse_rt.append(cusparse)
-
-        # AxB benchmark
-        M = A.size(0)
-        K = min(A.size(1), B.size(0))
-        if K != A.size(1):
+        except (RuntimeError, MemoryError) as e:
+            tqdm.write(f"Skipping {i} ({df.iloc[i-1]['name']} x {df.iloc[i]['name']}): {e}")
+            torch.cuda.empty_cache()
             continue
-        N = B.size(1)
-
-        A_t = torch.sparse_csr_tensor(A.crow_indices()[:M+1], A.col_indices()[:A.crow_indices()[M]], A.values()[:A.crow_indices()[M]], (M, K))
-        B_t = torch.sparse_csr_tensor(B.crow_indices()[:K+1], B.col_indices()[:B.crow_indices()[K]], B.values()[:B.crow_indices()[K]], (K, N))
-        plus_row = A_t.crow_indices().max() + B_t.crow_indices().max()
-
-        A_CSR = nanobind_cuda_example.CSR(A_t.crow_indices(), A_t.col_indices(), A_t.values(), torch.tensor([M, K], dtype=torch.int32))
-        B_CSR = nanobind_cuda_example.CSR(B_t.crow_indices(), B_t.col_indices(), B_t.values(), torch.tensor([K, N], dtype=torch.int32))
-
-        C_cusparse, cusparse = spgemm_benchmark(A_CSR, B_CSR, True)
-        C_manual, manual = spgemm_benchmark(A_CSR, B_CSR, False)
-
-        ans = (torch.equal(C_cusparse.indptr, C_manual.indptr)
-               and torch.equal(C_cusparse.indices, C_manual.indices))
-        if not ans:
-            tqdm.write(f"FAILED at {i}: {df.iloc[i-1]['name']} x {df.iloc[i]['name']}")
-            failed.append(i)
-            failure_reason(C_manual, C_cusparse)
-            break
-
-        nnz.append(plus_row.max().item())
-        manual_rt.append(manual)
-        cusparse_rt.append(cusparse)
 
     if save_and_plot and nnz:
         plot(nnz, manual_rt, cusparse_rt, [], f"spgemm_{start}-{end}")
@@ -234,34 +249,40 @@ def run_sparse_vectors(start, end, save_and_plot):
 
     indices = list(range(start, end))
     for i in tqdm(indices, desc="Sparse Vectors", unit="triplet"):
-        result = test_mergepath(
-            0, 0,
-            df.iloc[i]['name'],
-            df.iloc[i + 1]['name'],
-            df.iloc[i + 2]['name'],
-        )
-        if result is None:
-            failed.append(i)
+        try:
+            result = test_mergepath(
+                0, 0,
+                df.iloc[i]['name'],
+                df.iloc[i + 1]['name'],
+                df.iloc[i + 2]['name'],
+            )
+            if result is None:
+                failed.append(i)
+                continue
+            ans, full, partial, no, total_nnz = result
+            if not ans:
+                failed.append(i)
+            rows.append({
+                "matrix_a": df.iloc[i]['name'],
+                "matrix_b": df.iloc[i + 1]['name'],
+                "matrix_c": df.iloc[i + 2]['name'],
+                "total_nnz": total_nnz,
+                "full_mergepath_ms": full[0],
+                "full_precompute_ms": full[1],
+                "full_compute_ms": full[2],
+                "partial_mergepath_ms": partial[0],
+                "partial_precompute_ms": partial[1],
+                "partial_compute_ms": partial[2],
+                "nofusion_mergepath_ms": no[0],
+                "nofusion_precompute_ms": no[1],
+                "nofusion_compute_ms": no[2],
+                "correct": ans,
+            })
+        except (RuntimeError, MemoryError) as e:
+            import torch
+            tqdm.write(f"Skipping {i} ({df.iloc[i]['name']}): {e}")
+            torch.cuda.empty_cache()
             continue
-        ans, full, partial, no, total_nnz = result
-        if not ans:
-            failed.append(i)
-        rows.append({
-            "matrix_a": df.iloc[i]['name'],
-            "matrix_b": df.iloc[i + 1]['name'],
-            "matrix_c": df.iloc[i + 2]['name'],
-            "total_nnz": total_nnz,
-            "full_mergepath_ms": full[0],
-            "full_precompute_ms": full[1],
-            "full_compute_ms": full[2],
-            "partial_mergepath_ms": partial[0],
-            "partial_precompute_ms": partial[1],
-            "partial_compute_ms": partial[2],
-            "nofusion_mergepath_ms": no[0],
-            "nofusion_precompute_ms": no[1],
-            "nofusion_compute_ms": no[2],
-            "correct": ans,
-        })
 
     if save_and_plot and rows:
         from plotter import _path
