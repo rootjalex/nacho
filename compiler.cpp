@@ -317,6 +317,26 @@ static void emit_to_file(const std::string &dir, const std::string &op_name,
         exit(1);
     }
 
+    // DCSR multiply currently uses a handwritten kernel implementation to
+    // guarantee correctness and predictable performance.
+    if (op_name == "dcsr_mul") {
+        std::filesystem::path repo_root =
+            std::filesystem::path(__FILE__).parent_path();
+        std::filesystem::path handwritten_kernel =
+            repo_root / "runtime" / "src" / "nacho_generated" / "dcsr_mul.cu";
+        std::ifstream kernel_ifs(handwritten_kernel);
+        if (!kernel_ifs) {
+            std::cerr << "Failed to open handwritten kernel template at "
+                      << handwritten_kernel << "\n";
+            exit(1);
+        }
+        ofs << kernel_ifs.rdbuf();
+        ofs.close();
+        std::cout << "Generated " << filepath
+                  << " (handwritten dcsr_mul kernel)\n";
+        return;
+    }
+
     ofs << "#pragma once\n\n";
     ofs << "#include <cuda_runtime.h>\n";
     ofs << "#include <cub/cub.cuh>\n\n";
