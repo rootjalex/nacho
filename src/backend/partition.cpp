@@ -363,10 +363,11 @@ namespace backend {
                     llir::lVar::make(index_t, field_name)));
                 // Update boolean which specifies whether this tensor will be considered for work in partitioning of next loop.
                 if(!is_last_loop && need_to_exclude_tensors_at_runtime) {
+                    auto pos_var = llir::lVar::make(index_t, tensor.get_iterator_suffix(forall_idx));
                     store_partition_stmts.emplace_back(
                         llir::Store::make(
                             tensor_partitioned_vars.at(tensor.tensor_name),
-                            tensor_partitioned_vars.at(tensor.tensor_name) || (tensor.get_indices_field(forall_idx)[llir::lVar::make(index_t, tensor.get_iterator_suffix(forall_idx))] != index_value)
+                            tensor_partitioned_vars.at(tensor.tensor_name) || (pos_var < llir::lConst::make(0)) || (tensor.get_indices_field(forall_idx)[pos_var] != index_value)
                         ));
                 }
             }
@@ -399,10 +400,11 @@ namespace backend {
                         llir::lVar::make(index_t, field_name)));
                         // Update boolean which specifies whether this tensor will be considered for work in partitioning of next loop.
                         if(!is_last_loop && need_to_exclude_tensors_at_runtime) {
+                            auto pos_var = llir::lVar::make(index_t, tensor.get_iterator_suffix(forall_idx));
                             store_partition_stmts.emplace_back(
                                 llir::Store::make(
                                 tensor_partitioned_vars.at(tensor.tensor_name),
-                                tensor_partitioned_vars.at(tensor.tensor_name) || (tensor.get_indices_field(forall_idx)[llir::lVar::make(index_t, tensor.get_iterator_suffix(forall_idx))] != index_value)
+                                tensor_partitioned_vars.at(tensor.tensor_name) || (pos_var < llir::lConst::make(0)) || (tensor.get_indices_field(forall_idx)[pos_var] != index_value)
                             ));
                         }
                     }
@@ -473,13 +475,20 @@ namespace backend {
             );
         }
 
-        return current_dim_level == 0
-                    ? llir::lConst::make((int64_t)-1)
-                    : tensor.get_offsets_field(forall_idx)[tensor.get_offset_expression_for_next_sparse(
-                                start_level,
-                                end_level, false, true,
-                                dim_vars_for_offset_expression)] - 1;
-
+        if (current_dim_level == 0) {
+            return llir::lConst::make((int64_t)-1);
+        }
+        auto base_expr = tensor.get_offsets_field(forall_idx)[tensor.get_offset_expression_for_next_sparse(
+                            start_level,
+                            end_level, false, true,
+                            dim_vars_for_offset_expression)] - 1;
+        // Guard against OOB when parent position is -1 (no matching element)
+        llir::lExpr guard;
+        for (const auto& v : dim_vars_for_offset_expression) {
+            auto cond = v >= llir::lConst::make(0);
+            guard = guard.defined() ? guard && cond : cond;
+        }
+        return guard.defined() ? llir::lSelect::make(guard, base_expr, llir::lConst::make((int64_t)-1)) : base_expr;
     }
 
     llir::lExpr PartitionKernelLowerer::get_sparse_dim_end_expr(TensorLowerer& tensor, const std::string& forall_idx) {
@@ -495,13 +504,20 @@ namespace backend {
             );
         }
 
-        return current_dim_level == 0
-                    ? tensor.get_length_field(forall_idx) -1
-                    : tensor.get_offsets_field(forall_idx)[tensor.get_offset_expression_for_next_sparse(
-                                start_level,
-                                end_level, true, true,
-                                dim_vars_for_offset_expression)] - 1;
-
+        if (current_dim_level == 0) {
+            return tensor.get_length_field(forall_idx) - 1;
+        }
+        auto base_expr = tensor.get_offsets_field(forall_idx)[tensor.get_offset_expression_for_next_sparse(
+                            start_level,
+                            end_level, true, true,
+                            dim_vars_for_offset_expression)] - 1;
+        // Guard against OOB when parent position is -1 (no matching element)
+        llir::lExpr guard;
+        for (const auto& v : dim_vars_for_offset_expression) {
+            auto cond = v >= llir::lConst::make(0);
+            guard = guard.defined() ? guard && cond : cond;
+        }
+        return guard.defined() ? llir::lSelect::make(guard, base_expr, llir::lConst::make((int64_t)-1)) : base_expr;
     }
 
 

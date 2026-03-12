@@ -5,235 +5,527 @@
 
 namespace dcsr_add_ns {
 
-// ============================================================
-// Hand-written DCSR element-wise addition: Z = A + B
-//
-// Strategy:
-//   Phase 1: Row-union merge (one thread block).
-//            Counts result rows and, for each result row,
-//            counts the column-union size. Writes row_indices
-//            and per-row col counts.
-//   Phase 2: Prefix-sum the per-row col counts → row_offsets.
-//   Phase 3: Column-union merge (one thread per result row).
-//            Fills col_indices, values.
-// ============================================================
-
-// Phase 1: Merge row indices from A and B (union).
-// One thread does the whole merge (row counts are typically small for DCSR).
-// Writes: Z_row_indices[0..nrows_z-1], col_counts[0..nrows_z-1], *nrows_z_out.
-template<typename index_t, typename value_t>
-__global__
-void row_union_kernel(
-    const index_t* A_row_indices, const index_t* A_row_offsets, index_t A_nrows,
-    const index_t* A_col_indices,
-    const index_t* B_row_indices, const index_t* B_row_offsets, index_t B_nrows,
-    const index_t* B_col_indices,
-    index_t* Z_row_indices, index_t* col_counts, index_t* nrows_z_out)
-{
-    if (threadIdx.x != 0 || blockIdx.x != 0) return;
-
-    index_t ai = 0, bi = 0, zi = 0;
-    while (ai < A_nrows && bi < B_nrows) {
-        index_t a_row = A_row_indices[ai];
-        index_t b_row = B_row_indices[bi];
-        if (a_row == b_row) {
-            Z_row_indices[zi] = a_row;
-            // Count column union for this row
-            index_t a_start = A_row_offsets[ai], a_end = A_row_offsets[ai + 1];
-            index_t b_start = B_row_offsets[bi], b_end = B_row_offsets[bi + 1];
-            index_t count = 0;
-            index_t aj = a_start, bj = b_start;
-            while (aj < a_end && bj < b_end) {
-                index_t ac = A_col_indices[aj], bc = B_col_indices[bj];
-                count++;
-                aj += (ac <= bc);
-                bj += (bc <= ac);
-            }
-            count += (a_end - aj) + (b_end - bj);
-            col_counts[zi] = count;
-            ai++; bi++; zi++;
-        } else if (a_row < b_row) {
-            Z_row_indices[zi] = a_row;
-            col_counts[zi] = A_row_offsets[ai + 1] - A_row_offsets[ai];
-            ai++; zi++;
-        } else {
-            Z_row_indices[zi] = b_row;
-            col_counts[zi] = B_row_offsets[bi + 1] - B_row_offsets[bi];
-            bi++; zi++;
-        }
-    }
-    for (; ai < A_nrows; ai++, zi++) {
-        Z_row_indices[zi] = A_row_indices[ai];
-        col_counts[zi] = A_row_offsets[ai + 1] - A_row_offsets[ai];
-    }
-    for (; bi < B_nrows; bi++, zi++) {
-        Z_row_indices[zi] = B_row_indices[bi];
-        col_counts[zi] = B_row_offsets[bi + 1] - B_row_offsets[bi];
-    }
-    *nrows_z_out = zi;
-}
-
-// Phase 3: For each result row, merge columns from A and/or B.
-// One thread per result row.
-template<typename index_t, typename value_t>
-__global__
-void col_merge_kernel(
-    const index_t* A_row_indices, const index_t* A_row_offsets, index_t A_nrows,
-    const index_t* A_col_indices, const value_t* A_values,
-    const index_t* B_row_indices, const index_t* B_row_offsets, index_t B_nrows,
-    const index_t* B_col_indices, const value_t* B_values,
-    const index_t* Z_row_indices, const index_t* Z_row_offsets, index_t Z_nrows,
-    index_t* Z_col_indices, value_t* Z_values)
-{
-    int tid = blockIdx.x * blockDim.x + threadIdx.x;
-    if (tid >= Z_nrows) return;
-
-    index_t z_row = Z_row_indices[tid];
-    index_t out_start = Z_row_offsets[tid];
-    index_t out_pos = out_start;
-
-    // Binary search for z_row in A_row_indices
-    index_t a_lo = 0, a_hi = A_nrows;
-    while (a_lo < a_hi) {
-        index_t mid = a_lo + (a_hi - a_lo) / 2;
-        if (A_row_indices[mid] < z_row) a_lo = mid + 1;
-        else a_hi = mid;
-    }
-    bool a_has = (a_lo < A_nrows && A_row_indices[a_lo] == z_row);
-    index_t a_start = a_has ? A_row_offsets[a_lo] : 0;
-    index_t a_end   = a_has ? A_row_offsets[a_lo + 1] : 0;
-
-    // Binary search for z_row in B_row_indices
-    index_t b_lo = 0, b_hi = B_nrows;
-    while (b_lo < b_hi) {
-        index_t mid = b_lo + (b_hi - b_lo) / 2;
-        if (B_row_indices[mid] < z_row) b_lo = mid + 1;
-        else b_hi = mid;
-    }
-    bool b_has = (b_lo < B_nrows && B_row_indices[b_lo] == z_row);
-    index_t b_start = b_has ? B_row_offsets[b_lo] : 0;
-    index_t b_end   = b_has ? B_row_offsets[b_lo + 1] : 0;
-
-    // Merge columns (union)
-    index_t aj = a_start, bj = b_start;
-    while (aj < a_end && bj < b_end) {
-        index_t ac = A_col_indices[aj], bc = B_col_indices[bj];
-        if (ac == bc) {
-            Z_col_indices[out_pos] = ac;
-            Z_values[out_pos] = A_values[aj] + B_values[bj];
-            out_pos++; aj++; bj++;
-        } else if (ac < bc) {
-            Z_col_indices[out_pos] = ac;
-            Z_values[out_pos] = A_values[aj];
-            out_pos++; aj++;
-        } else {
-            Z_col_indices[out_pos] = bc;
-            Z_values[out_pos] = B_values[bj];
-            out_pos++; bj++;
-        }
-    }
-    for (; aj < a_end; aj++) {
-        Z_col_indices[out_pos] = A_col_indices[aj];
-        Z_values[out_pos] = A_values[aj];
-        out_pos++;
-    }
-    for (; bj < b_end; bj++) {
-        Z_col_indices[out_pos] = B_col_indices[bj];
-        Z_values[out_pos] = B_values[bj];
-        out_pos++;
-    }
-}
-
-template<typename index_t, typename value_t>
-__host__
-void Z_compute(
-    index_t A_nrows, const index_t* A_row_indices, const index_t* A_row_offsets,
-    const index_t* A_col_indices, const value_t* A_values,
-    index_t B_nrows, const index_t* B_row_indices, const index_t* B_row_offsets,
-    const index_t* B_col_indices, const value_t* B_values,
-    index_t& out_nrows, index_t& out_nnz,
-    index_t*& out_row_indices, index_t*& out_row_offsets,
-    index_t*& out_col_indices, value_t*& out_values)
-{
-    index_t max_rows = A_nrows + B_nrows;
-
-    // Allocate temporary arrays for Phase 1
-    index_t* d_row_indices;
-    index_t* d_col_counts;
-    index_t* d_nrows_z;
-    cudaMalloc(&d_row_indices, max_rows * sizeof(index_t));
-    cudaMalloc(&d_col_counts, max_rows * sizeof(index_t));
-    cudaMalloc(&d_nrows_z, sizeof(index_t));
-
-    // Phase 1: Row union + column counting
-    row_union_kernel<index_t, value_t><<<1, 1>>>(
-        A_row_indices, A_row_offsets, A_nrows, A_col_indices,
-        B_row_indices, B_row_offsets, B_nrows, B_col_indices,
-        d_row_indices, d_col_counts, d_nrows_z);
-
-    index_t h_nrows_z;
-    cudaMemcpy(&h_nrows_z, d_nrows_z, sizeof(index_t), cudaMemcpyDeviceToHost);
-    cudaFree(d_nrows_z);
-
-    if (h_nrows_z == 0) {
-        cudaFree(d_row_indices);
-        cudaFree(d_col_counts);
-        out_nrows = 0;
-        out_nnz = 0;
-        out_row_indices = nullptr;
-        out_row_offsets = nullptr;
-        out_col_indices = nullptr;
-        out_values = nullptr;
-        return;
-    }
-
-    // Phase 2: Exclusive prefix sum of col_counts → row_offsets
-    index_t* d_row_offsets;
-    cudaMalloc(&d_row_offsets, (h_nrows_z + 1) * sizeof(index_t));
-    cudaMemset(d_row_offsets, 0, sizeof(index_t));  // offsets[0] = 0
-
-    void* d_temp = nullptr;
-    size_t temp_bytes = 0;
-    cub::DeviceScan::InclusiveSum(d_temp, temp_bytes,
-        d_col_counts, d_row_offsets + 1, h_nrows_z);
-    cudaMalloc(&d_temp, temp_bytes);
-    cub::DeviceScan::InclusiveSum(d_temp, temp_bytes,
-        d_col_counts, d_row_offsets + 1, h_nrows_z);
-    cudaFree(d_temp);
-    cudaFree(d_col_counts);
-
-    // Read total nnz
-    index_t h_nnz;
-    cudaMemcpy(&h_nnz, d_row_offsets + h_nrows_z, sizeof(index_t), cudaMemcpyDeviceToHost);
-
-    // Allocate output arrays
-    index_t* d_col_indices;
-    value_t* d_values;
-    if (h_nnz > 0) {
-        cudaMalloc(&d_col_indices, h_nnz * sizeof(index_t));
-        cudaMalloc(&d_values, h_nnz * sizeof(value_t));
+template<typename index_t>
+__device__ __inline__ 
+index_t binary_search(const index_t* __restrict__ arr, const index_t target_value, int32_t start_index, int32_t end_index) {
+  index_t mid = start_index + (((end_index - start_index) + 1) / 2);
+  while (start_index < end_index) {
+    mid = start_index + (((end_index - start_index) + 1) / 2);
+    if (arr[mid] <= target_value) {
+      start_index = mid;
     } else {
-        d_col_indices = nullptr;
-        d_values = nullptr;
+      end_index = mid - 1;
     }
-
-    // Phase 3: Column merge (one thread per result row)
-    if (h_nrows_z > 0 && h_nnz > 0) {
-        int threads = 256;
-        int blocks = (h_nrows_z + threads - 1) / threads;
-        col_merge_kernel<index_t, value_t><<<blocks, threads>>>(
-            A_row_indices, A_row_offsets, A_nrows, A_col_indices, A_values,
-            B_row_indices, B_row_offsets, B_nrows, B_col_indices, B_values,
-            d_row_indices, d_row_offsets, h_nrows_z,
-            d_col_indices, d_values);
+  }
+  mid = start_index + (((end_index - start_index) + 1) / 2);
+  return mid;
+}
+template<typename index_t, typename value_t>
+struct A_tensor_format {
+  index_t dim_i_size;
+  index_t dim_j_size;
+  index_t dim_i_length;
+  index_t* dim_i_indices;
+  index_t* dim_j_offsets;
+  index_t dim_j_length;
+  index_t* dim_j_indices;
+  value_t* values;
+  index_t nnz;
+};
+template<typename index_t, typename value_t>
+struct B_tensor_format {
+  index_t dim_i_size;
+  index_t dim_j_size;
+  index_t dim_i_length;
+  index_t* dim_i_indices;
+  index_t* dim_j_offsets;
+  index_t dim_j_length;
+  index_t* dim_j_indices;
+  value_t* values;
+  index_t nnz;
+};
+template<typename index_t, typename value_t>
+struct Z_tensor_format {
+  index_t dim_i_size;
+  index_t dim_j_size;
+  index_t dim_i_length;
+  index_t* dim_i_indices;
+  index_t* dim_j_offsets;
+  index_t dim_j_length;
+  index_t* dim_j_indices;
+  value_t* values;
+  index_t nnz;
+};
+template<typename index_t>
+struct result_per_thread_count {
+  index_t* dim_i_count;
+  index_t* dim_j_count;
+};
+template<typename index_t, typename value_t>
+__device__ __inline__ 
+index_t work_ij_A_dim_i(const A_tensor_format<index_t, value_t> A, const index_t i_p) {
+  index_t j_p_end = A.dim_j_offsets[i_p + 1];
+  index_t j_p_start = A.dim_j_offsets[0];
+  index_t count_end = j_p_end;
+  index_t count_start = j_p_start;
+  index_t count = count_end - count_start;
+  return count;
+}
+template<typename index_t, typename value_t>
+__device__ __inline__ 
+index_t work_ij_B_dim_i(const B_tensor_format<index_t, value_t> B, const index_t i_p) {
+  index_t j_p_end = B.dim_j_offsets[i_p + 1];
+  index_t j_p_start = B.dim_j_offsets[0];
+  index_t count_end = j_p_end;
+  index_t count_start = j_p_start;
+  index_t count = count_end - count_start;
+  return count;
+}
+template<typename index_t, typename value_t>
+__device__ __inline__ 
+index_t work_ij_A_dim_j(const A_tensor_format<index_t, value_t> A, const index_t i_p, const index_t j_p) {
+  index_t count_end = j_p + 1;
+  index_t count_start = A.dim_j_offsets[i_p];
+  index_t count = count_end - count_start;
+  return count;
+}
+template<typename index_t, typename value_t>
+__device__ __inline__ 
+index_t work_ij_B_dim_j(const B_tensor_format<index_t, value_t> B, const index_t i_p, const index_t j_p) {
+  index_t count_end = j_p + 1;
+  index_t count_start = B.dim_j_offsets[i_p];
+  index_t count = count_end - count_start;
+  return count;
+}
+template<typename index_t>
+struct partition_ij {
+  index_t* A_i_p;
+  index_t* B_i_p;
+  index_t* A_j_p;
+  index_t* B_j_p;
+};
+template<typename index_t, typename value_t>
+__global__ 
+void partition_ij_kernel(const A_tensor_format<index_t, value_t> A, const B_tensor_format<index_t, value_t> B, const Z_tensor_format<index_t, value_t> Z, partition_ij<index_t> partitions, const index_t per_thread_work, const index_t total_work) {
+  int32_t thread_id = (blockIdx.x * blockDim.x) + threadIdx.x;
+  index_t count = thread_id * per_thread_work;
+  if (count == 0) {
+    partitions.A_i_p[thread_id] = 0 - 0;
+    partitions.B_i_p[thread_id] = 0 - 0;
+    partitions.A_j_p[thread_id] = 0 - 1;
+    partitions.B_j_p[thread_id] = 0 - 1;
+    return;
+  }
+  if (total_work <= count) {
+    partitions.A_i_p[thread_id] = A.dim_i_length - 1;
+    partitions.B_i_p[thread_id] = B.dim_i_length - 1;
+    partitions.A_j_p[thread_id] = A.dim_j_length - 1;
+    partitions.B_j_p[thread_id] = B.dim_j_length - 1;
+    return;
+  }
+  index_t rem_count = count;
+  index_t work = 0;
+  bool is_A_partitioned = 0;
+  bool is_B_partitioned = 0;
+  index_t start_i = -1;
+  index_t end_i = A.dim_i_size - 1;
+  index_t i = start_i + (((end_i - start_i) + 1) / 2);
+  index_t start_A_i_p = -1;
+  index_t end_A_i_p = A.dim_i_length - 1;
+  index_t A_i_p = end_A_i_p;
+  index_t start_B_i_p = -1;
+  index_t end_B_i_p = B.dim_i_length - 1;
+  index_t B_i_p = end_B_i_p;
+  while (1) {
+    i = start_i + (((end_i - start_i) + 1) / 2);
+    A_i_p = binary_search(A.dim_i_indices, i - 1, start_A_i_p, end_A_i_p);
+    B_i_p = binary_search(B.dim_i_indices, i - 1, start_B_i_p, end_B_i_p);
+    work = 0;
+    work = work + work_ij_A_dim_i(A, A_i_p);
+    work = work + work_ij_B_dim_i(B, B_i_p);
+    if (end_i <= start_i) {
+      A_i_p = binary_search(A.dim_i_indices, i, start_A_i_p, end_A_i_p);
+      partitions.A_i_p[thread_id] = A_i_p;
+      is_A_partitioned = (is_A_partitioned || (A_i_p < 0)) || (A.dim_i_indices[A_i_p] != i);
+      B_i_p = binary_search(B.dim_i_indices, i, start_B_i_p, end_B_i_p);
+      partitions.B_i_p[thread_id] = B_i_p;
+      is_B_partitioned = (is_B_partitioned || (B_i_p < 0)) || (B.dim_i_indices[B_i_p] != i);
+      rem_count = rem_count - work;
+      break;
     }
-
-    out_nrows = h_nrows_z;
-    out_nnz = h_nnz;
-    out_row_indices = d_row_indices;
-    out_row_offsets = d_row_offsets;
-    out_col_indices = d_col_indices;
-    out_values = d_values;
+    if (work < rem_count) {
+      start_i = i;
+      if (!is_A_partitioned) {
+        start_A_i_p = A_i_p;
+      }
+      if (!is_B_partitioned) {
+        start_B_i_p = B_i_p;
+      }
+    } else {
+      end_i = i - 1;
+      if (!is_A_partitioned) {
+        end_A_i_p = A_i_p;
+      }
+      if (!is_B_partitioned) {
+        end_B_i_p = B_i_p;
+      }
+    }
+  }
+  index_t start_j = -1;
+  index_t end_j = A.dim_j_size - 1;
+  index_t j = start_j + ((end_j - start_j) / 2);
+  index_t start_A_j_p = (0 <= A_i_p) ? (A.dim_j_offsets[A_i_p] - 1) : -1;
+  index_t end_A_j_p = (0 <= A_i_p) ? (A.dim_j_offsets[A_i_p + 1] - 1) : -1;
+  index_t A_j_p = end_A_j_p;
+  index_t start_B_j_p = (0 <= B_i_p) ? (B.dim_j_offsets[B_i_p] - 1) : -1;
+  index_t end_B_j_p = (0 <= B_i_p) ? (B.dim_j_offsets[B_i_p + 1] - 1) : -1;
+  index_t B_j_p = end_B_j_p;
+  while (1) {
+    j = start_j + ((end_j - start_j) / 2);
+    if (!is_A_partitioned) {
+      A_j_p = binary_search(A.dim_j_indices, j, start_A_j_p, end_A_j_p);
+    }
+    if (!is_B_partitioned) {
+      B_j_p = binary_search(B.dim_j_indices, j, start_B_j_p, end_B_j_p);
+    }
+    work = 0;
+    work = work + (is_A_partitioned ? 0 : work_ij_A_dim_j(A, A_i_p, A_j_p));
+    work = work + (is_B_partitioned ? 0 : work_ij_B_dim_j(B, B_i_p, B_j_p));
+    if (end_j <= start_j) {
+      partitions.A_j_p[thread_id] = A_j_p;
+      partitions.B_j_p[thread_id] = B_j_p;
+      rem_count = rem_count - work;
+      break;
+    }
+    if (work < rem_count) {
+      start_j = j + 1;
+      if (!is_A_partitioned) {
+        start_A_j_p = A_j_p;
+      }
+      if (!is_B_partitioned) {
+        start_B_j_p = B_j_p;
+      }
+    } else {
+      end_j = j;
+      if (!is_A_partitioned) {
+        end_A_j_p = A_j_p;
+      }
+      if (!is_B_partitioned) {
+        end_B_j_p = B_j_p;
+      }
+    }
+  }
+  return;
+}
+template<typename index_t, typename value_t>
+__global__ 
+void precompute_ij_kernel(const A_tensor_format<index_t, value_t> A, const B_tensor_format<index_t, value_t> B, const partition_ij<index_t> partitions, result_per_thread_count<index_t> count_offsets, const index_t per_thread_work) {
+  int32_t thread_id = (blockIdx.x * blockDim.x) + threadIdx.x;
+  int32_t max_thread_id = (gridDim.x * blockDim.x) - 1;
+  index_t start_A_i_p = partitions.A_i_p[thread_id];
+  index_t end_A_i_p = (thread_id < max_thread_id) ? partitions.A_i_p[thread_id + 1] : (A.dim_i_length - 1);
+  index_t start_B_i_p = partitions.B_i_p[thread_id];
+  index_t end_B_i_p = (thread_id < max_thread_id) ? partitions.B_i_p[thread_id + 1] : (B.dim_i_length - 1);
+  index_t start_A_j_p = partitions.A_j_p[thread_id];
+  index_t end_A_j_p = (thread_id < max_thread_id) ? partitions.A_j_p[thread_id + 1] : (A.dim_j_length - 1);
+  index_t start_B_j_p = partitions.B_j_p[thread_id];
+  index_t end_B_j_p = (thread_id < max_thread_id) ? partitions.B_j_p[thread_id + 1] : (B.dim_j_length - 1);
+  start_A_j_p++;
+  start_B_j_p++;
+  index_t count = thread_id * per_thread_work;
+  index_t count_i = 0;
+  index_t count_j = 0;
+  index_t iter_A_i_p = max(start_A_i_p, 0);
+  index_t stop_A_i_p = end_A_i_p;
+  index_t iter_B_i_p = max(start_B_i_p, 0);
+  index_t stop_B_i_p = end_B_i_p;
+  while ((iter_A_i_p <= stop_A_i_p) && (iter_B_i_p <= stop_B_i_p)) {
+    index_t A_i = A.dim_i_indices[iter_A_i_p];
+    index_t B_i = B.dim_i_indices[iter_B_i_p];
+    index_t i = min(B_i, A_i);
+    if ((i == A_i) && (i == B_i)) {
+      index_t iter_A_j_p = (iter_A_i_p == start_A_i_p) ? start_A_j_p : A.dim_j_offsets[iter_A_i_p];
+      index_t stop_A_j_p = (iter_A_i_p == end_A_i_p) ? end_A_j_p : (A.dim_j_offsets[(iter_A_i_p + 1)] - 1);
+      index_t iter_B_j_p = (iter_B_i_p == start_B_i_p) ? start_B_j_p : B.dim_j_offsets[iter_B_i_p];
+      index_t stop_B_j_p = (iter_B_i_p == end_B_i_p) ? end_B_j_p : (B.dim_j_offsets[(iter_B_i_p + 1)] - 1);
+      while ((iter_A_j_p <= stop_A_j_p) && (iter_B_j_p <= stop_B_j_p)) {
+        index_t A_j = A.dim_j_indices[iter_A_j_p];
+        index_t B_j = B.dim_j_indices[iter_B_j_p];
+        index_t j = min(B_j, A_j);
+        if ((j == A_j) && (j == B_j)) {
+          count_j++;
+        } else {
+          if (j == A_j) {
+            count_j++;
+          } else {
+            if (j == B_j) {
+              count_j++;
+            }
+          }
+        }
+        iter_A_j_p += (A_j == j);
+        iter_B_j_p += (B_j == j);
+      }
+      for (; iter_A_j_p <= stop_A_j_p; iter_A_j_p += 1) {
+        count_j++;
+      }
+      for (; iter_B_j_p <= stop_B_j_p; iter_B_j_p += 1) {
+        count_j++;
+      }
+      if ((((iter_A_i_p != stop_A_i_p) && ((iter_A_i_p != start_A_i_p) || ((start_A_j_p <= end_A_j_p) && (start_A_j_p <= (A.dim_j_offsets[iter_A_i_p + 1] - 1))))) && ((iter_B_i_p != stop_B_i_p) && ((iter_B_i_p != start_B_i_p) || ((start_B_j_p <= end_B_j_p) && (start_B_j_p <= (B.dim_j_offsets[iter_B_i_p + 1] - 1)))))) || ((((((A.dim_j_offsets[iter_A_i_p + 1] - 1) <= end_A_j_p) && (start_A_j_p <= end_A_j_p)) || ((A.dim_j_offsets[iter_A_i_p + 1] - 1) < start_A_j_p)) && ((((B.dim_j_offsets[iter_B_i_p + 1] - 1) <= end_B_j_p) && (start_B_j_p <= end_B_j_p)) || ((B.dim_j_offsets[iter_B_i_p + 1] - 1) < start_B_j_p))) && (((start_A_j_p <= end_A_j_p) && (start_A_j_p <= (A.dim_j_offsets[iter_A_i_p + 1] - 1))) || ((start_B_j_p <= end_B_j_p) && (start_B_j_p <= (B.dim_j_offsets[iter_B_i_p + 1] - 1)))))) {
+        count_i++;
+      }
+    } else {
+      if (i == A_i) {
+        index_t iter_A_j_p = (iter_A_i_p == start_A_i_p) ? start_A_j_p : A.dim_j_offsets[iter_A_i_p];
+        index_t stop_A_j_p = (iter_A_i_p == end_A_i_p) ? end_A_j_p : (A.dim_j_offsets[(iter_A_i_p + 1)] - 1);
+        for (; iter_A_j_p <= stop_A_j_p; iter_A_j_p += 1) {
+          count_j++;
+        }
+        if (((iter_A_i_p != stop_A_i_p) && ((iter_A_i_p != start_A_i_p) || ((start_A_j_p <= end_A_j_p) && (start_A_j_p <= (A.dim_j_offsets[iter_A_i_p + 1] - 1))))) || (((((A.dim_j_offsets[iter_A_i_p + 1] - 1) <= end_A_j_p) && (start_A_j_p <= end_A_j_p)) || ((A.dim_j_offsets[iter_A_i_p + 1] - 1) < start_A_j_p)) && ((start_A_j_p <= end_A_j_p) && (start_A_j_p <= (A.dim_j_offsets[iter_A_i_p + 1] - 1))))) {
+          count_i++;
+        }
+      } else {
+        if (i == B_i) {
+          index_t iter_B_j_p = (iter_B_i_p == start_B_i_p) ? start_B_j_p : B.dim_j_offsets[iter_B_i_p];
+          index_t stop_B_j_p = (iter_B_i_p == end_B_i_p) ? end_B_j_p : (B.dim_j_offsets[(iter_B_i_p + 1)] - 1);
+          for (; iter_B_j_p <= stop_B_j_p; iter_B_j_p += 1) {
+            count_j++;
+          }
+          if (((iter_B_i_p != stop_B_i_p) && ((iter_B_i_p != start_B_i_p) || ((start_B_j_p <= end_B_j_p) && (start_B_j_p <= (B.dim_j_offsets[iter_B_i_p + 1] - 1))))) || (((((B.dim_j_offsets[iter_B_i_p + 1] - 1) <= end_B_j_p) && (start_B_j_p <= end_B_j_p)) || ((B.dim_j_offsets[iter_B_i_p + 1] - 1) < start_B_j_p)) && ((start_B_j_p <= end_B_j_p) && (start_B_j_p <= (B.dim_j_offsets[iter_B_i_p + 1] - 1))))) {
+            count_i++;
+          }
+        }
+      }
+    }
+    iter_A_i_p += (A_i == i);
+    iter_B_i_p += (B_i == i);
+  }
+  for (; iter_A_i_p <= stop_A_i_p; iter_A_i_p += 1) {
+    index_t iter_A_j_p = (iter_A_i_p == start_A_i_p) ? start_A_j_p : A.dim_j_offsets[iter_A_i_p];
+    index_t stop_A_j_p = (iter_A_i_p == end_A_i_p) ? end_A_j_p : (A.dim_j_offsets[(iter_A_i_p + 1)] - 1);
+    for (; iter_A_j_p <= stop_A_j_p; iter_A_j_p += 1) {
+      count_j++;
+    }
+    if (((iter_A_i_p != stop_A_i_p) && ((iter_A_i_p != start_A_i_p) || ((start_A_j_p <= end_A_j_p) && (start_A_j_p <= (A.dim_j_offsets[iter_A_i_p + 1] - 1))))) || (((((A.dim_j_offsets[iter_A_i_p + 1] - 1) <= end_A_j_p) && (start_A_j_p <= end_A_j_p)) || ((A.dim_j_offsets[iter_A_i_p + 1] - 1) < start_A_j_p)) && ((start_A_j_p <= end_A_j_p) && (start_A_j_p <= (A.dim_j_offsets[iter_A_i_p + 1] - 1))))) {
+      count_i++;
+    }
+  }
+  for (; iter_B_i_p <= stop_B_i_p; iter_B_i_p += 1) {
+    index_t iter_B_j_p = (iter_B_i_p == start_B_i_p) ? start_B_j_p : B.dim_j_offsets[iter_B_i_p];
+    index_t stop_B_j_p = (iter_B_i_p == end_B_i_p) ? end_B_j_p : (B.dim_j_offsets[(iter_B_i_p + 1)] - 1);
+    for (; iter_B_j_p <= stop_B_j_p; iter_B_j_p += 1) {
+      count_j++;
+    }
+    if (((iter_B_i_p != stop_B_i_p) && ((iter_B_i_p != start_B_i_p) || ((start_B_j_p <= end_B_j_p) && (start_B_j_p <= (B.dim_j_offsets[iter_B_i_p + 1] - 1))))) || (((((B.dim_j_offsets[iter_B_i_p + 1] - 1) <= end_B_j_p) && (start_B_j_p <= end_B_j_p)) || ((B.dim_j_offsets[iter_B_i_p + 1] - 1) < start_B_j_p)) && ((start_B_j_p <= end_B_j_p) && (start_B_j_p <= (B.dim_j_offsets[iter_B_i_p + 1] - 1))))) {
+      count_i++;
+    }
+  }
+  count_offsets.dim_i_count[thread_id] = count_i;
+  count_offsets.dim_j_count[thread_id] = count_j;
+  return;
+}
+template<typename index_t, typename value_t>
+__global__ 
+void compute_ij_kernel(const A_tensor_format<index_t, value_t> A, const B_tensor_format<index_t, value_t> B, const partition_ij<index_t> partitions, const result_per_thread_count<index_t> count_offsets, const index_t per_thread_work, Z_tensor_format<index_t, value_t> Z) {
+  int32_t thread_id = (blockIdx.x * blockDim.x) + threadIdx.x;
+  int32_t max_thread_id = (gridDim.x * blockDim.x) - 1;
+  index_t start_A_i_p = partitions.A_i_p[thread_id];
+  index_t end_A_i_p = (thread_id < max_thread_id) ? partitions.A_i_p[thread_id + 1] : (A.dim_i_length - 1);
+  index_t start_B_i_p = partitions.B_i_p[thread_id];
+  index_t end_B_i_p = (thread_id < max_thread_id) ? partitions.B_i_p[thread_id + 1] : (B.dim_i_length - 1);
+  index_t start_A_j_p = partitions.A_j_p[thread_id];
+  index_t end_A_j_p = (thread_id < max_thread_id) ? partitions.A_j_p[thread_id + 1] : (A.dim_j_length - 1);
+  index_t start_B_j_p = partitions.B_j_p[thread_id];
+  index_t end_B_j_p = (thread_id < max_thread_id) ? partitions.B_j_p[thread_id + 1] : (B.dim_j_length - 1);
+  start_A_j_p++;
+  start_B_j_p++;
+  index_t offset_i = count_offsets.dim_i_count[thread_id];
+  index_t offset_j = count_offsets.dim_j_count[thread_id];
+  index_t iter_A_i_p = max(start_A_i_p, 0);
+  index_t stop_A_i_p = end_A_i_p;
+  index_t iter_B_i_p = max(start_B_i_p, 0);
+  index_t stop_B_i_p = end_B_i_p;
+  while ((iter_A_i_p <= stop_A_i_p) && (iter_B_i_p <= stop_B_i_p)) {
+    index_t A_i = A.dim_i_indices[iter_A_i_p];
+    index_t B_i = B.dim_i_indices[iter_B_i_p];
+    index_t i = min(B_i, A_i);
+    if ((i == A_i) && (i == B_i)) {
+      index_t iter_A_j_p = (iter_A_i_p == start_A_i_p) ? start_A_j_p : A.dim_j_offsets[iter_A_i_p];
+      index_t stop_A_j_p = (iter_A_i_p == end_A_i_p) ? end_A_j_p : (A.dim_j_offsets[(iter_A_i_p + 1)] - 1);
+      index_t iter_B_j_p = (iter_B_i_p == start_B_i_p) ? start_B_j_p : B.dim_j_offsets[iter_B_i_p];
+      index_t stop_B_j_p = (iter_B_i_p == end_B_i_p) ? end_B_j_p : (B.dim_j_offsets[(iter_B_i_p + 1)] - 1);
+      while ((iter_A_j_p <= stop_A_j_p) && (iter_B_j_p <= stop_B_j_p)) {
+        index_t A_j = A.dim_j_indices[iter_A_j_p];
+        index_t B_j = B.dim_j_indices[iter_B_j_p];
+        index_t j = min(B_j, A_j);
+        if ((j == A_j) && (j == B_j)) {
+          Z.dim_j_indices[offset_j] = j;
+          Z.values[offset_j] = A.values[iter_A_j_p] + B.values[iter_B_j_p];
+          offset_j++;
+        } else {
+          if (j == A_j) {
+            Z.dim_j_indices[offset_j] = j;
+            Z.values[offset_j] = A.values[iter_A_j_p];
+            offset_j++;
+          } else {
+            if (j == B_j) {
+              Z.dim_j_indices[offset_j] = j;
+              Z.values[offset_j] = B.values[iter_B_j_p];
+              offset_j++;
+            }
+          }
+        }
+        iter_A_j_p += (A_j == j);
+        iter_B_j_p += (B_j == j);
+      }
+      for (; iter_A_j_p <= stop_A_j_p; iter_A_j_p += 1) {
+        index_t j = A.dim_j_indices[iter_A_j_p];
+        Z.dim_j_indices[offset_j] = j;
+        Z.values[offset_j] = A.values[iter_A_j_p];
+        offset_j++;
+      }
+      for (; iter_B_j_p <= stop_B_j_p; iter_B_j_p += 1) {
+        index_t j = B.dim_j_indices[iter_B_j_p];
+        Z.dim_j_indices[offset_j] = j;
+        Z.values[offset_j] = B.values[iter_B_j_p];
+        offset_j++;
+      }
+      if ((((iter_A_i_p != stop_A_i_p) && ((iter_A_i_p != start_A_i_p) || ((start_A_j_p <= end_A_j_p) && (start_A_j_p <= (A.dim_j_offsets[iter_A_i_p + 1] - 1))))) && ((iter_B_i_p != stop_B_i_p) && ((iter_B_i_p != start_B_i_p) || ((start_B_j_p <= end_B_j_p) && (start_B_j_p <= (B.dim_j_offsets[iter_B_i_p + 1] - 1)))))) || ((((((A.dim_j_offsets[iter_A_i_p + 1] - 1) <= end_A_j_p) && (start_A_j_p <= end_A_j_p)) || ((A.dim_j_offsets[iter_A_i_p + 1] - 1) < start_A_j_p)) && ((((B.dim_j_offsets[iter_B_i_p + 1] - 1) <= end_B_j_p) && (start_B_j_p <= end_B_j_p)) || ((B.dim_j_offsets[iter_B_i_p + 1] - 1) < start_B_j_p))) && (((start_A_j_p <= end_A_j_p) && (start_A_j_p <= (A.dim_j_offsets[iter_A_i_p + 1] - 1))) || ((start_B_j_p <= end_B_j_p) && (start_B_j_p <= (B.dim_j_offsets[iter_B_i_p + 1] - 1)))))) {
+        Z.dim_i_indices[offset_i] = i;
+        Z.dim_j_offsets[offset_i + 1] = offset_j;
+        offset_i++;
+      }
+    } else {
+      if (i == A_i) {
+        index_t iter_A_j_p = (iter_A_i_p == start_A_i_p) ? start_A_j_p : A.dim_j_offsets[iter_A_i_p];
+        index_t stop_A_j_p = (iter_A_i_p == end_A_i_p) ? end_A_j_p : (A.dim_j_offsets[(iter_A_i_p + 1)] - 1);
+        for (; iter_A_j_p <= stop_A_j_p; iter_A_j_p += 1) {
+          index_t j = A.dim_j_indices[iter_A_j_p];
+          Z.dim_j_indices[offset_j] = j;
+          Z.values[offset_j] = A.values[iter_A_j_p];
+          offset_j++;
+        }
+        if (((iter_A_i_p != stop_A_i_p) && ((iter_A_i_p != start_A_i_p) || ((start_A_j_p <= end_A_j_p) && (start_A_j_p <= (A.dim_j_offsets[iter_A_i_p + 1] - 1))))) || (((((A.dim_j_offsets[iter_A_i_p + 1] - 1) <= end_A_j_p) && (start_A_j_p <= end_A_j_p)) || ((A.dim_j_offsets[iter_A_i_p + 1] - 1) < start_A_j_p)) && ((start_A_j_p <= end_A_j_p) && (start_A_j_p <= (A.dim_j_offsets[iter_A_i_p + 1] - 1))))) {
+          Z.dim_i_indices[offset_i] = i;
+          Z.dim_j_offsets[offset_i + 1] = offset_j;
+          offset_i++;
+        }
+      } else {
+        if (i == B_i) {
+          index_t iter_B_j_p = (iter_B_i_p == start_B_i_p) ? start_B_j_p : B.dim_j_offsets[iter_B_i_p];
+          index_t stop_B_j_p = (iter_B_i_p == end_B_i_p) ? end_B_j_p : (B.dim_j_offsets[(iter_B_i_p + 1)] - 1);
+          for (; iter_B_j_p <= stop_B_j_p; iter_B_j_p += 1) {
+            index_t j = B.dim_j_indices[iter_B_j_p];
+            Z.dim_j_indices[offset_j] = j;
+            Z.values[offset_j] = B.values[iter_B_j_p];
+            offset_j++;
+          }
+          if (((iter_B_i_p != stop_B_i_p) && ((iter_B_i_p != start_B_i_p) || ((start_B_j_p <= end_B_j_p) && (start_B_j_p <= (B.dim_j_offsets[iter_B_i_p + 1] - 1))))) || (((((B.dim_j_offsets[iter_B_i_p + 1] - 1) <= end_B_j_p) && (start_B_j_p <= end_B_j_p)) || ((B.dim_j_offsets[iter_B_i_p + 1] - 1) < start_B_j_p)) && ((start_B_j_p <= end_B_j_p) && (start_B_j_p <= (B.dim_j_offsets[iter_B_i_p + 1] - 1))))) {
+            Z.dim_i_indices[offset_i] = i;
+            Z.dim_j_offsets[offset_i + 1] = offset_j;
+            offset_i++;
+          }
+        }
+      }
+    }
+    iter_A_i_p += (A_i == i);
+    iter_B_i_p += (B_i == i);
+  }
+  for (; iter_A_i_p <= stop_A_i_p; iter_A_i_p += 1) {
+    index_t i = A.dim_i_indices[iter_A_i_p];
+    index_t iter_A_j_p = (iter_A_i_p == start_A_i_p) ? start_A_j_p : A.dim_j_offsets[iter_A_i_p];
+    index_t stop_A_j_p = (iter_A_i_p == end_A_i_p) ? end_A_j_p : (A.dim_j_offsets[(iter_A_i_p + 1)] - 1);
+    for (; iter_A_j_p <= stop_A_j_p; iter_A_j_p += 1) {
+      index_t j = A.dim_j_indices[iter_A_j_p];
+      Z.dim_j_indices[offset_j] = j;
+      Z.values[offset_j] = A.values[iter_A_j_p];
+      offset_j++;
+    }
+    if (((iter_A_i_p != stop_A_i_p) && ((iter_A_i_p != start_A_i_p) || ((start_A_j_p <= end_A_j_p) && (start_A_j_p <= (A.dim_j_offsets[iter_A_i_p + 1] - 1))))) || (((((A.dim_j_offsets[iter_A_i_p + 1] - 1) <= end_A_j_p) && (start_A_j_p <= end_A_j_p)) || ((A.dim_j_offsets[iter_A_i_p + 1] - 1) < start_A_j_p)) && ((start_A_j_p <= end_A_j_p) && (start_A_j_p <= (A.dim_j_offsets[iter_A_i_p + 1] - 1))))) {
+      Z.dim_i_indices[offset_i] = i;
+      Z.dim_j_offsets[offset_i + 1] = offset_j;
+      offset_i++;
+    }
+  }
+  for (; iter_B_i_p <= stop_B_i_p; iter_B_i_p += 1) {
+    index_t i = B.dim_i_indices[iter_B_i_p];
+    index_t iter_B_j_p = (iter_B_i_p == start_B_i_p) ? start_B_j_p : B.dim_j_offsets[iter_B_i_p];
+    index_t stop_B_j_p = (iter_B_i_p == end_B_i_p) ? end_B_j_p : (B.dim_j_offsets[(iter_B_i_p + 1)] - 1);
+    for (; iter_B_j_p <= stop_B_j_p; iter_B_j_p += 1) {
+      index_t j = B.dim_j_indices[iter_B_j_p];
+      Z.dim_j_indices[offset_j] = j;
+      Z.values[offset_j] = B.values[iter_B_j_p];
+      offset_j++;
+    }
+    if (((iter_B_i_p != stop_B_i_p) && ((iter_B_i_p != start_B_i_p) || ((start_B_j_p <= end_B_j_p) && (start_B_j_p <= (B.dim_j_offsets[iter_B_i_p + 1] - 1))))) || (((((B.dim_j_offsets[iter_B_i_p + 1] - 1) <= end_B_j_p) && (start_B_j_p <= end_B_j_p)) || ((B.dim_j_offsets[iter_B_i_p + 1] - 1) < start_B_j_p)) && ((start_B_j_p <= end_B_j_p) && (start_B_j_p <= (B.dim_j_offsets[iter_B_i_p + 1] - 1))))) {
+      Z.dim_i_indices[offset_i] = i;
+      Z.dim_j_offsets[offset_i + 1] = offset_j;
+      offset_i++;
+    }
+  }
+  return;
+}
+template<typename index_t, typename value_t>
+__host__ 
+void Z_compute(const A_tensor_format<index_t, value_t> A, const B_tensor_format<index_t, value_t> B, Z_tensor_format<index_t, value_t>& Z) {
+  index_t num_blocks = 256;
+  index_t threads_per_block = 256;
+  index_t num_threads = num_blocks * threads_per_block;
+  // ========== Phase 0 ==========
+  index_t total_work_0 = A.dim_j_length + B.dim_j_length;
+  index_t per_thread_work_0 = total_work_0 / num_threads + 1;
+  partition_ij<index_t> partitions_0;
+  cudaMalloc((void**)&partitions_0.A_i_p, num_threads * sizeof(index_t));
+  cudaMalloc((void**)&partitions_0.B_i_p, num_threads * sizeof(index_t));
+  cudaMalloc((void**)&partitions_0.A_j_p, num_threads * sizeof(index_t));
+  cudaMalloc((void**)&partitions_0.B_j_p, num_threads * sizeof(index_t));
+  partition_ij_kernel<index_t, value_t><<<num_blocks, threads_per_block>>>(A, B, Z, partitions_0, per_thread_work_0, total_work_0);
+  result_per_thread_count<index_t> count_offsets_0;
+  cudaMalloc((void**)&count_offsets_0.dim_i_count, num_threads * sizeof(index_t));
+  cudaMalloc((void**)&count_offsets_0.dim_j_count, num_threads * sizeof(index_t));
+  precompute_ij_kernel<index_t, value_t><<<num_blocks, threads_per_block>>>(A, B, partitions_0, count_offsets_0, per_thread_work_0);
+  index_t* count_offsets_0_dim_i_count_prefix;
+  cudaMalloc((void**)&count_offsets_0_dim_i_count_prefix, (num_threads + 1) * sizeof(index_t));
+  cudaMemset(count_offsets_0_dim_i_count_prefix, 0, (num_threads + 1) * sizeof(index_t));
+  void* d_temp_storage_0_dim_i_count = nullptr;
+  size_t temp_storage_bytes_0_dim_i_count = 0;
+  cub::DeviceScan::InclusiveSum(d_temp_storage_0_dim_i_count, temp_storage_bytes_0_dim_i_count, count_offsets_0.dim_i_count, count_offsets_0_dim_i_count_prefix + 1, num_threads);
+  cudaMalloc(&d_temp_storage_0_dim_i_count, temp_storage_bytes_0_dim_i_count);
+  cub::DeviceScan::InclusiveSum(d_temp_storage_0_dim_i_count, temp_storage_bytes_0_dim_i_count, count_offsets_0.dim_i_count, count_offsets_0_dim_i_count_prefix + 1, num_threads);
+  cudaFree(d_temp_storage_0_dim_i_count);
+  cudaFree(count_offsets_0.dim_i_count);
+  count_offsets_0.dim_i_count = count_offsets_0_dim_i_count_prefix;
+  index_t* count_offsets_0_dim_j_count_prefix;
+  cudaMalloc((void**)&count_offsets_0_dim_j_count_prefix, (num_threads + 1) * sizeof(index_t));
+  cudaMemset(count_offsets_0_dim_j_count_prefix, 0, (num_threads + 1) * sizeof(index_t));
+  void* d_temp_storage_0_dim_j_count = nullptr;
+  size_t temp_storage_bytes_0_dim_j_count = 0;
+  cub::DeviceScan::InclusiveSum(d_temp_storage_0_dim_j_count, temp_storage_bytes_0_dim_j_count, count_offsets_0.dim_j_count, count_offsets_0_dim_j_count_prefix + 1, num_threads);
+  cudaMalloc(&d_temp_storage_0_dim_j_count, temp_storage_bytes_0_dim_j_count);
+  cub::DeviceScan::InclusiveSum(d_temp_storage_0_dim_j_count, temp_storage_bytes_0_dim_j_count, count_offsets_0.dim_j_count, count_offsets_0_dim_j_count_prefix + 1, num_threads);
+  cudaFree(d_temp_storage_0_dim_j_count);
+  cudaFree(count_offsets_0.dim_j_count);
+  count_offsets_0.dim_j_count = count_offsets_0_dim_j_count_prefix;
+  index_t nnz_i_0;
+  cudaMemcpy(&nnz_i_0, count_offsets_0_dim_i_count_prefix + num_threads, sizeof(index_t), cudaMemcpyDeviceToHost);
+  index_t nnz_j_0;
+  cudaMemcpy(&nnz_j_0, count_offsets_0_dim_j_count_prefix + num_threads, sizeof(index_t), cudaMemcpyDeviceToHost);
+  cudaMalloc((void**)&Z.dim_i_indices, nnz_i_0 * sizeof(index_t));
+  cudaMalloc((void**)&Z.dim_j_indices, nnz_j_0 * sizeof(index_t));
+  cudaMalloc((void**)&Z.values, nnz_j_0 * sizeof(value_t));
+  cudaMalloc((void**)&Z.dim_j_offsets, (nnz_i_0 + 1) * sizeof(index_t));
+  cudaMemset(Z.dim_j_offsets, 0, (nnz_i_0 + 1) * sizeof(index_t));
+  Z.dim_i_length = nnz_i_0;
+  Z.dim_j_length = nnz_j_0;
+  Z.nnz = nnz_j_0;
+  compute_ij_kernel<index_t, value_t><<<num_blocks, threads_per_block>>>(A, B, partitions_0, count_offsets_0, per_thread_work_0, Z);
+  cudaFree(partitions_0.A_i_p);
+  cudaFree(partitions_0.B_i_p);
+  cudaFree(partitions_0.A_j_p);
+  cudaFree(partitions_0.B_j_p);
+  cudaFree(count_offsets_0.dim_i_count);
+  cudaFree(count_offsets_0.dim_j_count);
 }
 
 } // namespace dcsr_add_ns
@@ -241,42 +533,38 @@ void Z_compute(
 using namespace dcsr_add_ns;
 
 template<typename index_t, typename value_t>
-__host__
-void dcsr_add(
-    index_t A_dim_i_size, index_t A_dim_j_size,
-    index_t A_dim_i_length, index_t* A_dim_i_indices,
-    index_t* A_dim_j_offsets, index_t A_dim_j_length,
-    index_t* A_dim_j_indices, value_t* A_values, index_t A_nnz,
-    index_t B_dim_i_size, index_t B_dim_j_size,
-    index_t B_dim_i_length, index_t* B_dim_i_indices,
-    index_t* B_dim_j_offsets, index_t B_dim_j_length,
-    index_t* B_dim_j_indices, value_t* B_values, index_t B_nnz,
-    index_t result_dim_i_size, index_t result_dim_j_size,
-    index_t& out_nnz, index_t& out_dim_i_length,
-    index_t*& out_dim_j_indices, index_t*& out_dim_j_offsets,
-    index_t*& out_dim_i_indices, value_t*& out_values)
-{
-    index_t nrows_z;
-    index_t nnz_z;
-    index_t* row_indices_z;
-    index_t* row_offsets_z;
-    index_t* col_indices_z;
-    value_t* values_z;
-
-    Z_compute<index_t, value_t>(
-        A_dim_i_length, A_dim_i_indices, A_dim_j_offsets,
-        A_dim_j_indices, A_values,
-        B_dim_i_length, B_dim_i_indices, B_dim_j_offsets,
-        B_dim_j_indices, B_values,
-        nrows_z, nnz_z,
-        row_indices_z, row_offsets_z, col_indices_z, values_z);
-
-    out_nnz = nnz_z;
-    out_dim_i_length = nrows_z;
-    out_dim_i_indices = row_indices_z;
-    out_dim_j_offsets = row_offsets_z;
-    out_dim_j_indices = col_indices_z;
-    out_values = values_z;
+__host__ 
+void dcsr_add(index_t A_dim_i_size, index_t A_dim_j_size, index_t A_dim_i_length, index_t* A_dim_i_indices, index_t* A_dim_j_offsets, index_t A_dim_j_length, index_t* A_dim_j_indices, value_t* A_values, index_t A_nnz, index_t B_dim_i_size, index_t B_dim_j_size, index_t B_dim_i_length, index_t* B_dim_i_indices, index_t* B_dim_j_offsets, index_t B_dim_j_length, index_t* B_dim_j_indices, value_t* B_values, index_t B_nnz, index_t result_dim_i_size, index_t result_dim_j_size, index_t& out_nnz, index_t& out_dim_i_length, index_t*& out_dim_j_indices, index_t*& out_dim_j_offsets, index_t*& out_dim_i_indices, value_t*& out_values) {
+  A_tensor_format<index_t, value_t> A;
+  A.dim_i_size = A_dim_i_size;
+  A.dim_j_size = A_dim_j_size;
+  A.dim_i_length = A_dim_i_length;
+  A.dim_i_indices = A_dim_i_indices;
+  A.dim_j_offsets = A_dim_j_offsets;
+  A.dim_j_length = A_dim_j_length;
+  A.dim_j_indices = A_dim_j_indices;
+  A.values = A_values;
+  A.nnz = A_nnz;
+  B_tensor_format<index_t, value_t> B;
+  B.dim_i_size = B_dim_i_size;
+  B.dim_j_size = B_dim_j_size;
+  B.dim_i_length = B_dim_i_length;
+  B.dim_i_indices = B_dim_i_indices;
+  B.dim_j_offsets = B_dim_j_offsets;
+  B.dim_j_length = B_dim_j_length;
+  B.dim_j_indices = B_dim_j_indices;
+  B.values = B_values;
+  B.nnz = B_nnz;
+  Z_tensor_format<index_t, value_t> Z;
+  Z.dim_i_size = result_dim_i_size;
+  Z.dim_j_size = result_dim_j_size;
+  Z_compute<index_t, value_t>(A, B, Z);
+  out_nnz = Z.nnz;
+  out_dim_i_length = Z.dim_i_length;
+  out_dim_j_indices = Z.dim_j_indices;
+  out_dim_j_offsets = Z.dim_j_offsets;
+  out_dim_i_indices = Z.dim_i_indices;
+  out_values = Z.values;
 }
 
 // Explicit template instantiation
