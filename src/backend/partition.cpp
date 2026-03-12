@@ -7,6 +7,26 @@
 #include <numeric>
 namespace nacho {
 namespace backend {
+namespace {
+
+llir::lExpr build_non_negative_guard(const std::vector<llir::lExpr> &vars) {
+    llir::lExpr guard;
+    for (const auto &v : vars) {
+        auto cond = v >= llir::lConst::make(0);
+        guard = guard.defined() ? guard && cond : cond;
+    }
+    return guard;
+}
+
+llir::lExpr guard_with_default_if_parent_missing(
+    llir::lExpr candidate_expr, const std::vector<llir::lExpr> &parent_pos_vars,
+    llir::lExpr default_expr) {
+    auto guard = build_non_negative_guard(parent_pos_vars);
+    return guard.defined() ? llir::lSelect::make(guard, candidate_expr, default_expr)
+                           : candidate_expr;
+}
+
+} // namespace
 
     llir::lType PartitionKernelLowerer::lower_partition_struct_definition() {
         std::vector<std::string> generics = {"index_t"};
@@ -482,13 +502,11 @@ namespace backend {
                             start_level,
                             end_level, false, true,
                             dim_vars_for_offset_expression)] - 1;
-        // Guard against OOB when parent position is -1 (no matching element)
-        llir::lExpr guard;
-        for (const auto& v : dim_vars_for_offset_expression) {
-            auto cond = v >= llir::lConst::make(0);
-            guard = guard.defined() ? guard && cond : cond;
-        }
-        return guard.defined() ? llir::lSelect::make(guard, base_expr, llir::lConst::make((int64_t)-1)) : base_expr;
+        // Parent -1 means no matching outer coordinate; keep child as -1 and
+        // avoid indexing offsets with invalid positions.
+        return guard_with_default_if_parent_missing(
+            base_expr, dim_vars_for_offset_expression,
+            llir::lConst::make((int64_t)-1));
     }
 
     llir::lExpr PartitionKernelLowerer::get_sparse_dim_end_expr(TensorLowerer& tensor, const std::string& forall_idx) {
@@ -511,13 +529,11 @@ namespace backend {
                             start_level,
                             end_level, true, true,
                             dim_vars_for_offset_expression)] - 1;
-        // Guard against OOB when parent position is -1 (no matching element)
-        llir::lExpr guard;
-        for (const auto& v : dim_vars_for_offset_expression) {
-            auto cond = v >= llir::lConst::make(0);
-            guard = guard.defined() ? guard && cond : cond;
-        }
-        return guard.defined() ? llir::lSelect::make(guard, base_expr, llir::lConst::make((int64_t)-1)) : base_expr;
+        // Parent -1 means no matching outer coordinate; keep child as -1 and
+        // avoid indexing offsets with invalid positions.
+        return guard_with_default_if_parent_missing(
+            base_expr, dim_vars_for_offset_expression,
+            llir::lConst::make((int64_t)-1));
     }
 
 

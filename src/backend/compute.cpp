@@ -822,130 +822,146 @@ llir::lStmt ComputeKernelLowerer::lower_loop(
                         llir::lVar::make(index_t, "offset_" + nextForall->idx));
                 }
 
-                // Build a case-specific offset_write_cond from the iterators
-                // in `seq` (the current case), not the parent sequence.
-                // For A-only: only check iter_A != stop_A
-                // For B-only: only check iter_B != stop_B
-                // For both:   check iter_A != stop_A && iter_B != stop_B
-                llir::lExpr case_offset_write_cond;
-                auto [case_idxs, _2] = partition_iterators_locators(seq);
-                if (is_loop_before_prev_intersection) {
-                    case_idxs.clear();
-                }
-                bool all_found = true;
-                for (const auto &ci : case_idxs) {
-                    const Index *idx_node = ci.as<Index>();
-                    if (!idx_node) {
-                        all_found = false;
-                        break;
+                // Build a case-specific offset-write condition for the current
+                // lattice case (`seq`). This keeps row completion generic for
+                // N-D sparse tensors: outer level ownership + inner-level
+                // boundary completion are derived from format metadata, not
+                // hardcoded to DCSR's i/j naming.
+                auto append_and = [](llir::lExpr &acc, llir::lExpr term) {
+                    if (acc.defined()) {
+                        acc = acc && term;
+                    } else {
+                        acc = term;
                     }
-                }
-                if (all_found && !case_idxs.empty()) {
-                    for (const auto &ci : case_idxs) {
-                        const Index *idx_node = ci.as<Index>();
+                };
+                auto append_or = [](llir::lExpr &acc, llir::lExpr term) {
+                    if (acc.defined()) {
+                        acc = acc || term;
+                    } else {
+                        acc = term;
+                    }
+                };
+                auto collect_case_indices = [&](const Seq &case_seq) {
+                    std::vector<std::pair<Seq, const Index *>> out;
+                    auto [case_terms, _locs] =
+                        partition_iterators_locators(case_seq);
+                    if (is_loop_before_prev_intersection) {
+                        case_terms.clear();
+                    }
+                    bool all_indices = true;
+                    for (const auto &term : case_terms) {
+                        const Index *idx_node = term.as<Index>();
                         if (!idx_node) {
-                            all_found = false;
-                            break;
+                            all_indices = false;
+                            continue;
                         }
-                        TensorLowerer tlower(idx_node->tensor, idx_node->type);
+                        out.emplace_back(term, idx_node);
+                    }
+                    return std::make_pair(std::move(out), all_indices);
+                };
+                auto get_sparse_inner_row_info =
+                    [&](const TensorLowerer &tlower, llir::lExpr &start_var,
+                        llir::lExpr &end_var, llir::lExpr &actual_end,
+                        llir::lExpr &row_has_work) -> bool {
+                    if (!tlower.tensor_type.format.level_exists(nextForall->idx) ||
+                        !tlower.is_sparse(nextForall->idx)) {
+                        return false;
+                    }
+                    start_var = tlower.get_start(nextForall->idx);
+                    end_var = tlower.get_end(nextForall->idx);
+                    llir::lExpr iter_outer = tlower.get_iter(forall->idx);
+                    actual_end = tlower.get_offsets_field(nextForall->idx)
+                                     [iter_outer + 1] -
+                                 1;
+                    row_has_work = (start_var <= end_var) &&
+                                   (start_var <= actual_end);
+                    return true;
+                };
 
+                auto [case_indices, all_case_indices_are_index] =
+                    collect_case_indices(seq);
+                llir::lExpr case_offset_write_cond;
+                if (all_case_indices_are_index && !case_indices.empty()) {
+                    for (const auto &[ci, idx_node] : case_indices) {
+                        TensorLowerer tlower(idx_node->tensor, idx_node->type);
                         llir::lExpr sub = llir::lConst::make((int64_t)1);
-                        bool has_partition_bounds = false;
                         auto miter = imap.find(ci);
-                        if (miter != imap.end()) {
-                            has_partition_bounds = true;
+                        bool has_partition_bounds = miter != imap.end();
+                        if (has_partition_bounds) {
                             sub = miter->second.first != miter->second.second;
                         }
 
-                        if (tlower.tensor_type.format.level_exists(nextForall->idx) &&
-                            tlower.is_sparse(nextForall->idx)) {
-                            llir::lExpr start_var =
-                                tlower.get_start(nextForall->idx);
-                            llir::lExpr end_var =
-                                tlower.get_end(nextForall->idx);
-                            llir::lExpr iter_outer =
-                                tlower.get_iter(forall->idx);
-                            llir::lExpr start_outer =
-                                tlower.get_start(forall->idx);
-                            llir::lExpr actual_end =
-                                tlower.get_offsets_field(nextForall->idx)
-                                    [iter_outer + 1] -
-                                1;
-                            llir::lExpr row_has_work =
-                                (start_var <= end_var) &&
-                                (start_var <= actual_end);
-                            if (has_partition_bounds) {
-                                // If this thread's first outer row has no
-                                // inner work, don't treat it as
-                                // interior-complete.
-                                sub =
-                                    sub &&
-                                    ((iter_outer != start_outer) || row_has_work);
-                            }
+                        llir::lExpr start_var, end_var, actual_end, row_has_work;
+                        if (has_partition_bounds &&
+                            get_sparse_inner_row_info(tlower, start_var, end_var,
+                                                      actual_end, row_has_work)) {
+                            // If this thread starts on an outer boundary row,
+                            // require real inner work before counting it as an
+                            // interior-owned row completion.
+                            llir::lExpr iter_outer = tlower.get_iter(forall->idx);
+                            llir::lExpr start_outer = tlower.get_start(forall->idx);
+                            sub = sub &&
+                                  ((iter_outer != start_outer) || row_has_work);
                         }
-                        if (case_offset_write_cond.defined()) {
-                            case_offset_write_cond = case_offset_write_cond && sub;
-                        } else {
-                            case_offset_write_cond = sub;
-                        }
+                        append_and(case_offset_write_cond, sub);
                     }
                 } else {
-                    // Fallback: use parent's offset_write_cond (e.g., when
-                    // is_loop_before_prev_intersection remapped iterators)
+                    // Fallback: use the parent case condition (e.g. remapped
+                    // iterators before previous sparse intersection).
                     case_offset_write_cond = offset_write_cond;
                 }
-                // Build "has last column" condition for boundary rows.
-                // When the thread has the boundary row's last column
-                // (end_j_p >= actual_row_end AND start_j_p <= end_j_p),
-                // it should complete the row even if iter_i == stop_i.
+
                 llir::lExpr boundary_complete_cond;
                 llir::lExpr any_operand_has_work;
-                std::vector<Seq> boundary_idxs = case_idxs;
-                if (boundary_idxs.empty()) {
+                std::vector<Seq> boundary_terms;
+                if (!case_indices.empty()) {
+                    for (const auto &entry : case_indices) {
+                        boundary_terms.push_back(entry.first);
+                    }
+                } else {
                     for (const auto &[name, tensor] : operand_tensors) {
                         if (tensor.tensor_type.format.level_exists(forall->idx) &&
                             tensor.is_sparse(forall->idx)) {
-                            boundary_idxs.push_back(Index::make(
+                            boundary_terms.push_back(Index::make(
                                 tensor.tensor_name, tensor.tensor_type,
                                 loop_level));
                         }
                     }
                 }
-                if (!boundary_idxs.empty()) {
-                    for (const auto &ci : boundary_idxs) {
-                        const Index *idx_node = ci.as<Index>();
-                        if (!idx_node) continue;
-                        TensorLowerer tlower(idx_node->tensor, idx_node->type);
-                        if (!tlower.tensor_type.format.level_exists(nextForall->idx) ||
-                            !tlower.is_sparse(nextForall->idx)) {
-                            continue;
-                        }
-                        llir::lExpr end_var = tlower.get_end(nextForall->idx);
-                        llir::lExpr start_var = tlower.get_start(nextForall->idx);
-                        llir::lExpr iter_outer = tlower.get_iter(forall->idx);
-                        llir::lExpr actual_end = tlower.get_offsets_field(nextForall->idx)[iter_outer + 1] - 1;
-                        llir::lExpr operand_has_work = (start_var <= end_var) && (start_var <= actual_end);
-                        if (any_operand_has_work.defined()) {
-                            any_operand_has_work = any_operand_has_work || operand_has_work;
-                        } else {
-                            any_operand_has_work = operand_has_work;
-                        }
-                        llir::lExpr has_last_col = (end_var >= actual_end) && (start_var <= end_var);
-                        llir::lExpr fully_handled = start_var > actual_end;
-                        llir::lExpr per_operand_complete = has_last_col || fully_handled;
-                        if (boundary_complete_cond.defined()) {
-                            boundary_complete_cond = boundary_complete_cond && per_operand_complete;
-                        } else {
-                            boundary_complete_cond = per_operand_complete;
-                        }
+                for (const auto &boundary_term : boundary_terms) {
+                    const Index *idx_node = boundary_term.as<Index>();
+                    if (!idx_node) {
+                        continue;
                     }
+                    TensorLowerer tlower(idx_node->tensor, idx_node->type);
+                    llir::lExpr start_var, end_var, actual_end, row_has_work;
+                    if (!get_sparse_inner_row_info(tlower, start_var, end_var,
+                                                   actual_end, row_has_work)) {
+                        continue;
+                    }
+                    append_or(any_operand_has_work, row_has_work);
+
+                    // Boundary row is complete when this thread either owns the
+                    // row tail (has_last_col) or has no coverage into this row.
+                    llir::lExpr has_last_col =
+                        (end_var >= actual_end) && (start_var <= end_var);
+                    llir::lExpr fully_handled = start_var > actual_end;
+                    append_and(boundary_complete_cond,
+                               has_last_col || fully_handled);
                 }
-                if (boundary_complete_cond.defined() && any_operand_has_work.defined()) {
-                    boundary_complete_cond = boundary_complete_cond && any_operand_has_work;
-                    case_offset_write_cond = case_offset_write_cond || boundary_complete_cond;
+
+                if (boundary_complete_cond.defined() &&
+                    any_operand_has_work.defined()) {
+                    case_offset_write_cond =
+                        case_offset_write_cond ||
+                        (boundary_complete_cond && any_operand_has_work);
                 } else {
-                    // No inner sparse dimension — fall back to max_thread safety net
-                    case_offset_write_cond = case_offset_write_cond || (llir::lVar::make(index_t, "thread_id") == llir::lVar::make(index_t, "max_thread_id"));
+                    // No sparse-inner operand participated: keep the
+                    // max-thread safety net to close out offsets.
+                    case_offset_write_cond =
+                        case_offset_write_cond ||
+                        (llir::lVar::make(index_t, "thread_id") ==
+                         llir::lVar::make(index_t, "max_thread_id"));
                 }
 
                 // For sparse outer rows (e.g. DCSR), only emit when this
