@@ -600,13 +600,7 @@ namespace backend {
                 end_expr
             )
         );
-        stmts.emplace_back(
-            llir::Declare::make(
-                index_t,
-                forall_idx,
-                mid_expr
-            )
-        );
+        stmts.emplace_back(llir::Declare::make(index_t, forall_idx, mid_expr));
         for(int i=0;i<tensors_with_curr_dim_sparse.size();i++) {
             stmts.emplace_back(
                 llir::Declare::make(
@@ -622,13 +616,12 @@ namespace backend {
                     get_sparse_dim_end_expr(tensors_with_curr_dim_sparse[i], forall_idx)
                 )
             );
-            stmts.emplace_back(
-                llir::Declare::make(
-                    index_t,
-                    tensors_with_curr_dim_sparse[i].get_iterator_suffix(forall_idx),
-                    llir::lVar::make(index_t, tensors_with_curr_dim_sparse[i].get_end_name(forall_idx))
-                )
-            );
+            stmts.emplace_back(llir::Declare::make(
+                index_t,
+                tensors_with_curr_dim_sparse[i].get_iterator_suffix(forall_idx),
+                llir::lVar::make(index_t,
+                                 tensors_with_curr_dim_sparse[i].get_start_name(
+                                     forall_idx))));
         }
         
         // mid = (star+end)/2
