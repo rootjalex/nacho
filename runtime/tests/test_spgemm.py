@@ -1,7 +1,7 @@
 """Tests for SpGEMM: manual kernel vs cuSPARSE."""
 import pytest
 import torch
-import nanobind_cuda_example
+import nacho_runtime
 
 from conftest import make_random_csr
 
@@ -9,7 +9,7 @@ from conftest import make_random_csr
 def _to_nb_csr(t):
     """Convert a torch sparse_csr_tensor to nanobind CSR."""
     M, N = t.shape
-    return nanobind_cuda_example.CSR(
+    return nacho_runtime.CSR(
         t.crow_indices().to(torch.int32),
         t.col_indices().to(torch.int32),
         t.values().to(torch.float32),
@@ -21,8 +21,8 @@ def _run_spgemm(A_torch, B_torch):
     """Run manual and cuSPARSE SpGEMM, return both results."""
     A_nb = _to_nb_csr(A_torch)
     B_nb = _to_nb_csr(B_torch)
-    C_manual = nanobind_cuda_example.spgemm(A_nb, B_nb, False)
-    C_cusparse = nanobind_cuda_example.spgemm(A_nb, B_nb, True)
+    C_manual = nacho_runtime.spgemm(A_nb, B_nb, False)
+    C_cusparse = nacho_runtime.spgemm(A_nb, B_nb, True)
     torch.cuda.synchronize()
     return C_manual, C_cusparse
 

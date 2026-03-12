@@ -13,7 +13,7 @@ namespace nb = nanobind;
 
 using namespace nb::literals;
 
-NB_MODULE(nanobind_cuda_example_ext, m) {
+NB_MODULE(nacho_runtime_ext, m) {
     nb::class_<io_coo::COO2D<int32_t, float>>(m, "COO2D")
         .def_ro("row", &io_coo::COO2D<int32_t, float>::row, nb::rv_policy::reference)
         .def_ro("col", &io_coo::COO2D<int32_t, float>::col, nb::rv_policy::reference)

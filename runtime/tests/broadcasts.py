@@ -1,4 +1,4 @@
-import nanobind_cuda_example
+import nacho_runtime
 import torch
 import random       
 from parser import parse_matrix, matrix_list , parse_vector
@@ -15,7 +15,7 @@ def csr_add(A_CSR, B_CSR, use_cusparse):
         end = torch.cuda.Event(enable_timing=True, blocking=True)
         start.record()
     
-        C = nanobind_cuda_example.gpu_csr_add_f32(
+        C = nacho_runtime.gpu_csr_add_f32(
             A_CSR,
             B_CSR,
             use_cusparse,
@@ -39,19 +39,19 @@ def benchmark_broadcast():
 
     x_ind = torch.tensor([0,2,4, 7,8,9, 10, 15, 17], dtype=torch.int32, device="cuda")
     x_data = torch.tensor([1.0 for _ in range(x_ind.shape[0])], dtype=torch.float32, device="cuda")
-    x = nanobind_cuda_example.CVector(x_ind, x_data, 30)
+    x = nacho_runtime.CVector(x_ind, x_data, 30)
 
     A_row  = torch.tensor([0,10,12,18,27], dtype=torch.int32, device="cuda")
     A_col  = torch.tensor([0,2,6,8,9,10,11,17,18,19,   0,23,   10, 11, 14, 15, 17, 18,   0,4,6,7,9,10,11,13,14], dtype=torch.int32, device="cuda")
     A_data = torch.tensor([1.0 for _ in range(A_col.shape[0])], dtype=torch.float32, device="cuda")
-    A = nanobind_cuda_example.CSR(
+    A = nacho_runtime.CSR(
         torch.tensor(A_row, dtype=torch.int32, device="cuda"),
         torch.tensor(A_col, dtype=torch.int32, device="cuda"),
         torch.tensor(A_data, dtype=torch.float32, device="cuda"),
         torch.tensor([4,30], dtype=torch.int32)
     )
     #print(torch.tensor(x_ind.repeat(4), dtype=torch.int32, device="cuda"))
-    B = nanobind_cuda_example.CSR(
+    B = nacho_runtime.CSR(
         torch.tensor([x_ind.shape[0] *i for i in range(5)], dtype=torch.int32, device="cuda"),
         torch.tensor(x_ind.repeat(4), dtype=torch.int32, device="cuda"),
         torch.tensor(x_data.repeat(4), dtype=torch.float32, device="cuda"),
@@ -66,7 +66,7 @@ def benchmark_broadcast():
         start = torch.cuda.Event(enable_timing=True)
         end = torch.cuda.Event(enable_timing=True, blocking=True)
         start.record()
-        C = nanobind_cuda_example.gpu_broadcast_xA(x, A)
+        C = nacho_runtime.gpu_broadcast_xA(x, A)
         end.record()
         torch.cuda.synchronize()
         elapsed_time_ms = start.elapsed_time(end)
@@ -83,7 +83,7 @@ def benchmark_broadcast():
         start = torch.cuda.Event(enable_timing=True)
         end = torch.cuda.Event(enable_timing=True, blocking=True)
         start.record()
-        D = nanobind_cuda_example.gpu_csr_add_f32(A, B, False)
+        D = nacho_runtime.gpu_csr_add_f32(A, B, False)
         end.record()
         torch.cuda.synchronize()
         elapsed_time_ms = start.elapsed_time(end)

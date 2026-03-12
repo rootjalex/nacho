@@ -186,10 +186,10 @@ setup_runtime() {
     pip install --verbose "$REPO_DIR/runtime"
 
     info "Verifying runtime import..."
-    if python -c "import nanobind_cuda_example; print('  nanobind_cuda_example OK')"; then
+    if python -c "import nacho_runtime; print('  nacho_runtime OK')"; then
         info "Runtime installed successfully."
     else
-        error "Failed to import nanobind_cuda_example. Check build output above."
+        error "Failed to import nacho_runtime. Check build output above."
         return 1
     fi
 

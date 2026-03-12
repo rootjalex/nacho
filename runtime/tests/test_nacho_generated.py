@@ -2,8 +2,8 @@
 import pytest
 import random
 import torch
-from nanobind_cuda_example import CVector, DCSR
-from nanobind_cuda_example import (
+from nacho_runtime import CVector, DCSR
+from nacho_runtime import (
     nacho_sparse_vec_mul,
     nacho_sparse_vec_add,
     nacho_sparse_vec_apb_c,

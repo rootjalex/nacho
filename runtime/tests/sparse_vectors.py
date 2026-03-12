@@ -1,5 +1,5 @@
 
-import nanobind_cuda_example
+import nacho_runtime
 import torch
 import random
 from parser import parse_matrix, matrix_list , parse_vector
@@ -89,18 +89,18 @@ def test_mergepath(size, length, a = "", b="",c =""):
     # print("B:", B_index[-10:], B_data[-10:])
     # print("C:", C_index[-10:], C_data[-10:])
     # print(C_index.shape[0])
-    A = nanobind_cuda_example.CVector64(
+    A = nacho_runtime.CVector64(
         A_index, 
         A_data,
         size)
     torch.cuda.empty_cache()
-    B = nanobind_cuda_example.CVector64(
+    B = nacho_runtime.CVector64(
         B_index,
         B_data,
         size
         )
     torch.cuda.empty_cache()
-    C = nanobind_cuda_example.CVector64(
+    C = nacho_runtime.CVector64(
         C_index,
         C_data,
         size
@@ -117,7 +117,7 @@ def test_mergepath(size, length, a = "", b="",c =""):
         #end = torch.cuda.Event(enable_timing=True, blocking=True)
         #start.record()
         
-        D_full_fusion = nanobind_cuda_example.gpu_sss_mergepath_test64(A,B,C, 3, expr)
+        D_full_fusion = nacho_runtime.gpu_sss_mergepath_test64(A,B,C, 3, expr)
         #end.record()
         #torch.cuda.synchronize()
         #times.append(start.elapsed_time(end))
@@ -145,7 +145,7 @@ def test_mergepath(size, length, a = "", b="",c =""):
         #start = torch.cuda.Event(enable_timing=True)
         #end = torch.cuda.Event(enable_timing=True, blocking=True)
         #start.record()
-        D_partial_fusion = nanobind_cuda_example.gpu_sss_mergepath_test64(A,B,C, 2, expr)
+        D_partial_fusion = nacho_runtime.gpu_sss_mergepath_test64(A,B,C, 2, expr)
         #end.record()
         #torch.cuda.synchronize()
         #times.append(start.elapsed_time(end))
@@ -174,7 +174,7 @@ def test_mergepath(size, length, a = "", b="",c =""):
         #start = torch.cuda.Event(enable_timing=True)
         #end = torch.cuda.Event(enable_timing=True, blocking=True)
         #start.record()
-        D_nofusion = nanobind_cuda_example.gpu_sss_mergepath_test64(A,B,C, 1, expr)
+        D_nofusion = nacho_runtime.gpu_sss_mergepath_test64(A,B,C, 1, expr)
         #end.record()
         #torch.cuda.synchronize()
         #times.append(start.elapsed_time(end))

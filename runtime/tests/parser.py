@@ -1,4 +1,4 @@
-import nanobind_cuda_example
+import nacho_runtime
 import pandas as pd
 import torch
 import os
@@ -30,7 +30,7 @@ def parse_matrix(matrix, return_coo = False):
     file = "/scratch/atharva/suitesparse/"
 
     matrix = file+matrix
-    COO = nanobind_cuda_example.parse2D(matrix)
+    COO = nacho_runtime.parse2D(matrix)
 
     row = COO.row.to(dtype=torch.long, device="cuda")
     col = COO.col.to(dtype=torch.long, device="cuda")
@@ -47,7 +47,7 @@ def parse_vector(matrix):
     file = "/scratch/atharva/suitesparse/"
 
     matrix = file+matrix
-    COO = nanobind_cuda_example.parse2D(matrix)
+    COO = nacho_runtime.parse2D(matrix)
 
     row = COO.row.to(dtype=torch.long, device="cuda")
     col = COO.col.to(dtype=torch.long, device="cuda")

@@ -88,7 +88,7 @@ def _load_done_indices(csv_name):
 
 def run_csr_add(start, end, save_and_plot, continue_mode=False):
     import torch
-    import nanobind_cuda_example
+    import nacho_runtime
     from parser import matrix_list, parse_matrix
     from coo_and_csr import csr_add, torch_add, failure_reason
     from plotter import plot
@@ -117,8 +117,8 @@ def run_csr_add(start, end, save_and_plot, continue_mode=False):
             B_t = torch.sparse_csr_tensor(B.crow_indices()[:M+1], B.col_indices()[:B.crow_indices()[M]], B.values()[:B.crow_indices()[M]], (M, N))
             plus_row = A_t.crow_indices() + B_t.crow_indices()
 
-            A_CSR = nanobind_cuda_example.CSR(A_t.crow_indices(), A_t.col_indices(), A_t.values(), torch.tensor([M, N], dtype=torch.int32))
-            B_CSR = nanobind_cuda_example.CSR(B_t.crow_indices(), B_t.col_indices(), B_t.values(), torch.tensor([M, N], dtype=torch.int32))
+            A_CSR = nacho_runtime.CSR(A_t.crow_indices(), A_t.col_indices(), A_t.values(), torch.tensor([M, N], dtype=torch.int32))
+            B_CSR = nacho_runtime.CSR(B_t.crow_indices(), B_t.col_indices(), B_t.values(), torch.tensor([M, N], dtype=torch.int32))
 
             C_pytorch, pytorch = torch_add(A_t, B_t)
             C_cusparse, cusparse = csr_add(A_CSR, B_CSR, True)
@@ -166,7 +166,7 @@ def run_csr_add(start, end, save_and_plot, continue_mode=False):
 
 def run_coo_add(start, end, save_and_plot, continue_mode=False):
     import torch
-    import nanobind_cuda_example
+    import nacho_runtime
     from parser import matrix_list, parse_matrix
     from coo_and_csr import coo_add
     from plotter import plot
@@ -193,8 +193,8 @@ def run_coo_add(start, end, save_and_plot, continue_mode=False):
             A_t = torch.sparse_coo_tensor(A.indices(), A.values(), (M, N)).coalesce()
             B_t = torch.sparse_coo_tensor(B.indices(), B.values(), (M, N)).coalesce()
 
-            A_COO = nanobind_cuda_example.COO(A.indices()[0], A.indices()[1], A.values(), torch.tensor([M, N], dtype=torch.int32))
-            B_COO = nanobind_cuda_example.COO(B.indices()[0], B.indices()[1], B.values(), torch.tensor([M, N], dtype=torch.int32))
+            A_COO = nacho_runtime.COO(A.indices()[0], A.indices()[1], A.values(), torch.tensor([M, N], dtype=torch.int32))
+            B_COO = nacho_runtime.COO(B.indices()[0], B.indices()[1], B.values(), torch.tensor([M, N], dtype=torch.int32))
 
             C_pytorch, pytorch = coo_add(A_t, B_t, True)
             C_manual, manual = coo_add(A_COO, B_COO, False)
@@ -236,7 +236,7 @@ def run_coo_add(start, end, save_and_plot, continue_mode=False):
 
 def run_spgemm(start, end, save_and_plot, continue_mode=False):
     import torch
-    import nanobind_cuda_example
+    import nacho_runtime
     from parser import matrix_list, parse_matrix
     from spgemm import spgemm_benchmark
     from coo_and_csr import failure_reason
@@ -263,7 +263,7 @@ def run_spgemm(start, end, save_and_plot, continue_mode=False):
             # AxA benchmark for square matrices
             if A.size(0) == A.size(1):
                 M = A.size(0)
-                A_CSR = nanobind_cuda_example.CSR(A.crow_indices(), A.col_indices(), A.values(), torch.tensor([M, M], dtype=torch.int32))
+                A_CSR = nacho_runtime.CSR(A.crow_indices(), A.col_indices(), A.values(), torch.tensor([M, M], dtype=torch.int32))
                 C_cusparse, cusparse = spgemm_benchmark(A_CSR, A_CSR, True)
                 C_manual, manual = spgemm_benchmark(A_CSR, A_CSR, False)
                 ans = (torch.equal(C_cusparse.indptr, C_manual.indptr)
@@ -291,8 +291,8 @@ def run_spgemm(start, end, save_and_plot, continue_mode=False):
             B_t = torch.sparse_csr_tensor(B.crow_indices()[:K+1], B.col_indices()[:B.crow_indices()[K]], B.values()[:B.crow_indices()[K]], (K, N))
             plus_row = A_t.crow_indices().max() + B_t.crow_indices().max()
 
-            A_CSR = nanobind_cuda_example.CSR(A_t.crow_indices(), A_t.col_indices(), A_t.values(), torch.tensor([M, K], dtype=torch.int32))
-            B_CSR = nanobind_cuda_example.CSR(B_t.crow_indices(), B_t.col_indices(), B_t.values(), torch.tensor([K, N], dtype=torch.int32))
+            A_CSR = nacho_runtime.CSR(A_t.crow_indices(), A_t.col_indices(), A_t.values(), torch.tensor([M, K], dtype=torch.int32))
+            B_CSR = nacho_runtime.CSR(B_t.crow_indices(), B_t.col_indices(), B_t.values(), torch.tensor([K, N], dtype=torch.int32))
 
             C_cusparse, cusparse = spgemm_benchmark(A_CSR, B_CSR, True)
             C_manual, manual = spgemm_benchmark(A_CSR, B_CSR, False)

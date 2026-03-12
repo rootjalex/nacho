@@ -45,7 +45,7 @@ Available: `csr_add`, `coo_add`, `spgemm`, `sparse_vectors`, `broadcast`.
 
 All GPU tensors are managed via nanobind capsules with `cudaFreeWrapper` for automatic cleanup.
 
-### Python Bindings (`src/nanobind_cuda_example_ext.cpp`)
+### Python Bindings (`src/nacho_runtime_ext.cpp`)
 
 Single nanobind extension module exposing: `parse2D`, `gpu_csr_add_f32`, `gpu_coo_add_f32`, `gpu_sss_mergepath_test`, `gpu_broadcast_xA`, `spgemm`.
 

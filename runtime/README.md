@@ -1,8 +1,9 @@
-sparse_gpu
-================
+nacho_runtime
+=============
 
 ```bash
 module load cuda
 pip install .
-python tests/test_basic.py
+python -c "import nacho_runtime; print('nacho_runtime OK')"
+pytest tests/
 ```

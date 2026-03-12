@@ -1,7 +1,7 @@
 """Tests for COO sparse matrix addition: manual kernel vs PyTorch."""
 import pytest
 import torch
-import nanobind_cuda_example
+import nacho_runtime
 
 from conftest import make_random_coo
 
@@ -10,7 +10,7 @@ def _to_nb_coo(t):
     """Convert a coalesced torch sparse_coo_tensor to nanobind COO."""
     t = t.coalesce()
     M, N = t.shape
-    return nanobind_cuda_example.COO(
+    return nacho_runtime.COO(
         t.indices()[0].to(torch.int32),
         t.indices()[1].to(torch.int32),
         t.values().to(torch.float32),
@@ -22,7 +22,7 @@ def _run_coo_add(A_torch, B_torch):
     """Run manual COO add and PyTorch reference."""
     A_nb = _to_nb_coo(A_torch)
     B_nb = _to_nb_coo(B_torch)
-    C_manual = nanobind_cuda_example.gpu_coo_add_f32(A_nb, B_nb)
+    C_manual = nacho_runtime.gpu_coo_add_f32(A_nb, B_nb)
     C_pytorch = (A_torch + B_torch).coalesce()
     torch.cuda.synchronize()
     return C_manual, C_pytorch

@@ -1,26 +1,26 @@
 """Tests for broadcast x*A operation: broadcast kernel vs CSR add of expanded matrix."""
 import pytest
 import torch
-import nanobind_cuda_example
+import nacho_runtime
 
 from conftest import make_random_csr
 
 
 def _broadcast_xA(x_indices, x_values, x_size, A_csr):
     """Run broadcast x*A using the GPU kernel."""
-    x = nanobind_cuda_example.CVector(
+    x = nacho_runtime.CVector(
         torch.tensor(x_indices, dtype=torch.int32, device="cuda"),
         torch.tensor(x_values, dtype=torch.float32, device="cuda"),
         x_size,
     )
     M, N = A_csr.shape
-    A_nb = nanobind_cuda_example.CSR(
+    A_nb = nacho_runtime.CSR(
         A_csr.crow_indices().to(torch.int32),
         A_csr.col_indices().to(torch.int32),
         A_csr.values().to(torch.float32),
         torch.tensor([M, N], dtype=torch.int32),
     )
-    result = nanobind_cuda_example.gpu_broadcast_xA(x, A_nb)
+    result = nacho_runtime.gpu_broadcast_xA(x, A_nb)
     torch.cuda.synchronize()
     return result
 
@@ -35,7 +35,7 @@ def _expand_x_to_csr(x_indices, x_values, rows, cols):
     indptr = [nnz_per_row * i for i in range(rows + 1)]
     indices = x_indices * rows
     values = x_values * rows
-    return nanobind_cuda_example.CSR(
+    return nacho_runtime.CSR(
         torch.tensor(indptr, dtype=torch.int32, device="cuda"),
         torch.tensor(indices, dtype=torch.int32, device="cuda"),
         torch.tensor(values, dtype=torch.float32, device="cuda"),
@@ -58,18 +58,18 @@ class TestBroadcast:
             dtype=torch.int32, device="cuda",
         )
         A_data = torch.tensor([1.0] * A_col.shape[0], dtype=torch.float32, device="cuda")
-        A_nb = nanobind_cuda_example.CSR(A_row, A_col, A_data, torch.tensor([4, 30], dtype=torch.int32))
+        A_nb = nacho_runtime.CSR(A_row, A_col, A_data, torch.tensor([4, 30], dtype=torch.int32))
 
         # Build expanded B (x repeated per row)
         B_nb = _expand_x_to_csr(x_indices, x_values, 4, 30)
 
-        x = nanobind_cuda_example.CVector(
+        x = nacho_runtime.CVector(
             torch.tensor(x_indices, dtype=torch.int32, device="cuda"),
             torch.tensor(x_values, dtype=torch.float32, device="cuda"),
             30,
         )
-        C_broadcast = nanobind_cuda_example.gpu_broadcast_xA(x, A_nb)
-        D_csr_add = nanobind_cuda_example.gpu_csr_add_f32(A_nb, B_nb, False)
+        C_broadcast = nacho_runtime.gpu_broadcast_xA(x, A_nb)
+        D_csr_add = nacho_runtime.gpu_csr_add_f32(A_nb, B_nb, False)
         torch.cuda.synchronize()
 
         assert torch.equal(C_broadcast.indptr, D_csr_add.indptr), "indptr mismatch"
@@ -94,22 +94,22 @@ class TestBroadcast:
 
         A = make_random_csr(rows, cols, nnz_per_row_range=(0, min(5, cols)), seed=seed * 1000)
         M, N = A.shape
-        A_nb = nanobind_cuda_example.CSR(
+        A_nb = nacho_runtime.CSR(
             A.crow_indices().to(torch.int32),
             A.col_indices().to(torch.int32),
             A.values().to(torch.float32),
             torch.tensor([M, N], dtype=torch.int32),
         )
 
-        x = nanobind_cuda_example.CVector(
+        x = nacho_runtime.CVector(
             torch.tensor(x_indices, dtype=torch.int32, device="cuda"),
             torch.tensor(x_values, dtype=torch.float32, device="cuda"),
             cols,
         )
         B_nb = _expand_x_to_csr(x_indices, x_values, rows, cols)
 
-        C_broadcast = nanobind_cuda_example.gpu_broadcast_xA(x, A_nb)
-        D_csr_add = nanobind_cuda_example.gpu_csr_add_f32(A_nb, B_nb, False)
+        C_broadcast = nacho_runtime.gpu_broadcast_xA(x, A_nb)
+        D_csr_add = nacho_runtime.gpu_csr_add_f32(A_nb, B_nb, False)
         torch.cuda.synchronize()
 
         assert torch.equal(C_broadcast.indptr, D_csr_add.indptr), "indptr mismatch"

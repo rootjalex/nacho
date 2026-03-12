@@ -1,4 +1,4 @@
-import nanobind_cuda_example
+import nacho_runtime
 import torch
 import random       
 from parser import parse_matrix, matrix_list , parse_vector
@@ -16,7 +16,7 @@ def spgemm_benchmark(A_CSR, B_CSR, use_cusparse):
         end = torch.cuda.Event(enable_timing=True, blocking=True)
         start.record()
     
-        C = nanobind_cuda_example.spgemm(
+        C = nacho_runtime.spgemm(
             A_CSR,
             B_CSR,
             use_cusparse,
@@ -58,7 +58,7 @@ def spgemm(start,end, save_and_plot=True):
             print(f"Also benchmarking A x A for matrix {df.iloc[i-1]['name']}")
 
             M = A.size(0)
-            A_CSR = nanobind_cuda_example.CSR(A.crow_indices(), A.col_indices(), A.values(), torch.tensor([M,M], dtype=torch.int32))
+            A_CSR = nacho_runtime.CSR(A.crow_indices(), A.col_indices(), A.values(), torch.tensor([M,M], dtype=torch.int32))
             
             print(f"M {M}, nnz {A.crow_indices().max().item() * 2}")
             
@@ -125,8 +125,8 @@ def spgemm(start,end, save_and_plot=True):
         plus_row = A_torch.crow_indices().max() + B_torch.crow_indices().max()
 
 
-        A_CSR = nanobind_cuda_example.CSR(A_torch.crow_indices(), A_torch.col_indices(), A_torch.values(), torch.tensor([M,K], dtype=torch.int32))
-        B_CSR = nanobind_cuda_example.CSR(B_torch.crow_indices(), B_torch.col_indices(), B_torch.values(), torch.tensor([K,N], dtype=torch.int32))
+        A_CSR = nacho_runtime.CSR(A_torch.crow_indices(), A_torch.col_indices(), A_torch.values(), torch.tensor([M,K], dtype=torch.int32))
+        B_CSR = nacho_runtime.CSR(B_torch.crow_indices(), B_torch.col_indices(), B_torch.values(), torch.tensor([K,N], dtype=torch.int32))
 
 
         # nnzA = A_CSR.data.numel()
@@ -179,12 +179,12 @@ def spgemm_test():
 
     x_ind = torch.tensor([0,2,4, 7,8,9, 10, 15, 17], dtype=torch.int32, device="cuda")
     x_data = torch.tensor([1.0 for _ in range(x_ind.shape[0])], dtype=torch.float32, device="cuda")
-    x = nanobind_cuda_example.CVector(x_ind, x_data, 30)
+    x = nacho_runtime.CVector(x_ind, x_data, 30)
 
     A_row  = torch.tensor([0,10,12,18,27], dtype=torch.int32, device="cuda")
     A_col  = torch.tensor([0,2,6,8,9,10,11,17,18,19,   0,23,   10, 11, 14, 15, 17, 18,   0,4,6,7,9,10,11,13,14], dtype=torch.int32, device="cuda")
     A_data = torch.tensor([1.0 for _ in range(A_col.shape[0])], dtype=torch.float32, device="cuda")
-    A = nanobind_cuda_example.CSR(
+    A = nacho_runtime.CSR(
         torch.tensor(A_row, dtype=torch.int32, device="cuda"),
         torch.tensor(A_col, dtype=torch.int32, device="cuda"),
         torch.tensor(A_data, dtype=torch.float32, device="cuda"),
@@ -202,7 +202,7 @@ def spgemm_test():
         B_col = torch.cat((B_col, col))
 
     B_data = torch.tensor([1.0 for _ in range(B_col.shape[0])], dtype=torch.float32, device="cuda")
-    B = nanobind_cuda_example.CSR(
+    B = nacho_runtime.CSR(
         torch.tensor(B_row, dtype=torch.int32, device="cuda"),
         torch.tensor(B_col, dtype=torch.int32, device="cuda"),
         torch.tensor(B_data, dtype=torch.float32, device="cuda"),
@@ -218,8 +218,8 @@ def spgemm_test():
     print(B.indices)
     print(B.data)
 
-    C = nanobind_cuda_example.spgemm(A, B, False)
-    D = nanobind_cuda_example.spgemm(A, B, True) 
+    C = nacho_runtime.spgemm(A, B, False)
+    D = nacho_runtime.spgemm(A, B, True) 
 
     ans = True
     ans &= torch.equal(C.indptr, D.indptr)

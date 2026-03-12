@@ -1,4 +1,4 @@
-import nanobind_cuda_example
+import nacho_runtime
 import torch
 import random
 from parser import parse_matrix, matrix_list , parse_vector
@@ -32,8 +32,8 @@ def benchmark_coo_add(start, end, save_and_plot = True):
         A_torch = torch.sparse_coo_tensor(A.indices(), A.values(), (M,N)).coalesce()
         B_torch = torch.sparse_coo_tensor(B.indices(), B.values(), (M,N)).coalesce()
 
-        A_COO = nanobind_cuda_example.COO(A.indices()[0], A.indices()[1], A.values(), torch.tensor([M,N], dtype=torch.int32))
-        B_COO = nanobind_cuda_example.COO(B.indices()[0], B.indices()[1], B.values(), torch.tensor([M,N], dtype=torch.int32))
+        A_COO = nacho_runtime.COO(A.indices()[0], A.indices()[1], A.values(), torch.tensor([M,N], dtype=torch.int32))
+        B_COO = nacho_runtime.COO(B.indices()[0], B.indices()[1], B.values(), torch.tensor([M,N], dtype=torch.int32))
 
         nnzA = A_COO.data.numel()
         nnzB = B_COO.data.numel()
@@ -119,8 +119,8 @@ def benchmark_csr_add(start,end, save_and_plot=True):
         plus_row = A_torch.crow_indices() + B_torch.crow_indices()
 
 
-        A_CSR = nanobind_cuda_example.CSR(A_torch.crow_indices(), A_torch.col_indices(), A_torch.values(), torch.tensor([M,N], dtype=torch.int32))
-        B_CSR = nanobind_cuda_example.CSR(B_torch.crow_indices(), B_torch.col_indices(), B_torch.values(), torch.tensor([M,N], dtype=torch.int32))
+        A_CSR = nacho_runtime.CSR(A_torch.crow_indices(), A_torch.col_indices(), A_torch.values(), torch.tensor([M,N], dtype=torch.int32))
+        B_CSR = nacho_runtime.CSR(B_torch.crow_indices(), B_torch.col_indices(), B_torch.values(), torch.tensor([M,N], dtype=torch.int32))
 
 
         nnzA = A_CSR.data.numel()
@@ -178,7 +178,7 @@ def csr_add(A_CSR, B_CSR, use_cusparse):
         end = torch.cuda.Event(enable_timing=True, blocking=True)
         start.record()
     
-        C = nanobind_cuda_example.gpu_csr_add_f32(
+        C = nacho_runtime.gpu_csr_add_f32(
             A_CSR,
             B_CSR,
             use_cusparse,
@@ -207,7 +207,7 @@ def coo_add(A_COO, B_COO, use_pytorch):
             C = (A_COO + B_COO).coalesce()
 
         else:
-            C = nanobind_cuda_example.gpu_coo_add_f32(
+            C = nacho_runtime.gpu_coo_add_f32(
                 A_COO,
                 B_COO,
             )
