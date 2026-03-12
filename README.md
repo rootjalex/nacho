@@ -26,6 +26,10 @@ cmake --build build-dbg --config Debug -j<N PARALLELISM>
 ./build/compiler
 ```
 
+# Runtime
+
+The `runtime/` directory contains the GPU runtime and benchmark suite (CUDA kernels, Python bindings via nanobind, benchmarks against cuSPARSE). See [`runtime/README.md`](runtime/README.md) for details.
+
 # Testing
 
 TODO

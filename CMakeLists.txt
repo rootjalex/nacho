@@ -127,6 +127,14 @@ set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -fsanitize=undefined -fno-om
 set(CMAKE_LINKER_FLAGS_DEBUG "${CMAKE_LINKER_FLAGS_DEBUG} -fsanitize=undefined -fno-omit-frame-pointer")
 
 ##
+# Runtime (CUDA)
+
+option(nacho_BUILD_RUNTIME "Build CUDA runtime (requires CUDA toolkit)" OFF)
+if (nacho_BUILD_RUNTIME)
+    add_subdirectory(runtime)
+endif()
+
+##
 # nacho compiler
 
 add_executable(nacho_compiler compiler.cpp)

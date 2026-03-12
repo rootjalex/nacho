@@ -1,0 +1,91 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Project Overview
+
+**nacho** is a sparse tensor algebra compiler targeting GPUs. The architecture is inspired by (and partially derived from) the [Halide](https://github.com/halide/Halide) compiler. Written in C++20.
+
+## Build Commands
+
+```bash
+# Normal build
+cmake -S . -B build
+cmake --build build -j$(nproc)
+
+# Debug build (includes UBSan)
+cmake -S . -B build-dbg -DCMAKE_BUILD_TYPE=Debug
+cmake --build build-dbg --config Debug -j$(nproc)
+
+# Run
+./build/compiler
+```
+
+Requires CMake 3.30+. No formal test suite yet — `compiler.cpp` contains ad-hoc test functions invoked from `main()`.
+
+## Code Style
+
+- `.clang-format`: LLVM style, 4-space indentation
+- `.clang-tidy` naming conventions:
+  - Classes/Enums: `CamelCase`
+  - Functions/variables/members/parameters: `lower_case`
+  - Constexpr variables: `UPPER_CASE`
+
+## Compiler Architecture
+
+Three-tier IR with progressive lowering:
+
+```
+Expr (Frontend DSL)  →  CIN (Concrete Index Notation)  →  LLIR (Low-Level IR)
+    compile_to_cin()         backend::CINLowerer::lower_cin()
+```
+
+### Frontend (`include/Frontend.h`)
+Expression DSL with overloaded `+`, `*` operators. Nodes: `Add`, `Mul`, `Sum`, `Tensor`, `Bc` (broadcast). Each expression carries a `TensorType` (Format + dType). `sum("idx", expr)` contracts a dimension.
+
+### CIN — Concrete Index Notation (`include/CIN.h`)
+Mid-level IR representing iteration structure. Key nodes: `Forall` (loop over index), `Where` (precompute workspace), `Accumulate`, `Assign`, `CalculateWork`, `Sequence`. Scalar math nodes: `cAdd`, `cMul`, `cTensor`.
+
+### LLIR — Low-Level IR (`include/llir/LLIR.h`)
+Near-machine IR. Types (`lType`): `Generic_t`, `Float_t`, `Int_t`, `Ptr_t`, `Tuple_t`, `Struct_t`. Expressions (`lExpr`) and statements (`lStmt`) for conditionals, loops, array access, function calls, etc.
+
+### Format System (`include/Format.h`)
+Tensor storage formats composed of per-dimension level formats: `Dense` or `Compressed` (sparse). `Format::ordered(...)` builds formats. Format inference rules in `src/Format.cpp` propagate sparsity through `add_formats` (union → denser) and `mul_formats` (intersection → sparser).
+
+### Iteration Sequences (`include/Seq.h`)
+`Seq` represents iteration space algebra: `Index`, `Intersect` (∩), `Union` (∪), `Universe`, `Empty`. Used by `Lattice` (in `src/Lattice.cpp`) to build merge lattices for co-iteration over sparse structures.
+
+### Backend (`src/backend/`)
+GPU kernel generation from CIN → LLIR. Five components:
+- **`compile.cpp`** — `CINLowerer`: top-level orchestrator
+- **`partition.cpp`** — `PartitionLowerer`: generates partition kernels for work distribution across GPU threads (merge-path strategies)
+- **`compute.cpp`** — `ComputeLowerer`: generates compute/pre-compute kernels
+- **`tensor.cpp`** — `TensorLowerer`: tensor struct definitions and field access helpers
+- **`base_lowerer.cpp`** — `BaseKernelLowerer`: shared infrastructure (kernel naming, offset tracking)
+
+### IR Infrastructure
+- **Intrusive pointers** (`IntrusivePtr.h`, `RefCount.h`): reference-counted smart pointers for all IR nodes
+- **IRNode/IRHandle** (`IRNode.h`, `IRHandle.h`): template-based node hierarchy with enum dispatch
+- **Visitor/Mutator** (`Visitor.h`, `Mutator.h`): visitor pattern for traversal and transformation across all three IR levels
+- **Printer** (`src/Printer.cpp`): pretty-printing for Format, Expr, CIN, and LLIR
+
+## Namespace
+
+Everything lives under `nacho::`. Backend code is in `nacho::backend::`. LLIR types are in `nacho::llir::`.
+
+## Runtime (`runtime/`)
+
+The `runtime/` subdirectory (formerly the `sparse_gpu` repo) is the GPU runtime and benchmark suite. nacho generates CUDA kernel code via `CINLowerer`, which is placed into `runtime/src/` `.cu` files. The runtime compiles kernels with CUDA, exposes them via Python/nanobind, and benchmarks against cuSPARSE.
+
+Build systems are independent by default — nacho's CMakeLists.txt only builds the runtime when `-Dnacho_BUILD_RUNTIME=ON` is passed (requires CUDA).
+
+```bash
+# Build runtime Python package (requires CUDA)
+cd runtime && module load cuda && pip install .
+
+# Or as part of nacho CMake build
+cmake -S . -B build -Dnacho_BUILD_RUNTIME=ON
+cmake --build build -j$(nproc)
+```
+
+See `runtime/CLAUDE.md` for runtime-specific details.
