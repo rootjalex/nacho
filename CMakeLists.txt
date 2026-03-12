@@ -160,6 +160,7 @@ if (nacho_BUILD_TESTING)
         dcsr_mul
         dcsr_add
         csr_add
+        tcsf_add
         format_inference
         lattice
         locator

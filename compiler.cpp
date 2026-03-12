@@ -123,6 +123,25 @@ void test_csr_add() {
 }
 
 // ===========================================================================
+// 3D Tensor Tests (TCSF — all dimensions sparse)
+// ===========================================================================
+
+// Element-wise add: A ∪ B over (i,j,k), all compressed.
+// This exercises non-innermost sparse row/plane completion guards.
+void test_tcsf_add() {
+    Format tcsf = Format::ordered({
+        {"i", LevelFormat::Compressed},
+        {"j", LevelFormat::Compressed},
+        {"k", LevelFormat::Compressed},
+    });
+    TensorType tcsf_f32(tcsf, dType::Float32);
+
+    Expr a = Tensor::make(tcsf_f32, "A");
+    Expr b = Tensor::make(tcsf_f32, "B");
+    compile_and_lower("TCSF Add: A+B  [3D generated]", a + b);
+}
+
+// ===========================================================================
 // Format Inference Tests
 // ===========================================================================
 
@@ -322,6 +341,15 @@ const std::map<std::string, ExprBuilder> EXPRESSIONS = {
         TensorType csr_f32(csr, dType::Float32);
         return Tensor::make(csr_f32, "A") + Tensor::make(csr_f32, "B");
     }},
+    {"tcsf_add", []() {
+        Format tcsf = Format::ordered({
+            {"i", LevelFormat::Compressed},
+            {"j", LevelFormat::Compressed},
+            {"k", LevelFormat::Compressed},
+        });
+        TensorType tcsf_f32(tcsf, dType::Float32);
+        return Tensor::make(tcsf_f32, "A") + Tensor::make(tcsf_f32, "B");
+    }},
 };
 // clang-format on
 
@@ -438,6 +466,7 @@ const std::map<std::string, TestFunc> TESTS = {
     {"dcsr_mul",          test_dcsr_mul},
     {"dcsr_add",          test_dcsr_add},
     {"csr_add",           test_csr_add},
+    {"tcsf_add",          test_tcsf_add},
     {"format_inference",  test_format_inference},
     {"lattice",           test_lattice},
     {"locator",           test_locator_optimization},
