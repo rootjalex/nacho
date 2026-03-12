@@ -1,3 +1,12 @@
+"""
+Plot benchmark results from CSV files.
+
+Usage:
+    python runtime/tests/plotter.py                          # plot all CSVs
+    python runtime/tests/plotter.py csr_add_0-1712           # plot specific CSV (no .csv extension)
+    python runtime/tests/plotter.py csr_add_0-1712 spgemm_0-1712  # multiple CSVs
+"""
+
 import matplotlib
 matplotlib.use('Agg')  # non-interactive backend, no plt.show() popups
 import matplotlib.pyplot as plt
@@ -5,6 +14,7 @@ import matplotlib.ticker as ticker
 from matplotlib.patches import Patch
 import numpy as np
 import pandas as pd
+import glob as glob_mod
 import os
 
 _RESULTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'benchmark_results')
@@ -204,3 +214,43 @@ def plot_bar_graph_2(size, lengths, full_lb, partial_lb, single_lb, name):
     plt.tight_layout()
     plt.savefig(_path(name, "pdf"), bbox_inches='tight')
     plt.close()
+
+
+def _plot_csv(name):
+    """Auto-detect CSV type and plot it."""
+    path = _path(name, "csv")
+    if not os.path.isfile(path):
+        print(f"Not found: {path}")
+        return False
+    df = pd.read_csv(path)
+    if "full_mergepath_ms" in df.columns:
+        load_and_plot2([name], name)
+    elif "manual_ms" in df.columns:
+        load_and_plot([name], name)
+    else:
+        print(f"Unknown CSV format: {path}")
+        return False
+    print(f"Saved: {_path(name, 'pdf')}")
+    return True
+
+
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="Plot benchmark results from CSV files")
+    parser.add_argument("csvs", nargs="*", help="CSV names (without .csv extension). If none, plots all.")
+    args = parser.parse_args()
+
+    if args.csvs:
+        names = args.csvs
+    else:
+        names = sorted(
+            os.path.splitext(os.path.basename(f))[0]
+            for f in glob_mod.glob(os.path.join(_RESULTS_DIR, "*.csv"))
+        )
+        if not names:
+            print(f"No CSV files found in {_RESULTS_DIR}")
+            exit(1)
+        print(f"Found {len(names)} CSV file(s)")
+
+    for name in names:
+        _plot_csv(name)
