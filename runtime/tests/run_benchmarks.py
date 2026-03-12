@@ -6,13 +6,16 @@ Usage:
     python runtime/tests/run_benchmarks.py                       # all benchmarks, full sweep
     python runtime/tests/run_benchmarks.py csr_add               # just CSR add
     python runtime/tests/run_benchmarks.py spgemm -s 982 -e 988  # SpGEMM on a range
-    python runtime/tests/run_benchmarks.py --quick               # quick smoke test (~5 matrix pairs)
+    python runtime/tests/run_benchmarks.py --quick               # quick smoke test
+    python runtime/tests/run_benchmarks.py --no-continue csr_add  # start fresh, ignore existing CSV
 """
 
 import argparse
 import subprocess
 import sys
 import os
+
+import pandas as pd
 
 # Ensure tests/ is on the path so existing modules import cleanly
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -49,24 +52,60 @@ ensure_cuda()
 
 from tqdm import tqdm
 
+SAVE_EVERY = 20  # flush CSV every N iterations
+
 
 def get_num_matrices():
     from parser import matrix_list
     return len(matrix_list())
 
 
-def run_csr_add(start, end, save_and_plot):
+def _csv_path(name):
+    from plotter import _path
+    return _path(name, "csv")
+
+
+def _save_rows(rows, csv_name):
+    """Save accumulated rows to CSV (overwrites)."""
+    if rows:
+        pd.DataFrame(rows).to_csv(_csv_path(csv_name), index=False)
+
+
+def _load_done_indices(csv_name):
+    """Load completed indices from an existing CSV. Returns a set of idx values."""
+    path = _csv_path(csv_name)
+    if os.path.isfile(path):
+        df = pd.read_csv(path)
+        if 'idx' in df.columns:
+            done = set(df['idx'].tolist())
+            return done, df.to_dict('records')
+    return set(), []
+
+
+# ---------------------------------------------------------------------------
+# Benchmark runners
+# ---------------------------------------------------------------------------
+
+def run_csr_add(start, end, save_and_plot, continue_mode=False):
     import torch
     import nanobind_cuda_example
     from parser import matrix_list, parse_matrix
     from coo_and_csr import csr_add, torch_add, failure_reason
     from plotter import plot
 
+    csv_name = f"csr_add_{start}-{end}"
     df = matrix_list()
-    nnz, manual_rt, cusparse_rt, pytorch_rt, failed = [], [], [], [], []
+    failed = []
     skip = {611}
 
-    indices = [i for i in range(start + 1, end) if i not in skip]
+    if continue_mode:
+        done, rows = _load_done_indices(csv_name)
+        if done:
+            tqdm.write(f"Continuing: {len(done)} pairs already done")
+    else:
+        done, rows = set(), []
+
+    indices = [i for i in range(start + 1, end) if i not in skip and i not in done]
     for i in tqdm(indices, desc="CSR Add", unit="pair"):
         try:
             A = parse_matrix(df.iloc[i - 1]['name'])
@@ -97,32 +136,53 @@ def run_csr_add(start, end, save_and_plot):
                 failed.append(i)
                 failure_reason(C_manual, C_cusparse)
 
-            nnz.append(plus_row.max().item())
-            manual_rt.append(manual)
-            cusparse_rt.append(cusparse)
-            pytorch_rt.append(pytorch)
+            rows.append({
+                "idx": i,
+                "matrix_a": df.iloc[i - 1]['name'],
+                "matrix_b": df.iloc[i]['name'],
+                "nnz": plus_row.max().item(),
+                "manual_ms": manual,
+                "cusparse_ms": cusparse,
+                "pytorch_ms": pytorch,
+                "correct": ans,
+            })
+
+            if len(rows) % SAVE_EVERY == 0:
+                _save_rows(rows, csv_name)
+
         except (RuntimeError, MemoryError) as e:
             tqdm.write(f"Skipping {i} ({df.iloc[i-1]['name']} x {df.iloc[i]['name']}): {e}")
             torch.cuda.empty_cache()
             continue
 
-    if save_and_plot and nnz:
-        plot(nnz, manual_rt, cusparse_rt, pytorch_rt, f"torch_nnz_{start}-{end}")
+    _save_rows(rows, csv_name)
+    if save_and_plot and rows:
+        rdf = pd.DataFrame(rows)
+        plot(rdf["nnz"].tolist(), rdf["manual_ms"].tolist(),
+             rdf["cusparse_ms"].tolist(), rdf["pytorch_ms"].tolist(), csv_name)
     if failed:
         print(f"Failed: {failed}")
 
 
-def run_coo_add(start, end, save_and_plot):
+def run_coo_add(start, end, save_and_plot, continue_mode=False):
     import torch
     import nanobind_cuda_example
     from parser import matrix_list, parse_matrix
     from coo_and_csr import coo_add
     from plotter import plot
 
+    csv_name = f"coo_add_{start}-{end}"
     df = matrix_list()
-    nnz, manual_rt, pytorch_rt, failed = [], [], [], []
+    failed = []
 
-    indices = list(range(start + 1, end))
+    if continue_mode:
+        done, rows = _load_done_indices(csv_name)
+        if done:
+            tqdm.write(f"Continuing: {len(done)} pairs already done")
+    else:
+        done, rows = set(), []
+
+    indices = [i for i in range(start + 1, end) if i not in done]
     for i in tqdm(indices, desc="COO Add", unit="pair"):
         try:
             A = parse_matrix(df.iloc[i - 1]['name'], True).coalesce()
@@ -147,21 +207,34 @@ def run_coo_add(start, end, save_and_plot):
                 tqdm.write(f"FAILED at {i}: {df.iloc[i-1]['name']} x {df.iloc[i]['name']}")
                 failed.append(i)
 
-            nnz.append(A_COO.data.numel() + B_COO.data.numel())
-            manual_rt.append(manual)
-            pytorch_rt.append(pytorch)
+            rows.append({
+                "idx": i,
+                "matrix_a": df.iloc[i - 1]['name'],
+                "matrix_b": df.iloc[i]['name'],
+                "nnz": A_COO.data.numel() + B_COO.data.numel(),
+                "manual_ms": manual,
+                "pytorch_ms": pytorch,
+                "correct": ans,
+            })
+
+            if len(rows) % SAVE_EVERY == 0:
+                _save_rows(rows, csv_name)
+
         except (RuntimeError, MemoryError) as e:
             tqdm.write(f"Skipping {i} ({df.iloc[i-1]['name']} x {df.iloc[i]['name']}): {e}")
             torch.cuda.empty_cache()
             continue
 
-    if save_and_plot and nnz:
-        plot(nnz, manual_rt, [], pytorch_rt, f"coo_rows_nnz_{start}-{end}")
+    _save_rows(rows, csv_name)
+    if save_and_plot and rows:
+        rdf = pd.DataFrame(rows)
+        plot(rdf["nnz"].tolist(), rdf["manual_ms"].tolist(),
+             [], rdf["pytorch_ms"].tolist(), csv_name)
     if failed:
         print(f"Failed: {failed}")
 
 
-def run_spgemm(start, end, save_and_plot):
+def run_spgemm(start, end, save_and_plot, continue_mode=False):
     import torch
     import nanobind_cuda_example
     from parser import matrix_list, parse_matrix
@@ -169,11 +242,19 @@ def run_spgemm(start, end, save_and_plot):
     from coo_and_csr import failure_reason
     from plotter import plot
 
+    csv_name = f"spgemm_{start}-{end}"
     df = matrix_list()
-    nnz, manual_rt, cusparse_rt, failed = [], [], [], []
+    failed = []
     skip = {611}
 
-    indices = [i for i in range(start + 1, end) if i not in skip]
+    if continue_mode:
+        done, rows = _load_done_indices(csv_name)
+        if done:
+            tqdm.write(f"Continuing: {len(done)} pairs already done")
+    else:
+        done, rows = set(), []
+
+    indices = [i for i in range(start + 1, end) if i not in skip and i not in done]
     for i in tqdm(indices, desc="SpGEMM", unit="pair"):
         try:
             A = parse_matrix(df.iloc[i - 1]['name'])
@@ -192,9 +273,12 @@ def run_spgemm(start, end, save_and_plot):
                     failed.append(i)
                     failure_reason(C_manual, C_cusparse)
                     break
-                nnz.append(A.crow_indices().max().item() * 2)
-                manual_rt.append(manual)
-                cusparse_rt.append(cusparse)
+                rows.append({
+                    "idx": i, "type": "AxA",
+                    "matrix_a": df.iloc[i - 1]['name'], "matrix_b": df.iloc[i - 1]['name'],
+                    "nnz": A.crow_indices().max().item() * 2,
+                    "manual_ms": manual, "cusparse_ms": cusparse, "correct": ans,
+                })
 
             # AxB benchmark
             M = A.size(0)
@@ -221,33 +305,49 @@ def run_spgemm(start, end, save_and_plot):
                 failure_reason(C_manual, C_cusparse)
                 break
 
-            nnz.append(plus_row.max().item())
-            manual_rt.append(manual)
-            cusparse_rt.append(cusparse)
+            rows.append({
+                "idx": i, "type": "AxB",
+                "matrix_a": df.iloc[i - 1]['name'], "matrix_b": df.iloc[i]['name'],
+                "nnz": plus_row.max().item(),
+                "manual_ms": manual, "cusparse_ms": cusparse, "correct": ans,
+            })
+
+            if len(rows) % SAVE_EVERY == 0:
+                _save_rows(rows, csv_name)
+
         except (RuntimeError, MemoryError) as e:
             tqdm.write(f"Skipping {i} ({df.iloc[i-1]['name']} x {df.iloc[i]['name']}): {e}")
             torch.cuda.empty_cache()
             continue
 
-    if save_and_plot and nnz:
-        plot(nnz, manual_rt, cusparse_rt, [], f"spgemm_{start}-{end}")
+    _save_rows(rows, csv_name)
+    if save_and_plot and rows:
+        rdf = pd.DataFrame(rows)
+        plot(rdf["nnz"].tolist(), rdf["manual_ms"].tolist(),
+             rdf["cusparse_ms"].tolist(), [], csv_name)
     if failed:
         print(f"Failed: {failed}")
 
 
-def run_sparse_vectors(start, end, save_and_plot):
-    import pandas as pd
+def run_sparse_vectors(start, end, save_and_plot, continue_mode=False):
     from parser import matrix_list
     from sparse_vectors import test_mergepath
     from plotter import plot_bar_graph_2
 
+    csv_name = f"sparse_vectors_{start}-{end}"
     df = matrix_list()
     n = len(df)
     end = min(end, n - 2)
     failed = []
-    rows = []
 
-    indices = list(range(start, end))
+    if continue_mode:
+        done, rows = _load_done_indices(csv_name)
+        if done:
+            tqdm.write(f"Continuing: {len(done)} triplets already done")
+    else:
+        done, rows = set(), []
+
+    indices = [i for i in range(start, end) if i not in done]
     for i in tqdm(indices, desc="Sparse Vectors", unit="triplet"):
         try:
             result = test_mergepath(
@@ -263,6 +363,7 @@ def run_sparse_vectors(start, end, save_and_plot):
             if not ans:
                 failed.append(i)
             rows.append({
+                "idx": i,
                 "matrix_a": df.iloc[i]['name'],
                 "matrix_b": df.iloc[i + 1]['name'],
                 "matrix_c": df.iloc[i + 2]['name'],
@@ -278,25 +379,28 @@ def run_sparse_vectors(start, end, save_and_plot):
                 "nofusion_compute_ms": no[2],
                 "correct": ans,
             })
+
+            if len(rows) % SAVE_EVERY == 0:
+                _save_rows(rows, csv_name)
+
         except (RuntimeError, MemoryError) as e:
             import torch
             tqdm.write(f"Skipping {i} ({df.iloc[i]['name']}): {e}")
             torch.cuda.empty_cache()
             continue
 
+    _save_rows(rows, csv_name)
     if save_and_plot and rows:
-        from plotter import _path
-        pd.DataFrame(rows).to_csv(_path(f"sparse_vectors_{start}-{end}", "csv"), index=False)
         full_lb = [[r["full_mergepath_ms"], r["full_precompute_ms"], r["full_compute_ms"]] for r in rows]
         partial_lb = [[r["partial_mergepath_ms"], r["partial_precompute_ms"], r["partial_compute_ms"]] for r in rows]
         single_lb = [[r["nofusion_mergepath_ms"], r["nofusion_precompute_ms"], r["nofusion_compute_ms"]] for r in rows]
         lengths = [r["total_nnz"] for r in rows]
-        plot_bar_graph_2(0, lengths, full_lb, partial_lb, single_lb, f"sparse_vectors_{start}-{end}")
+        plot_bar_graph_2(0, lengths, full_lb, partial_lb, single_lb, csv_name)
     if failed:
         print(f"Failed: {failed}")
 
 
-def run_broadcast(_start, _end, _save_and_plot):
+def run_broadcast(_start, _end, _save_and_plot, continue_mode=False):
     from broadcasts import benchmark_broadcast
     print("Running broadcast (x*A) benchmark...")
     ans, xa_time, csr_time = benchmark_broadcast()
@@ -332,6 +436,7 @@ examples:
   python runtime/tests/run_benchmarks.py --quick
   python runtime/tests/run_benchmarks.py csr_add spgemm
   python runtime/tests/run_benchmarks.py spgemm -s 500 -e 600
+  python runtime/tests/run_benchmarks.py --no-continue csr_add
   python runtime/tests/run_benchmarks.py --no-plot
 """,
     )
@@ -353,7 +458,11 @@ examples:
     )
     parser.add_argument(
         '--no-plot', action='store_true',
-        help='Skip saving plots and .npz files',
+        help='Skip saving plots',
+    )
+    parser.add_argument(
+        '--no-continue', dest='continue_mode', action='store_false', default=True,
+        help='Start fresh instead of resuming from existing CSV',
     )
     args = parser.parse_args()
 
@@ -380,12 +489,14 @@ examples:
 
     print(f"Benchmarks: {', '.join(to_run)}")
     print(f"Matrix range: {start}–{end} (of {num_matrices} available)")
+    if not args.continue_mode:
+        print("Fresh run: ignoring any existing CSV results")
     if not save_and_plot:
         print("Plots disabled")
     print()
 
     for name in to_run:
-        BENCHMARKS[name](start, end, save_and_plot)
+        BENCHMARKS[name](start, end, save_and_plot, continue_mode=args.continue_mode)
 
     print("\nDone.")
 
