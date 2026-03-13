@@ -85,3 +85,24 @@ void csr_add(index_t A_dim_i_size, index_t A_dim_j_size,
              index_t result_dim_i_size, index_t result_dim_j_size,
              index_t &out_nnz, index_t *&out_dim_j_indices,
              index_t *&out_dim_j_offsets, value_t *&out_values);
+
+// 2-operand TCSF (3D all-sparse): A + B
+template <typename index_t, typename value_t>
+void tcsf_add(index_t A_dim_i_size, index_t A_dim_j_size, index_t A_dim_k_size,
+              index_t A_dim_i_length, index_t *A_dim_i_indices,
+              index_t *A_dim_j_offsets, index_t A_dim_j_length,
+              index_t *A_dim_j_indices, index_t *A_dim_k_offsets,
+              index_t A_dim_k_length, index_t *A_dim_k_indices,
+              value_t *A_values, index_t A_nnz, index_t B_dim_i_size,
+              index_t B_dim_j_size, index_t B_dim_k_size,
+              index_t B_dim_i_length, index_t *B_dim_i_indices,
+              index_t *B_dim_j_offsets, index_t B_dim_j_length,
+              index_t *B_dim_j_indices, index_t *B_dim_k_offsets,
+              index_t B_dim_k_length, index_t *B_dim_k_indices,
+              value_t *B_values, index_t B_nnz, index_t result_dim_i_size,
+              index_t result_dim_j_size, index_t result_dim_k_size,
+              index_t &out_nnz, index_t &out_dim_i_length,
+              index_t &out_dim_j_length, index_t *&out_dim_k_indices,
+              index_t *&out_dim_k_offsets, index_t *&out_dim_j_indices,
+              index_t *&out_dim_j_offsets, index_t *&out_dim_i_indices,
+              value_t *&out_values);

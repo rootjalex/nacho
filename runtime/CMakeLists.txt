@@ -22,6 +22,7 @@ set(NACHO_GENERATED_OPS
   dcsr_mul
   dcsr_add
   csr_add
+  tcsf_add
 )
 
 # Allow callers to provide a prebuilt compiler path. If omitted, default to

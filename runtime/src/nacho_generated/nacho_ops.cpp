@@ -27,6 +27,19 @@ static void alloc_empty_csr(int nrows, int *&row_offsets,
     CHECK_CUDA(cudaMalloc((void **)&values, sizeof(float)));
 }
 
+// Helper: allocate minimal buffers for empty TCSF results
+static void alloc_empty_tcsf(int *&i_indices, int *&j_offsets, int *&j_indices,
+                             int *&k_offsets, int *&k_indices, float *&values) {
+    CHECK_CUDA(cudaMalloc((void **)&i_indices, sizeof(int)));
+    CHECK_CUDA(cudaMalloc((void **)&j_offsets, sizeof(int)));
+    CHECK_CUDA(cudaMemset(j_offsets, 0, sizeof(int)));
+    CHECK_CUDA(cudaMalloc((void **)&j_indices, sizeof(int)));
+    CHECK_CUDA(cudaMalloc((void **)&k_offsets, sizeof(int)));
+    CHECK_CUDA(cudaMemset(k_offsets, 0, sizeof(int)));
+    CHECK_CUDA(cudaMalloc((void **)&k_indices, sizeof(int)));
+    CHECK_CUDA(cudaMalloc((void **)&values, sizeof(float)));
+}
+
 // ===== Sparse vector 2-operand: a * b =====
 
 CVector<int, int, float> nacho_sparse_vec_mul_nb(CVector<int, int, float> A,
@@ -228,4 +241,50 @@ CSR<int, float> nacho_csr_add_nb(CSR<int, float> A, CSR<int, float> B) {
 
     return CSR<int, float>(out_dim_j_offsets, out_dim_j_indices, out_values,
                            A.shape(0), A.shape(1), out_nnz);
+}
+
+// ===== TCSF 2-operand: A + B =====
+
+TCSF<int, float> nacho_tcsf_add_nb(TCSF<int, float> A, TCSF<int, float> B) {
+    int out_nnz;
+    int out_dim_i_length;
+    int out_dim_j_length;
+    int *out_dim_i_indices;
+    int *out_dim_j_offsets;
+    int *out_dim_j_indices;
+    int *out_dim_k_offsets;
+    int *out_dim_k_indices;
+    float *out_values;
+
+    tcsf_add<int, float>(
+        A.dim_i_size, A.dim_j_size, A.dim_k_size,
+        (int)A.i_indices.shape(0), (int *)A.i_indices.data(),
+        (int *)A.j_offsets.data(), (int)A.j_indices.shape(0),
+        (int *)A.j_indices.data(), (int *)A.k_offsets.data(),
+        (int)A.k_indices.shape(0), (int *)A.k_indices.data(),
+        (float *)A.data.data(), (int)A.k_indices.shape(0),
+        B.dim_i_size, B.dim_j_size, B.dim_k_size,
+        (int)B.i_indices.shape(0), (int *)B.i_indices.data(),
+        (int *)B.j_offsets.data(), (int)B.j_indices.shape(0),
+        (int *)B.j_indices.data(), (int *)B.k_offsets.data(),
+        (int)B.k_indices.shape(0), (int *)B.k_indices.data(),
+        (float *)B.data.data(), (int)B.k_indices.shape(0),
+        A.dim_i_size, A.dim_j_size, A.dim_k_size,
+        out_nnz, out_dim_i_length, out_dim_j_length,
+        out_dim_k_indices, out_dim_k_offsets,
+        out_dim_j_indices, out_dim_j_offsets,
+        out_dim_i_indices, out_values);
+
+    if (out_nnz == 0) {
+        alloc_empty_tcsf(out_dim_i_indices, out_dim_j_offsets, out_dim_j_indices,
+                         out_dim_k_offsets, out_dim_k_indices, out_values);
+        out_dim_i_length = 0;
+        out_dim_j_length = 0;
+    }
+
+    return TCSF<int, float>(out_dim_i_indices, out_dim_j_offsets,
+                            out_dim_j_indices, out_dim_k_offsets,
+                            out_dim_k_indices, out_values,
+                            A.dim_i_size, A.dim_j_size, A.dim_k_size,
+                            out_dim_i_length, out_dim_j_length, out_nnz);
 }

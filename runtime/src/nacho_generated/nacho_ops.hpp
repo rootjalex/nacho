@@ -23,3 +23,6 @@ DCSR<int, float> nacho_dcsr_add_nb(DCSR<int, float> A, DCSR<int, float> B);
 
 // CSR operations (CSR in, CSR out)
 CSR<int, float> nacho_csr_add_nb(CSR<int, float> A, CSR<int, float> B);
+
+// TCSF operations (3D all-sparse, TCSF in/out)
+TCSF<int, float> nacho_tcsf_add_nb(TCSF<int, float> A, TCSF<int, float> B);

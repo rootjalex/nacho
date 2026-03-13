@@ -83,6 +83,20 @@ NB_MODULE(nacho_runtime_ext, m) {
         .def_ro("nrows", &DCSR<int32_t, float>::nrows, nb::rv_policy::reference)
         .def_ro("ncols", &DCSR<int32_t, float>::ncols, nb::rv_policy::reference);
 
+    nb::class_<TCSF<int32_t, float>>(m, "TCSF")
+        .def(nb::init<const Int32Vector &, const Int32Vector &, const Int32Vector &,
+             const Int32Vector &, const Int32Vector &, const Float32Vector &,
+             const int32_t &, const int32_t &, const int32_t &>())
+        .def_ro("i_indices", &TCSF<int32_t, float>::i_indices, nb::rv_policy::reference)
+        .def_ro("j_offsets", &TCSF<int32_t, float>::j_offsets, nb::rv_policy::reference)
+        .def_ro("j_indices", &TCSF<int32_t, float>::j_indices, nb::rv_policy::reference)
+        .def_ro("k_offsets", &TCSF<int32_t, float>::k_offsets, nb::rv_policy::reference)
+        .def_ro("k_indices", &TCSF<int32_t, float>::k_indices, nb::rv_policy::reference)
+        .def_ro("data", &TCSF<int32_t, float>::data, nb::rv_policy::reference)
+        .def_ro("dim_i_size", &TCSF<int32_t, float>::dim_i_size, nb::rv_policy::reference)
+        .def_ro("dim_j_size", &TCSF<int32_t, float>::dim_j_size, nb::rv_policy::reference)
+        .def_ro("dim_k_size", &TCSF<int32_t, float>::dim_k_size, nb::rv_policy::reference);
+
     // Add CSR matrix addition function
     m.def("gpu_csr_add_f32", &nb_gpu_csr_add_f32);
     m.def("gpu_coo_add_f32", &nb_gpu_coo_add_f32);
@@ -99,6 +113,7 @@ NB_MODULE(nacho_runtime_ext, m) {
     m.def("nacho_dcsr_mul", &nacho_dcsr_mul_nb);
     m.def("nacho_dcsr_add", &nacho_dcsr_add_nb);
     m.def("nacho_csr_add", &nacho_csr_add_nb);
+    m.def("nacho_tcsf_add", &nacho_tcsf_add_nb);
 
     // handwritten
     // m.def("cv_collapse_coo", &cv_collapse_coo<uint32_t, uint32_t, float>);

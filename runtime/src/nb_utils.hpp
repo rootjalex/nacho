@@ -215,6 +215,71 @@ struct DCSR {
     }
 };
 
+template<typename index_t, typename value_t>
+struct TCSF {
+    using IntVector = nb::ndarray<nb::pytorch, index_t, nb::shape<-1>, nb::c_contig, nb::device::cuda>;
+    using FloatVector = nb::ndarray<nb::pytorch, value_t, nb::shape<-1>, nb::c_contig, nb::device::cuda>;
+
+    IntVector i_indices;   // dim_i_indices
+    IntVector j_offsets;   // dim_j_offsets
+    IntVector j_indices;   // dim_j_indices
+    IntVector k_offsets;   // dim_k_offsets
+    IntVector k_indices;   // dim_k_indices
+    FloatVector data;      // values
+
+    index_t dim_i_size = 0;
+    index_t dim_j_size = 0;
+    index_t dim_k_size = 0;
+
+    TCSF(const IntVector &_i_indices, const IntVector &_j_offsets,
+         const IntVector &_j_indices, const IntVector &_k_offsets,
+         const IntVector &_k_indices, const FloatVector &_data,
+         const index_t &_dim_i_size, const index_t &_dim_j_size,
+         const index_t &_dim_k_size)
+        : i_indices(_i_indices), j_offsets(_j_offsets), j_indices(_j_indices),
+          k_offsets(_k_offsets), k_indices(_k_indices), data(_data),
+          dim_i_size(_dim_i_size), dim_j_size(_dim_j_size),
+          dim_k_size(_dim_k_size) {}
+
+    TCSF(index_t *_i_indices, index_t *_j_offsets, index_t *_j_indices,
+         index_t *_k_offsets, index_t *_k_indices, value_t *_data,
+         const index_t _dim_i_size, const index_t _dim_j_size,
+         const index_t _dim_k_size, const index_t dim_i_length,
+         const index_t dim_j_length, const index_t nnz) {
+        dim_i_size = _dim_i_size;
+        dim_j_size = _dim_j_size;
+        dim_k_size = _dim_k_size;
+
+        size_t shape_i[1] = { (size_t)dim_i_length };
+        size_t shape_j_offsets[1] = { (size_t)(dim_i_length + 1) };
+        size_t shape_j[1] = { (size_t)dim_j_length };
+        size_t shape_k_offsets[1] = { (size_t)(dim_j_length + 1) };
+        size_t shape_k[1] = { (size_t)nnz };
+
+        nb::capsule owner_i(_i_indices, cudaFreeWrapper);
+        nb::capsule owner_j_offsets(_j_offsets, cudaFreeWrapper);
+        nb::capsule owner_j(_j_indices, cudaFreeWrapper);
+        nb::capsule owner_k_offsets(_k_offsets, cudaFreeWrapper);
+        nb::capsule owner_k(_k_indices, cudaFreeWrapper);
+        nb::capsule owner_data(_data, cudaFreeWrapper);
+
+        i_indices = IntVector(_i_indices, 1, shape_i, owner_i, nullptr,
+                              nb::dtype<index_t>(), nb::device::cuda::value);
+        j_offsets = IntVector(_j_offsets, 1, shape_j_offsets, owner_j_offsets,
+                              nullptr, nb::dtype<index_t>(),
+                              nb::device::cuda::value);
+        j_indices = IntVector(_j_indices, 1, shape_j, owner_j, nullptr,
+                              nb::dtype<index_t>(), nb::device::cuda::value);
+        k_offsets = IntVector(_k_offsets, 1, shape_k_offsets, owner_k_offsets,
+                              nullptr, nb::dtype<index_t>(),
+                              nb::device::cuda::value);
+        k_indices = IntVector(_k_indices, 1, shape_k, owner_k, nullptr,
+                              nb::dtype<index_t>(), nb::device::cuda::value);
+        data = FloatVector(_data, 1, shape_k, owner_data, nullptr,
+                           nb::dtype<value_t>(), nb::device::cuda::value);
+    }
+};
+
 // std::min does weird stuff sometimes, use this instead.
 // template<typename T, typename S>
 // uint64_t min(const T &t, const S &s) {
