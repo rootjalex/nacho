@@ -814,7 +814,7 @@ llir::lStmt ComputeKernelLowerer::lower_loop(
             internal_assert(miter != imap.end()) << "Expected universe iterator to be present in imap";
             iters.push_back(miter->second);
             cond = miter->second.first <= miter->second.second;
-            offset_write_cond = (miter->second.first != miter->second.second);
+            offset_write_cond = (miter->second.first < miter->second.second);
         }
         for (const auto &i : is) {
             const auto &miter = imap.find(i);
@@ -829,13 +829,6 @@ llir::lStmt ComputeKernelLowerer::lower_loop(
             }
         }
 
-        if (is.empty()) {
-            // Iterating over the universe.
-            cond = llir::lVar::make(index_t, forall->idx) <=
-                   llir::lVar::make(index_t, "end_" + forall->idx);
-            offset_write_cond = llir::lVar::make(index_t, forall->idx) <
-                                llir::lVar::make(index_t, "end_" + forall->idx);
-        }
         offset_write_cond = offset_write_cond || (llir::lVar::make(index_t, "thread_id") == llir::lVar::make(index_t, "max_thread_id"));
         internal_assert(cond.defined()) << s;
 
