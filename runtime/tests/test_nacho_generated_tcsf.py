@@ -187,16 +187,9 @@ class TestNachoTcsfAdd:
         expected = a_dense + b_dense
         assert torch.allclose(got, expected, rtol=1e-4, atol=1e-5)
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "Known bug: generated tcsf_add drops/misplaces some entries for "
-            "certain random higher-order sparse patterns."
-        ),
-    )
-    @pytest.mark.parametrize("seed", [1, 5, 7])
-    def test_known_random_regressions_vs_pytorch(self, seed):
-        """Repro seeds that currently fail PyTorch equivalence."""
+    @pytest.mark.parametrize("seed", range(25))
+    def test_random_correctness_vs_pytorch_overlap(self, seed):
+        """Random overlap-heavy correctness against PyTorch dense add."""
         rng = random.Random(seed)
         shape = (
             rng.randint(4, 12),
@@ -206,9 +199,31 @@ class TestNachoTcsfAdd:
         total = shape[0] * shape[1] * shape[2]
         nnz_a = rng.randint(1, max(1, total // 6))
         nnz_b = rng.randint(1, max(1, total // 6))
-        a_dense, a_support = make_random_sparse_dense(shape, nnz_a, seed * 1000)
+        a_dense, _ = make_random_sparse_dense(shape, nnz_a, seed * 1000)
+        b_dense, _ = make_random_sparse_dense(shape, nnz_b, seed * 1000 + 1)
+
+        result = nacho_tcsf_add(dense_to_tcsf(a_dense), dense_to_tcsf(b_dense))
+        torch.cuda.synchronize()
+
+        got = tcsf_to_dense(result)
+        expected = a_dense + b_dense
+        assert torch.allclose(got, expected, rtol=1e-4, atol=1e-5)
+
+    @pytest.mark.parametrize("seed", range(25))
+    def test_random_correctness_vs_pytorch_disjoint(self, seed):
+        """Random disjoint-support correctness against PyTorch dense add."""
+        rng = random.Random(seed + 1000)
+        shape = (
+            rng.randint(4, 12),
+            rng.randint(4, 12),
+            rng.randint(4, 12),
+        )
+        total = shape[0] * shape[1] * shape[2]
+        nnz_a = rng.randint(1, max(1, total // 6))
+        nnz_b = rng.randint(1, max(1, total // 6))
+        a_dense, a_support = make_random_sparse_dense(shape, nnz_a, seed * 2000)
         b_dense, _ = make_random_sparse_dense(
-            shape, nnz_b, seed * 1000 + 1, avoid=a_support
+            shape, nnz_b, seed * 2000 + 1, avoid=a_support
         )
 
         result = nacho_tcsf_add(dense_to_tcsf(a_dense), dense_to_tcsf(b_dense))

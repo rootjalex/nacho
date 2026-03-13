@@ -682,6 +682,16 @@ llir::lStmt ComputeKernelLowerer::lower_loop(
             start_value = llir::lBinOp::make(llir::lBinOp::Max, pidx, llir::lConst::make((int64_t)0));
             stop_value = pend;
         } else {
+            // Clamp partition-provided iterators into the current parent-owned
+            // range. Without this, a partition boundary can carry a child
+            // iterator from a neighboring parent row, causing cross-row
+            // leakage/duplication in higher-order sparse outputs.
+            llir::lExpr lower_bound =
+                tlower.get_bound(idx->level, index_t, /*upper_bound=*/false);
+            llir::lExpr upper_bound =
+                tlower.get_bound(idx->level, index_t, /*upper_bound=*/true) -
+                llir::lConst::make(1);
+
             std::function<llir::lExpr(int, bool)> get_condition =
                 [&](int level, bool end) -> llir::lExpr {
                 internal_assert(level >= 0) << level;
@@ -701,19 +711,20 @@ llir::lStmt ComputeKernelLowerer::lower_loop(
             // respective starts, then use this start, otherwise get the
             // iterator from the data structure!
             llir::lExpr start_cond = get_condition(idx->level - 1, false);
-            start_value = llir::lSelect::make(
+            llir::lExpr start_candidate = llir::lSelect::make(
                 std::move(start_cond), pidx,
-                tlower.get_bound(idx->level, index_t, /*upper_bound=*/false));
+                lower_bound);
+            start_value = llir::lBinOp::make(
+                llir::lBinOp::Max, std::move(start_candidate), lower_bound);
 
             // For the stop, if all previous iterators are at their respective
             // ends, then use this stop, otherwise get the iterator from the
             // data structure!
             llir::lExpr stop_cond = get_condition(idx->level - 1, true);
-            llir::lExpr bound =
-                tlower.get_bound(idx->level, index_t, /*upper_bound=*/true) -
-                llir::lConst::make(1);
-            stop_value = llir::lSelect::make(std::move(stop_cond), pend,
-                                             std::move(bound));
+            llir::lExpr stop_candidate = llir::lSelect::make(
+                std::move(stop_cond), pend, upper_bound);
+            stop_value = llir::lBinOp::make(
+                llir::lBinOp::Min, std::move(stop_candidate), upper_bound);
         }
 
         std::string iter_name = tlower.get_iter_name(idx->level);
