@@ -53,10 +53,12 @@ Seq Union::make(Seq a, Seq b) {
     return node;
 }
 
-Seq Universe::make(std::string idx) {
+Seq Universe::make(std::string idx, std::vector<std::tuple<std::string, TensorType, size_t>> tensors) {
     internal_assert(!idx.empty()) << "Universe with empty idx";
+    internal_assert(!tensors.empty()) << "Universe should represent a broadcast on atleast 1 tensor";
     Universe *node = new Universe;
     node->idx = std::move(idx);
+    node->tensors = std::move(tensors);
 
     // a universe sequence is not sparse
     node->is_sparse = false;
@@ -64,41 +66,24 @@ Seq Universe::make(std::string idx) {
 }
 
 
-Seq simplify_seq(const Seq &seq) {
-    struct Simplify : public Mutator {
-        Seq visit(const Intersect *node) override {
-            Seq a = mutate(node->a);
-            Seq b = mutate(node->b);
-
-            // a ∩ U = a
-            if (b.is<Universe>() || is_dense(b)) {
-                return a;
-            }
-
-            // U ∩ b = b
-            if (a.is<Universe>() || is_dense(a)) {
-                return b;
-            }
-
-            if (a.same_as(node->a) && b.same_as(node->b)) {
-                return node;
-            }
-            return Intersect::make(std::move(a), std::move(b));
-        }
-    };
-    return Simplify().mutate(seq);
-}
-
-
 struct BuildSeq : public Visitor {
     Seq seq;
 
     const std::string &index;
+    std::vector<std::string> &index_list;
+    bool is_under_bc = false;
+    std::vector<std::tuple<std::string, TensorType, size_t>>  bc_tensors;
 
-    BuildSeq(const std::string &index) : index(index) {}
+    BuildSeq(const std::string &index, std::vector<std::string> &index_list)
+        : index(index), index_list(index_list) {}
 
     template <typename S, typename T>
     void visit_binop(const T *node) {
+        if(is_under_bc) {
+            node->a.accept(this);
+            node->b.accept(this);
+            return;
+        }
         seq = Seq();
         node->a.accept(this);
         auto a = std::move(seq);
@@ -111,7 +96,10 @@ struct BuildSeq : public Visitor {
 
     void visit(const Bc *node) {
         if (index == node->index) {
-            seq = Universe::make(index);
+            is_under_bc = true;
+            node->a.accept(this);
+            seq = Universe::make(index, bc_tensors);
+            is_under_bc = false;
         } else {
             node->a.accept(this);
         }
@@ -122,7 +110,35 @@ struct BuildSeq : public Visitor {
     // Default Sum behavior is fine
 
     void visit(const Tensor *node) {
-        // Find index of `index` in levels.
+        if(is_under_bc) {
+            auto it = std::find_if(index_list.begin(), index_list.end(),
+                         [&](const std::string &idx) { return idx == index; });
+            internal_assert(it != index_list.end())
+            << "Index: " << index << " not found";
+            int loop_num = std::distance(index_list.begin(), it);
+            // Find the last level before this universe level for this tensor.
+            std::string prev_level_idx;
+            for(int prev_level = loop_num - 1; prev_level >= 0; prev_level--) {
+                if(node->type.format.level_exists(index_list[prev_level])) {
+                    prev_level_idx = index_list[prev_level];
+                    break;
+                }
+            }
+            if(prev_level_idx.empty()) {
+                bc_tensors.push_back(std::make_tuple(node->name, node->type, -1));
+            } else {
+                const auto &levels = node->type.format.levels;
+                auto it =
+                std::find_if(levels.begin(), levels.end(),
+                         [&](const Level &lvl) { return lvl.index == prev_level_idx; });
+                internal_assert(it != levels.end())
+                    << "Index: " << prev_level_idx << " not found";
+                size_t level = std::distance(levels.begin(), it);
+                bc_tensors.push_back(std::make_tuple(node->name, node->type, level));
+            }
+            return;
+        }
+
         const auto &levels = node->type.format.levels;
 
         auto it =
@@ -172,11 +188,10 @@ bool is_dense(const Seq &seq) {
 }
 
 
-Seq build_seq(const std::string &index, const Expr &expr) {
-    BuildSeq builder(index);
+Seq build_seq(const std::string &index, std::vector<std::string> &index_list, const Expr &expr) {
+    BuildSeq builder(index, index_list);
     expr.accept(&builder);
     // TODO: break this out into a simplify or optimize pass?
-    //return simplify_seq(builder.seq);
     return builder.seq;
 }
 

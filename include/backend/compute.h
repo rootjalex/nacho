@@ -26,8 +26,9 @@ namespace backend {
             TensorLowerer &result_tensor,
             std::map<std::string, TensorLowerer> &included_tensors,
             const std::vector<CIN> &forall_list, const CIN &cin,
-            LoopNum previous_sparse_intersection, LoopNum current_sparse_intersection, LoopNum next_sparse_intersection)
-            : BaseKernelLowerer(operand_tensors, result_tensor, included_tensors, forall_list, previous_sparse_intersection, current_sparse_intersection, next_sparse_intersection), cin(cin) {}
+            LoopNum previous_sparse_intersection, LoopNum current_sparse_intersection, LoopNum next_sparse_intersection,
+            LoopNum reduction_loop)
+            : BaseKernelLowerer(operand_tensors, result_tensor, included_tensors, forall_list, previous_sparse_intersection, current_sparse_intersection, next_sparse_intersection, reduction_loop), cin(cin) {}
 
         llir::lStmt lower_precompute_function();
 

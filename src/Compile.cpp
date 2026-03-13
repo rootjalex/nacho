@@ -76,7 +76,7 @@ CIN compile_to_cin(const Expr &expr, std::string out) {
     std::vector<Level> levels;
 
     if (const Sum *sum = expr.as<Sum>()) {
-        cin = Accumulate::make(out, out_type, from_expr(sum->a));
+        cin = Accumulate::make(out, out_type, sum->index, from_expr(sum->a));
         // Include sum loop.
         levels = sum->a.type().format.levels;
     } else {
@@ -84,9 +84,15 @@ CIN compile_to_cin(const Expr &expr, std::string out) {
         levels = out_type.format.levels;
     }
 
+    std::vector<std::string> index_list;
+
+    for (const auto &level : levels) {
+        index_list.push_back(level.index);
+    }
+
     for (auto it = levels.rbegin(); it != levels.rend(); ++it) {
         cin =
-            Forall::make(it->index, build_seq(it->index, expr), std::move(cin));
+            Forall::make(it->index, build_seq(it->index, index_list, expr), std::move(cin));
     }
     return cin;
 }

@@ -15,7 +15,7 @@ CIN simplify(const std::set<Seq, SeqLessThan> &defined, const CIN &cin);
 Seq remove_and_simplify(const Seq &orig, const Seq &remove);
 
 // Remove locators from a Seq expression.
-std::pair<std::vector<Seq>, std::vector<Seq>>
+std::tuple<std::vector<Seq>, std::vector<Seq>, bool>
 partition_iterators_locators(const Seq &seq);
 
 // Get all dense locators from a Seq expression.

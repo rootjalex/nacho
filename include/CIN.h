@@ -151,9 +151,10 @@ struct cTensor : cExprNode<cTensor> {
 struct Accumulate : CINNode<Accumulate> {
     std::string tensor;
     TensorType type;
+    std::string accumulate_index; // the index we are accumulating over.
     cExpr expr;
 
-    static CIN make(std::string tensor, TensorType type, cExpr expr);
+    static CIN make(std::string tensor, TensorType type, std::string accumulate_index, cExpr expr);
 
     static const CINEnum node_type = CINEnum::Accumulate;
 };

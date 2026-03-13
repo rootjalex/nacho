@@ -582,6 +582,11 @@ void Printer::visit(const llir::lIncrement *node) {
     os << "++";
 }
 
+void Printer::visit(const llir::lAddress *node) {
+    os << "&";
+    print_no_parens(node->var);
+}
+
 void Printer::print(const llir::lStmt &lstmt) { lstmt.accept(this); }
 
 void Printer::visit(const llir::Declare *node) {

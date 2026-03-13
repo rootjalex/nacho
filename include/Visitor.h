@@ -50,6 +50,7 @@ struct Visitor {
     virtual void visit(const llir::lVar *);
     virtual void visit(const llir::lFunctionCall *);
     virtual void visit(const llir::lIncrement *);
+    virtual void visit(const llir::lAddress *);
     virtual void visit(const llir::Declare *);
     virtual void visit(const llir::IfElse *);
     virtual void visit(const llir::Return *);

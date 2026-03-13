@@ -487,7 +487,7 @@ namespace nacho {
 
         LoopNum get_loop_num_for_last_sparse_level() const {
             for (LoopNum i = end_loop_num() - 1; i > BEFORE_FIRST_LOOP; --i) {
-                if (is_sparse(i)) {
+                if (tensor_level_exists(i) && is_sparse(i)) {
                     return i;
                 }
             }
