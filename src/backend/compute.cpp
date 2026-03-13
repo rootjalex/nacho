@@ -703,14 +703,14 @@ llir::lStmt ComputeKernelLowerer::lower_loop(
                 offset_write_cond = offset_write_cond || (miter->second.first < miter->second.second);
             } else {
                 cond = miter->second.first <= miter->second.second;
-                offset_write_cond = (miter->second.first != miter->second.second);
+                offset_write_cond = (miter->second.first < miter->second.second);
             }
         }
         if (is.empty()) {
             // Iterating over the universe.
             cond = llir::lVar::make(index_t, forall->idx) <=
                    llir::lVar::make(index_t, "end_" + forall->idx);
-            offset_write_cond = llir::lVar::make(index_t, forall->idx) !=
+            offset_write_cond = llir::lVar::make(index_t, forall->idx) <
                                 llir::lVar::make(index_t, "end_" + forall->idx);
         }
         offset_write_cond = offset_write_cond || (llir::lVar::make(index_t, "thread_id") == llir::lVar::make(index_t, "max_thread_id"));
