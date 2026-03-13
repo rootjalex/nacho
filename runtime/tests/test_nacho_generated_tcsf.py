@@ -1,4 +1,7 @@
 """Correctness tests for nacho-generated higher-order sparse operations."""
+import random
+
+import pytest
 import torch
 
 from nacho_runtime import TCSF, nacho_tcsf_add
@@ -82,6 +85,27 @@ def tcsf_to_dense(tensor):
     return dense
 
 
+def make_random_sparse_dense(shape, nnz, seed, avoid=None):
+    """Generate a random dense tensor with nnz sparse entries."""
+    rng = random.Random(seed)
+    total = shape[0] * shape[1] * shape[2]
+    if avoid is None:
+        avoid = set()
+    candidates = [idx for idx in range(total) if idx not in avoid]
+    nnz = min(nnz, len(candidates))
+    flat_indices = rng.sample(candidates, nnz)
+
+    dense = torch.zeros(shape, dtype=torch.float32, device="cuda")
+    plane = shape[1] * shape[2]
+    for flat in flat_indices:
+        i = flat // plane
+        rem = flat % plane
+        j = rem // shape[2]
+        k = rem % shape[2]
+        dense[i, j, k] = rng.uniform(0.1, 10.0)
+    return dense, set(flat_indices)
+
+
 class TestNachoTcsfAdd:
     """PyTorch correctness checks for generated TCSF add."""
 
@@ -155,6 +179,37 @@ class TestNachoTcsfAdd:
             (4, 0, 4, 12.0),
         ]:
             b_dense[i, j, k] = v
+
+        result = nacho_tcsf_add(dense_to_tcsf(a_dense), dense_to_tcsf(b_dense))
+        torch.cuda.synchronize()
+
+        got = tcsf_to_dense(result)
+        expected = a_dense + b_dense
+        assert torch.allclose(got, expected, rtol=1e-4, atol=1e-5)
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason=(
+            "Known bug: generated tcsf_add drops/misplaces some entries for "
+            "certain random higher-order sparse patterns."
+        ),
+    )
+    @pytest.mark.parametrize("seed", [1, 5, 7])
+    def test_known_random_regressions_vs_pytorch(self, seed):
+        """Repro seeds that currently fail PyTorch equivalence."""
+        rng = random.Random(seed)
+        shape = (
+            rng.randint(4, 12),
+            rng.randint(4, 12),
+            rng.randint(4, 12),
+        )
+        total = shape[0] * shape[1] * shape[2]
+        nnz_a = rng.randint(1, max(1, total // 6))
+        nnz_b = rng.randint(1, max(1, total // 6))
+        a_dense, a_support = make_random_sparse_dense(shape, nnz_a, seed * 1000)
+        b_dense, _ = make_random_sparse_dense(
+            shape, nnz_b, seed * 1000 + 1, avoid=a_support
+        )
 
         result = nacho_tcsf_add(dense_to_tcsf(a_dense), dense_to_tcsf(b_dense))
         torch.cuda.synchronize()
