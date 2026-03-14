@@ -21,6 +21,10 @@ std::ostream &operator<<(std::ostream &os, const Level &lvl) {
         os << "C";
         break;
     }
+    case LevelFormat::Coordinate: {
+        os << "O";
+        break;
+    }
     }
     return os;
 }

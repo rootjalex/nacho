@@ -135,9 +135,7 @@ namespace nacho {
         }
 
         inline std::string get_type_suffix(const int level) const {
-            // TODO: standardize the "_p" stuff somewhere.
-            return tensor_type.format.levels[level].format ==
-                           LevelFormat::Compressed
+            return is_sparse_format(tensor_type.format.levels[level].format)
                        ? "_p"
                        : "";
         }
@@ -200,6 +198,14 @@ namespace nacho {
 
         inline bool is_sparse(const int level) const {
             return is_sparse_format(tensor_type.format.levels[level].format);
+        }
+
+        inline bool is_coordinate(std::string index) const {
+            return is_coordinate_format(tensor_type.format.lvlfmt_of(index));
+        }
+
+        inline bool is_coordinate(const int level) const {
+            return is_coordinate_format(tensor_type.format.levels[level].format);
         }
 
         inline std::string level_name(const int level) const {

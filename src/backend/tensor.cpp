@@ -19,10 +19,12 @@ llir::lType TensorLowerer::lower_tensor_struct_definition() const {
     for (int i = tensor_type.format.levels.size() - 1; i >= 0; i--) {
         auto index = tensor_type.format.levels[i].index;
 
-        // only dimensions with sparse format need separate fields for index and
-        // offsets
-        // TODO: This only handles compressed dimensions as of now
-        if (is_sparse_format(tensor_type.format.lvlfmt_of(index))) {
+        if (is_coordinate_format(tensor_type.format.levels[i].format)) {
+            // Coordinate levels only have indices — no length, no offsets
+            data_fields.emplace_back(get_indices_field_name(index),
+                                     llir::Ptr_t::make(index_t));
+        } else if (is_sparse_format(tensor_type.format.lvlfmt_of(index))) {
+            // Compressed levels have indices, length, and offsets
             data_fields.emplace_back(get_indices_field_name(index),
                                      llir::Ptr_t::make(index_t));
             data_fields.emplace_back(get_length_field_name(index), index_t);
@@ -147,6 +149,40 @@ TensorLowerer::lower_work_function(std::vector<std::string> loop_order,
                                    int target_dim, bool is_target_dim_value_fixed) {
 
     internal_assert(target_dim < loop_order.size()) << "Target dimension has to be less than loop order size";
+
+    // All-Coordinate tensors have flat position space — work is just nnz
+    if (tensor_type.format.is_all_coordinate()) {
+        llir::lType index_t = llir::Generic_t::make("index_t");
+        llir::lType value_t = llir::Generic_t::make("value_t");
+        std::vector<std::string> generics = {"index_t", "value_t"};
+        std::vector<llir::Function::Attribute> attributes = {
+            llir::Function::device, llir::Function::inline_};
+        std::vector<llir::Function::Argument> args;
+        args.emplace_back(llir::Function::Argument{
+            .mutating = false,
+            .type = llir::Generic_t::make(get_struct_name() + "<index_t, value_t>"),
+            .name = tensor_name});
+        // Add all loop_order indices up to target_dim as args (to match expected signature)
+        for (int i = 0; i <= target_dim; i++) {
+            if (tensor_type.format.level_exists(loop_order[i])) {
+                std::string arg_name = loop_order[i] + "_p";
+                args.emplace_back(llir::Function::Argument{
+                    .mutating = false, .type = index_t, .name = arg_name});
+            }
+        }
+        std::string all_loops_string = std::accumulate(loop_order.begin(), loop_order.end(), std::string(""),
+                [](const std::string &acc, const std::string &c) { return acc + c; });
+        std::string name = get_work_function_name(all_loops_string, loop_order[target_dim]);
+        std::vector<llir::lStmt> stmts;
+        stmts.emplace_back(llir::Return::make(
+            llir::lFieldAccess::make(
+                llir::lVar::make(llir::Generic_t::make(get_struct_name() + "<index_t, value_t>"), tensor_name),
+                "nnz")));
+        llir::lStmt body = llir::Sequence::make(std::move(stmts));
+        return llir::Function::make(std::move(generics), std::move(attributes),
+                                    std::move(args), index_t, name,
+                                    std::move(body));
+    }
 
     llir::lType index_t = llir::Generic_t::make("index_t");
     llir::lType value_t = llir::Generic_t::make("value_t");
@@ -460,7 +496,7 @@ llir::lType TensorLowerer::lower_tensor_index_definition() {
             field_name = field_name + "_p";
         }
 
-        fields.emplace_back(field_name, index_t);
+        fields.emplace_back(std::move(field_name), index_t);
     }
 
     return llir::Struct_t::make(get_index_struct_name(), std::move(fields),

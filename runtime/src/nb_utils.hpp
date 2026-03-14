@@ -280,6 +280,136 @@ struct TCSF {
     }
 };
 
+// nacho-generated COO structs (Coordinate format, no offsets).
+// These are distinct from the existing COO struct which uses row/col naming.
+
+template<typename index_t, typename value_t>
+struct NachoCOO2D {
+    using IntVector = nb::ndarray<nb::pytorch, index_t, nb::shape<-1>, nb::c_contig, nb::device::cuda>;
+    using FloatVector = nb::ndarray<nb::pytorch, value_t, nb::shape<-1>, nb::c_contig, nb::device::cuda>;
+
+    IntVector dim_i_indices;
+    IntVector dim_j_indices;
+    FloatVector data;
+    index_t dim_i_size = 0;
+    index_t dim_j_size = 0;
+
+    NachoCOO2D(const IntVector &_i, const IntVector &_j, const FloatVector &_data,
+               const index_t &_dim_i_size, const index_t &_dim_j_size)
+        : dim_i_indices(_i), dim_j_indices(_j), data(_data),
+          dim_i_size(_dim_i_size), dim_j_size(_dim_j_size) {}
+
+    NachoCOO2D(index_t *_i, index_t *_j, value_t *_data,
+               const index_t _dim_i_size, const index_t _dim_j_size,
+               const index_t nnz) {
+        dim_i_size = _dim_i_size;
+        dim_j_size = _dim_j_size;
+        size_t shape_nnz[1] = { (size_t)nnz };
+        nb::capsule owner_i(_i, cudaFreeWrapper);
+        nb::capsule owner_j(_j, cudaFreeWrapper);
+        nb::capsule owner_data(_data, cudaFreeWrapper);
+        dim_i_indices = IntVector(_i, 1, shape_nnz, owner_i, nullptr,
+                                  nb::dtype<index_t>(), nb::device::cuda::value);
+        dim_j_indices = IntVector(_j, 1, shape_nnz, owner_j, nullptr,
+                                  nb::dtype<index_t>(), nb::device::cuda::value);
+        data = FloatVector(_data, 1, shape_nnz, owner_data, nullptr,
+                           nb::dtype<value_t>(), nb::device::cuda::value);
+    }
+};
+
+template<typename index_t, typename value_t>
+struct NachoCOO3D {
+    using IntVector = nb::ndarray<nb::pytorch, index_t, nb::shape<-1>, nb::c_contig, nb::device::cuda>;
+    using FloatVector = nb::ndarray<nb::pytorch, value_t, nb::shape<-1>, nb::c_contig, nb::device::cuda>;
+
+    IntVector dim_i_indices;
+    IntVector dim_j_indices;
+    IntVector dim_k_indices;
+    FloatVector data;
+    index_t dim_i_size = 0;
+    index_t dim_j_size = 0;
+    index_t dim_k_size = 0;
+
+    NachoCOO3D(const IntVector &_i, const IntVector &_j, const IntVector &_k,
+               const FloatVector &_data,
+               const index_t &_dim_i_size, const index_t &_dim_j_size,
+               const index_t &_dim_k_size)
+        : dim_i_indices(_i), dim_j_indices(_j), dim_k_indices(_k), data(_data),
+          dim_i_size(_dim_i_size), dim_j_size(_dim_j_size), dim_k_size(_dim_k_size) {}
+
+    NachoCOO3D(index_t *_i, index_t *_j, index_t *_k, value_t *_data,
+               const index_t _dim_i_size, const index_t _dim_j_size,
+               const index_t _dim_k_size, const index_t nnz) {
+        dim_i_size = _dim_i_size;
+        dim_j_size = _dim_j_size;
+        dim_k_size = _dim_k_size;
+        size_t shape_nnz[1] = { (size_t)nnz };
+        nb::capsule owner_i(_i, cudaFreeWrapper);
+        nb::capsule owner_j(_j, cudaFreeWrapper);
+        nb::capsule owner_k(_k, cudaFreeWrapper);
+        nb::capsule owner_data(_data, cudaFreeWrapper);
+        dim_i_indices = IntVector(_i, 1, shape_nnz, owner_i, nullptr,
+                                  nb::dtype<index_t>(), nb::device::cuda::value);
+        dim_j_indices = IntVector(_j, 1, shape_nnz, owner_j, nullptr,
+                                  nb::dtype<index_t>(), nb::device::cuda::value);
+        dim_k_indices = IntVector(_k, 1, shape_nnz, owner_k, nullptr,
+                                  nb::dtype<index_t>(), nb::device::cuda::value);
+        data = FloatVector(_data, 1, shape_nnz, owner_data, nullptr,
+                           nb::dtype<value_t>(), nb::device::cuda::value);
+    }
+};
+
+template<typename index_t, typename value_t>
+struct NachoCOO4D {
+    using IntVector = nb::ndarray<nb::pytorch, index_t, nb::shape<-1>, nb::c_contig, nb::device::cuda>;
+    using FloatVector = nb::ndarray<nb::pytorch, value_t, nb::shape<-1>, nb::c_contig, nb::device::cuda>;
+
+    IntVector dim_i_indices;
+    IntVector dim_j_indices;
+    IntVector dim_k_indices;
+    IntVector dim_l_indices;
+    FloatVector data;
+    index_t dim_i_size = 0;
+    index_t dim_j_size = 0;
+    index_t dim_k_size = 0;
+    index_t dim_l_size = 0;
+
+    NachoCOO4D(const IntVector &_i, const IntVector &_j, const IntVector &_k,
+               const IntVector &_l, const FloatVector &_data,
+               const index_t &_dim_i_size, const index_t &_dim_j_size,
+               const index_t &_dim_k_size, const index_t &_dim_l_size)
+        : dim_i_indices(_i), dim_j_indices(_j), dim_k_indices(_k),
+          dim_l_indices(_l), data(_data),
+          dim_i_size(_dim_i_size), dim_j_size(_dim_j_size),
+          dim_k_size(_dim_k_size), dim_l_size(_dim_l_size) {}
+
+    NachoCOO4D(index_t *_i, index_t *_j, index_t *_k, index_t *_l, value_t *_data,
+               const index_t _dim_i_size, const index_t _dim_j_size,
+               const index_t _dim_k_size, const index_t _dim_l_size,
+               const index_t nnz) {
+        dim_i_size = _dim_i_size;
+        dim_j_size = _dim_j_size;
+        dim_k_size = _dim_k_size;
+        dim_l_size = _dim_l_size;
+        size_t shape_nnz[1] = { (size_t)nnz };
+        nb::capsule owner_i(_i, cudaFreeWrapper);
+        nb::capsule owner_j(_j, cudaFreeWrapper);
+        nb::capsule owner_k(_k, cudaFreeWrapper);
+        nb::capsule owner_l(_l, cudaFreeWrapper);
+        nb::capsule owner_data(_data, cudaFreeWrapper);
+        dim_i_indices = IntVector(_i, 1, shape_nnz, owner_i, nullptr,
+                                  nb::dtype<index_t>(), nb::device::cuda::value);
+        dim_j_indices = IntVector(_j, 1, shape_nnz, owner_j, nullptr,
+                                  nb::dtype<index_t>(), nb::device::cuda::value);
+        dim_k_indices = IntVector(_k, 1, shape_nnz, owner_k, nullptr,
+                                  nb::dtype<index_t>(), nb::device::cuda::value);
+        dim_l_indices = IntVector(_l, 1, shape_nnz, owner_l, nullptr,
+                                  nb::dtype<index_t>(), nb::device::cuda::value);
+        data = FloatVector(_data, 1, shape_nnz, owner_data, nullptr,
+                           nb::dtype<value_t>(), nb::device::cuda::value);
+    }
+};
+
 // std::min does weird stuff sometimes, use this instead.
 // template<typename T, typename S>
 // uint64_t min(const T &t, const S &s) {

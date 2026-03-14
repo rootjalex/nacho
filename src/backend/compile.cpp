@@ -78,6 +78,12 @@ namespace backend {
 
     void CINLowerer::lower_cin() {
 
+        // All-Coordinate format uses a dedicated COO codegen path
+        if (result_tensor.tensor_type.format.is_all_coordinate()) {
+            lower_coo_cin();
+            return;
+        }
+
         std::vector<std::string> loop_order = get_loop_order();
         auto forall_list = get_forall_list();
 
@@ -978,6 +984,11 @@ namespace backend {
     }
 
     void CINLowerer::lower_flat_wrapper(const std::string &op_name) {
+        if (result_tensor.tensor_type.format.is_all_coordinate()) {
+            lower_coo_flat_wrapper(op_name);
+            return;
+        }
+
         llir::lType value_t = llir::Generic_t::make("value_t");
         std::vector<std::string> generics = {"index_t", "value_t"};
         std::vector<llir::Function::Attribute> attributes = {llir::Function::host};
@@ -1147,6 +1158,968 @@ namespace backend {
                         result_tensor.get_offsets_field_name(idx) + ";"));
                 }
             }
+        }
+        body_stmts.push_back(llir::RawCode::make(
+            "out_values = " + result_tensor.tensor_name + ".values;"));
+
+        llir::lStmt body = llir::Sequence::make(std::move(body_stmts));
+        printer.print(llir::Function::make(std::move(generics), std::move(attributes),
+                                           std::move(args), std::move(ret_type),
+                                           op_name, std::move(body)));
+    }
+
+    // =========================================================================
+    // COO (all-Coordinate format) codegen
+    // =========================================================================
+
+    void CINLowerer::lower_coo_cin() {
+        // Emit struct definitions for operand and result tensors
+        for (auto &it : operand_tensors) {
+            printer.print(it.second.lower_tensor_struct_definition());
+        }
+        printer.print(result_tensor.lower_tensor_struct_definition());
+
+        // COO count struct (single field: nnz_count)
+        {
+            std::vector<std::string> generics = {"index_t"};
+            std::vector<std::pair<std::string, llir::lType>> fields;
+            fields.emplace_back("nnz_count", llir::Ptr_t::make(index_t));
+            printer.print(llir::Struct_t::make("result_per_thread_count",
+                                               std::move(fields), std::move(generics)));
+        }
+
+        // COO partition struct (one position field per operand)
+        {
+            std::vector<std::string> generics = {"index_t"};
+            std::vector<std::pair<std::string, llir::lType>> fields;
+            for (const auto &it : operand_tensors) {
+                fields.emplace_back(it.second.tensor_name + "_p",
+                                    llir::Ptr_t::make(index_t));
+            }
+            std::string loop_suffix;
+            for (const auto &lvl : result_tensor.tensor_type.format.levels) {
+                loop_suffix += lvl.index;
+            }
+            printer.print(llir::Struct_t::make("partition_" + loop_suffix,
+                                               std::move(fields), std::move(generics)));
+        }
+
+        lower_coo_compare_function();
+        lower_coo_partition_kernel();
+        lower_coo_precompute_kernel();
+        lower_coo_compute_kernel();
+        lower_coo_host_function();
+    }
+
+    void CINLowerer::lower_coo_compare_function() {
+        // For each pair of operand tensors, generate a comparison function.
+        // For 2-operand add, we need one compare function.
+        // coo_compare(A, a_p, B, b_p) → -1, 0, +1
+
+        auto operand_list = std::vector<std::pair<std::string, TensorLowerer>>(
+            operand_tensors.begin(), operand_tensors.end());
+
+        // For binary add we have exactly 2 operands
+        internal_assert(operand_list.size() == 2)
+            << "COO codegen currently supports binary add (2 operands)";
+
+        auto &tensor_a = operand_list[0].second;
+        auto &tensor_b = operand_list[1].second;
+
+        std::vector<std::string> generics = {"index_t", "value_t"};
+        std::vector<llir::Function::Attribute> attributes = {
+            llir::Function::device, llir::Function::inline_};
+
+        std::vector<llir::Function::Argument> args;
+        args.emplace_back(llir::Function::Argument{
+            .mutating = false,
+            .type = llir::Generic_t::make(tensor_a.get_struct_name() + "<index_t, value_t>"),
+            .name = tensor_a.tensor_name});
+        args.emplace_back(llir::Function::Argument{
+            .mutating = false, .type = index_t, .name = "a_p"});
+        args.emplace_back(llir::Function::Argument{
+            .mutating = false,
+            .type = llir::Generic_t::make(tensor_b.get_struct_name() + "<index_t, value_t>"),
+            .name = tensor_b.tensor_name});
+        args.emplace_back(llir::Function::Argument{
+            .mutating = false, .type = index_t, .name = "b_p"});
+
+        llir::lExpr a_var = llir::lVar::make(
+            llir::Generic_t::make(tensor_a.get_struct_name()), tensor_a.tensor_name);
+        llir::lExpr b_var = llir::lVar::make(
+            llir::Generic_t::make(tensor_b.get_struct_name()), tensor_b.tensor_name);
+        llir::lExpr a_p = llir::lVar::make(index_t, "a_p");
+        llir::lExpr b_p = llir::lVar::make(index_t, "b_p");
+
+        // Build comparison chain: for each dimension, compare coordinate
+        std::vector<llir::lStmt> stmts;
+        for (const auto &level : result_tensor.tensor_type.format.levels) {
+            std::string idx = level.index;
+            // A.dim_X_indices[a_p] vs B.dim_X_indices[b_p]
+            llir::lExpr a_coord = llir::lFieldAccess::make(a_var, tensor_a.get_indices_field_name(idx))[a_p];
+            llir::lExpr b_coord = llir::lFieldAccess::make(b_var, tensor_b.get_indices_field_name(idx))[b_p];
+
+            stmts.emplace_back(llir::IfElse::make(
+                a_coord < b_coord,
+                llir::Return::make(llir::lConst::make((int64_t)-1)),
+                llir::lStmt()));
+            stmts.emplace_back(llir::IfElse::make(
+                llir::lFieldAccess::make(a_var, tensor_a.get_indices_field_name(idx))[a_p] >
+                    llir::lFieldAccess::make(b_var, tensor_b.get_indices_field_name(idx))[b_p],
+                llir::Return::make(llir::lConst::make((int64_t)1)),
+                llir::lStmt()));
+        }
+        stmts.emplace_back(llir::Return::make(llir::lConst::make((int64_t)0)));
+
+        llir::lStmt body = llir::Sequence::make(std::move(stmts));
+        printer.print(llir::Function::make(
+            std::move(generics), std::move(attributes), std::move(args),
+            index_t, "coo_compare", std::move(body)));
+    }
+
+    void CINLowerer::lower_coo_partition_kernel() {
+        auto operand_list = std::vector<std::pair<std::string, TensorLowerer>>(
+            operand_tensors.begin(), operand_tensors.end());
+        auto &tensor_a = operand_list[0].second;
+        auto &tensor_b = operand_list[1].second;
+
+        std::string loop_suffix;
+        for (const auto &lvl : result_tensor.tensor_type.format.levels) {
+            loop_suffix += lvl.index;
+        }
+
+        std::vector<std::string> generics = {"index_t", "value_t"};
+        std::vector<llir::Function::Attribute> attributes = {
+            llir::Function::global};
+
+        std::vector<llir::Function::Argument> args;
+        for (const auto &it : operand_tensors) {
+            args.emplace_back(llir::Function::Argument{
+                .mutating = false,
+                .type = llir::Generic_t::make(it.second.get_struct_name() + "<index_t, value_t>"),
+                .name = it.second.tensor_name});
+        }
+        args.emplace_back(llir::Function::Argument{
+            .mutating = true,
+            .type = llir::Generic_t::make("partition_" + loop_suffix + "<index_t>"),
+            .name = "partitions"});
+        args.emplace_back(llir::Function::Argument{
+            .mutating = false, .type = index_t, .name = "per_thread_work"});
+        args.emplace_back(llir::Function::Argument{
+            .mutating = false, .type = index_t, .name = "total_work"});
+
+        // Store kernel info for host function
+        kernel_infos.push_back({
+            .name = "partition_" + loop_suffix + "_kernel",
+            .template_args = {"index_t", "value_t"},
+            .args = args,
+            .kind = KernelInfo::Partition,
+            .phase = 0
+        });
+
+        llir::lExpr a_nnz = llir::lFieldAccess::make(
+            llir::lVar::make(llir::Generic_t::make(tensor_a.get_struct_name()), tensor_a.tensor_name),
+            "nnz");
+        llir::lExpr b_nnz = llir::lFieldAccess::make(
+            llir::lVar::make(llir::Generic_t::make(tensor_b.get_struct_name()), tensor_b.tensor_name),
+            "nnz");
+
+        std::vector<llir::lStmt> stmts;
+
+        // int thread_id = blockIdx.x * blockDim.x + threadIdx.x;
+        stmts.emplace_back(llir::Declare::make(
+            llir::Int_t::make(32), "thread_id",
+            llir::lVar::make(index_t, "blockIdx.x") * llir::lVar::make(index_t, "blockDim.x") +
+                llir::lVar::make(index_t, "threadIdx.x")));
+
+        llir::lExpr tid = llir::lVar::make(llir::Int_t::make(32), "thread_id");
+
+        // index_t diag = thread_id * per_thread_work;
+        stmts.emplace_back(llir::Declare::make(
+            index_t, "diag",
+            tid * llir::lVar::make(index_t, "per_thread_work")));
+
+        llir::lExpr diag = llir::lVar::make(index_t, "diag");
+
+        // clamp diag
+        stmts.emplace_back(llir::IfElse::make(
+            diag > llir::lVar::make(index_t, "total_work"),
+            llir::Store::make(diag, llir::lVar::make(index_t, "total_work")),
+            llir::lStmt()));
+
+        // a_top = min(diag, A.nnz)
+        stmts.emplace_back(llir::Declare::make(
+            index_t, "a_top",
+            llir::lBinOp::make(llir::lBinOp::Min, diag, a_nnz)));
+        // a_bot = max(0, diag - B.nnz)
+        stmts.emplace_back(llir::Declare::make(
+            index_t, "a_bot",
+            llir::lBinOp::make(llir::lBinOp::Max, llir::lConst::make((int64_t)0),
+                               diag - b_nnz)));
+
+        llir::lExpr a_top = llir::lVar::make(index_t, "a_top");
+        llir::lExpr a_bot = llir::lVar::make(index_t, "a_bot");
+
+        // while (a_top > a_bot):
+        //   a_mid = a_bot + (a_top - a_bot) / 2
+        //   b_mid = diag - a_mid - 1
+        //   if (coo_compare(A, a_mid, B, b_mid) > 0):
+        //     a_top = a_mid
+        //   else:
+        //     a_bot = a_mid + 1
+        {
+            std::vector<llir::lStmt> while_stmts;
+            llir::lExpr a_mid_expr = a_bot + (a_top - a_bot) / llir::lConst::make((int64_t)2);
+            while_stmts.emplace_back(llir::Declare::make(index_t, "a_mid", a_mid_expr));
+            llir::lExpr a_mid = llir::lVar::make(index_t, "a_mid");
+            while_stmts.emplace_back(llir::Declare::make(index_t, "b_mid",
+                diag - a_mid - llir::lConst::make((int64_t)1)));
+            llir::lExpr b_mid = llir::lVar::make(index_t, "b_mid");
+
+            // coo_compare call
+            llir::lExpr cmp = llir::lFunctionCall::make("coo_compare<index_t, value_t>",
+                {llir::lVar::make(llir::Generic_t::make(tensor_a.get_struct_name()), tensor_a.tensor_name),
+                 a_mid,
+                 llir::lVar::make(llir::Generic_t::make(tensor_b.get_struct_name()), tensor_b.tensor_name),
+                 b_mid});
+
+            while_stmts.emplace_back(llir::IfElse::make(
+                cmp > llir::lConst::make((int64_t)0),
+                llir::Store::make(a_top, a_mid),
+                llir::Store::make(a_bot, a_mid + llir::lConst::make((int64_t)1))));
+
+            stmts.emplace_back(llir::While::make(
+                a_top > a_bot,
+                llir::Sequence::make(std::move(while_stmts))));
+        }
+
+        // partitions.A_p[thread_id] = a_top;
+        // partitions.B_p[thread_id] = diag - a_top;
+        llir::lExpr partitions = llir::lVar::make(
+            llir::Generic_t::make("partition_" + loop_suffix + "<index_t>"), "partitions");
+        stmts.emplace_back(llir::Store::make(
+            llir::lFieldAccess::make(partitions, tensor_a.tensor_name + "_p")[tid],
+            a_top));
+        stmts.emplace_back(llir::Store::make(
+            llir::lFieldAccess::make(partitions, tensor_b.tensor_name + "_p")[tid],
+            diag - a_top));
+
+        stmts.emplace_back(llir::Return::make());
+
+        llir::lStmt body = llir::Sequence::make(std::move(stmts));
+        printer.print(llir::Function::make(
+            std::move(generics), std::move(attributes), std::move(args),
+            llir::Generic_t::make("void"),
+            "partition_" + loop_suffix + "_kernel",
+            std::move(body)));
+    }
+
+    void CINLowerer::lower_coo_precompute_kernel() {
+        auto operand_list = std::vector<std::pair<std::string, TensorLowerer>>(
+            operand_tensors.begin(), operand_tensors.end());
+        auto &tensor_a = operand_list[0].second;
+        auto &tensor_b = operand_list[1].second;
+
+        std::string loop_suffix;
+        for (const auto &lvl : result_tensor.tensor_type.format.levels) {
+            loop_suffix += lvl.index;
+        }
+
+        std::vector<std::string> generics = {"index_t", "value_t"};
+        std::vector<llir::Function::Attribute> attributes = {
+            llir::Function::global};
+
+        std::vector<llir::Function::Argument> args;
+        for (const auto &it : operand_tensors) {
+            args.emplace_back(llir::Function::Argument{
+                .mutating = false,
+                .type = llir::Generic_t::make(it.second.get_struct_name() + "<index_t, value_t>"),
+                .name = it.second.tensor_name});
+        }
+        args.emplace_back(llir::Function::Argument{
+            .mutating = false,
+            .type = llir::Generic_t::make("partition_" + loop_suffix + "<index_t>"),
+            .name = "partitions"});
+        args.emplace_back(llir::Function::Argument{
+            .mutating = true,
+            .type = llir::Generic_t::make("result_per_thread_count<index_t>"),
+            .name = "count_offsets"});
+        args.emplace_back(llir::Function::Argument{
+            .mutating = false, .type = index_t, .name = "per_thread_work"});
+
+        kernel_infos.push_back({
+            .name = "precompute_" + loop_suffix + "_kernel",
+            .template_args = {"index_t", "value_t"},
+            .args = args,
+            .kind = KernelInfo::Precompute,
+            .phase = 0
+        });
+
+        std::vector<llir::lStmt> stmts;
+
+        // thread_id setup
+        stmts.emplace_back(llir::Declare::make(
+            llir::Int_t::make(32), "thread_id",
+            llir::lVar::make(index_t, "blockIdx.x") * llir::lVar::make(index_t, "blockDim.x") +
+                llir::lVar::make(index_t, "threadIdx.x")));
+        stmts.emplace_back(llir::Declare::make(
+            llir::Int_t::make(32), "max_thread_id",
+            llir::lVar::make(index_t, "gridDim.x") * llir::lVar::make(index_t, "blockDim.x") -
+                llir::lConst::make(1)));
+
+        llir::lExpr tid = llir::lVar::make(llir::Int_t::make(32), "thread_id");
+        llir::lExpr max_tid = llir::lVar::make(llir::Int_t::make(32), "max_thread_id");
+
+        llir::lExpr partitions = llir::lVar::make(
+            llir::Generic_t::make("partition_" + loop_suffix + "<index_t>"), "partitions");
+        llir::lExpr a_nnz = llir::lFieldAccess::make(
+            llir::lVar::make(llir::Generic_t::make(tensor_a.get_struct_name()), tensor_a.tensor_name), "nnz");
+        llir::lExpr b_nnz = llir::lFieldAccess::make(
+            llir::lVar::make(llir::Generic_t::make(tensor_b.get_struct_name()), tensor_b.tensor_name), "nnz");
+
+        // Load partition boundaries
+        stmts.emplace_back(llir::Declare::make(index_t, "start_a",
+            llir::lFieldAccess::make(partitions, tensor_a.tensor_name + "_p")[tid]));
+        stmts.emplace_back(llir::Declare::make(index_t, "end_a",
+            llir::lSelect::make(tid < max_tid,
+                llir::lFieldAccess::make(partitions, tensor_a.tensor_name + "_p")[tid + llir::lConst::make(1)],
+                a_nnz)));
+        stmts.emplace_back(llir::Declare::make(index_t, "start_b",
+            llir::lFieldAccess::make(partitions, tensor_b.tensor_name + "_p")[tid]));
+        stmts.emplace_back(llir::Declare::make(index_t, "end_b",
+            llir::lSelect::make(tid < max_tid,
+                llir::lFieldAccess::make(partitions, tensor_b.tensor_name + "_p")[tid + llir::lConst::make(1)],
+                b_nnz)));
+
+        llir::lExpr start_a = llir::lVar::make(index_t, "start_a");
+        llir::lExpr end_a = llir::lVar::make(index_t, "end_a");
+        llir::lExpr start_b = llir::lVar::make(index_t, "start_b");
+        llir::lExpr end_b = llir::lVar::make(index_t, "end_b");
+
+        // Merge loop counting output elements
+        stmts.emplace_back(llir::Declare::make(index_t, "a_p", start_a));
+        stmts.emplace_back(llir::Declare::make(index_t, "b_p", start_b));
+        stmts.emplace_back(llir::Declare::make(index_t, "count", llir::lConst::make((int64_t)0)));
+
+        llir::lExpr a_p = llir::lVar::make(index_t, "a_p");
+        llir::lExpr b_p = llir::lVar::make(index_t, "b_p");
+        llir::lExpr count = llir::lVar::make(index_t, "count");
+
+        // Boundary overlap fix: if the merge-path split an equal pair
+        // across threads, skip the B element that belongs to the previous
+        // thread's overlap fixup.
+        {
+            llir::lExpr boundary_cmp = llir::lFunctionCall::make("coo_compare<index_t, value_t>",
+                {llir::lVar::make(llir::Generic_t::make(tensor_a.get_struct_name()), tensor_a.tensor_name),
+                 start_a - llir::lConst::make((int64_t)1),
+                 llir::lVar::make(llir::Generic_t::make(tensor_b.get_struct_name()), tensor_b.tensor_name),
+                 start_b});
+            llir::lExpr cond =
+                tid > llir::lConst::make((int64_t)0) &&
+                start_a > llir::lConst::make((int64_t)0) &&
+                start_b < end_b &&
+                boundary_cmp == llir::lConst::make((int64_t)0);
+            stmts.emplace_back(llir::IfElse::make(cond,
+                llir::BaseExpr::make(llir::lIncrement::make(b_p)),
+                llir::lStmt()));
+        }
+
+        {
+            std::vector<llir::lStmt> while_stmts;
+
+            llir::lExpr cmp = llir::lFunctionCall::make("coo_compare<index_t, value_t>",
+                {llir::lVar::make(llir::Generic_t::make(tensor_a.get_struct_name()), tensor_a.tensor_name),
+                 a_p,
+                 llir::lVar::make(llir::Generic_t::make(tensor_b.get_struct_name()), tensor_b.tensor_name),
+                 b_p});
+
+            while_stmts.emplace_back(llir::Declare::make(index_t, "cmp", cmp));
+            llir::lExpr cmp_var = llir::lVar::make(index_t, "cmp");
+
+            while_stmts.emplace_back(llir::Accumulate::make(count, llir::lConst::make((int64_t)1)));
+            while_stmts.emplace_back(llir::IfElse::make(
+                cmp_var <= llir::lConst::make((int64_t)0),
+                llir::BaseExpr::make(llir::lIncrement::make(a_p)),
+                llir::lStmt()));
+            while_stmts.emplace_back(llir::IfElse::make(
+                cmp_var >= llir::lConst::make((int64_t)0),
+                llir::BaseExpr::make(llir::lIncrement::make(b_p)),
+                llir::lStmt()));
+
+            stmts.emplace_back(llir::While::make(
+                a_p < end_a && b_p < end_b,
+                llir::Sequence::make(std::move(while_stmts))));
+        }
+
+        // Drain remaining
+        stmts.emplace_back(llir::Accumulate::make(count,
+            (end_a - a_p) + (end_b - b_p)));
+
+        // Store count
+        stmts.emplace_back(llir::Store::make(
+            llir::lFieldAccess::make(
+                llir::lVar::make(llir::Generic_t::make("result_per_thread_count<index_t>"), "count_offsets"),
+                "nnz_count")[tid],
+            count));
+
+        stmts.emplace_back(llir::Return::make());
+
+        llir::lStmt body = llir::Sequence::make(std::move(stmts));
+        printer.print(llir::Function::make(
+            std::move(generics), std::move(attributes), std::move(args),
+            llir::Generic_t::make("void"),
+            "precompute_" + loop_suffix + "_kernel",
+            std::move(body)));
+    }
+
+    void CINLowerer::lower_coo_compute_kernel() {
+        auto operand_list = std::vector<std::pair<std::string, TensorLowerer>>(
+            operand_tensors.begin(), operand_tensors.end());
+        auto &tensor_a = operand_list[0].second;
+        auto &tensor_b = operand_list[1].second;
+
+        std::string loop_suffix;
+        for (const auto &lvl : result_tensor.tensor_type.format.levels) {
+            loop_suffix += lvl.index;
+        }
+
+        std::vector<std::string> generics = {"index_t", "value_t"};
+        std::vector<llir::Function::Attribute> attributes = {
+            llir::Function::global};
+
+        std::vector<llir::Function::Argument> args;
+        for (const auto &it : operand_tensors) {
+            args.emplace_back(llir::Function::Argument{
+                .mutating = false,
+                .type = llir::Generic_t::make(it.second.get_struct_name() + "<index_t, value_t>"),
+                .name = it.second.tensor_name});
+        }
+        args.emplace_back(llir::Function::Argument{
+            .mutating = false,
+            .type = llir::Generic_t::make("partition_" + loop_suffix + "<index_t>"),
+            .name = "partitions"});
+        args.emplace_back(llir::Function::Argument{
+            .mutating = false,
+            .type = llir::Generic_t::make("result_per_thread_count<index_t>"),
+            .name = "count_offsets"});
+        args.emplace_back(llir::Function::Argument{
+            .mutating = false, .type = index_t, .name = "per_thread_work"});
+        args.emplace_back(llir::Function::Argument{
+            .mutating = true,
+            .type = llir::Generic_t::make(result_tensor.get_struct_name() + "<index_t, value_t>"),
+            .name = result_tensor.tensor_name});
+
+        kernel_infos.push_back({
+            .name = "compute_" + loop_suffix + "_kernel",
+            .template_args = {"index_t", "value_t"},
+            .args = args,
+            .kind = KernelInfo::Compute,
+            .phase = 0
+        });
+
+        std::vector<llir::lStmt> stmts;
+
+        // thread_id setup
+        stmts.emplace_back(llir::Declare::make(
+            llir::Int_t::make(32), "thread_id",
+            llir::lVar::make(index_t, "blockIdx.x") * llir::lVar::make(index_t, "blockDim.x") +
+                llir::lVar::make(index_t, "threadIdx.x")));
+        stmts.emplace_back(llir::Declare::make(
+            llir::Int_t::make(32), "max_thread_id",
+            llir::lVar::make(index_t, "gridDim.x") * llir::lVar::make(index_t, "blockDim.x") -
+                llir::lConst::make(1)));
+
+        llir::lExpr tid = llir::lVar::make(llir::Int_t::make(32), "thread_id");
+        llir::lExpr max_tid = llir::lVar::make(llir::Int_t::make(32), "max_thread_id");
+
+        llir::lExpr partitions = llir::lVar::make(
+            llir::Generic_t::make("partition_" + loop_suffix + "<index_t>"), "partitions");
+        llir::lExpr a_nnz = llir::lFieldAccess::make(
+            llir::lVar::make(llir::Generic_t::make(tensor_a.get_struct_name()), tensor_a.tensor_name), "nnz");
+        llir::lExpr b_nnz = llir::lFieldAccess::make(
+            llir::lVar::make(llir::Generic_t::make(tensor_b.get_struct_name()), tensor_b.tensor_name), "nnz");
+
+        // Load partition boundaries
+        stmts.emplace_back(llir::Declare::make(index_t, "start_a",
+            llir::lFieldAccess::make(partitions, tensor_a.tensor_name + "_p")[tid]));
+        stmts.emplace_back(llir::Declare::make(index_t, "end_a",
+            llir::lSelect::make(tid < max_tid,
+                llir::lFieldAccess::make(partitions, tensor_a.tensor_name + "_p")[tid + llir::lConst::make(1)],
+                a_nnz)));
+        stmts.emplace_back(llir::Declare::make(index_t, "start_b",
+            llir::lFieldAccess::make(partitions, tensor_b.tensor_name + "_p")[tid]));
+        stmts.emplace_back(llir::Declare::make(index_t, "end_b",
+            llir::lSelect::make(tid < max_tid,
+                llir::lFieldAccess::make(partitions, tensor_b.tensor_name + "_p")[tid + llir::lConst::make(1)],
+                b_nnz)));
+
+        llir::lExpr start_a = llir::lVar::make(index_t, "start_a");
+        llir::lExpr end_a = llir::lVar::make(index_t, "end_a");
+        llir::lExpr start_b = llir::lVar::make(index_t, "start_b");
+        llir::lExpr end_b = llir::lVar::make(index_t, "end_b");
+
+        // Load output offset from prefix sum
+        stmts.emplace_back(llir::Declare::make(index_t, "out_p",
+            llir::lFieldAccess::make(
+                llir::lVar::make(llir::Generic_t::make("result_per_thread_count<index_t>"), "count_offsets"),
+                "nnz_count")[tid]));
+
+        llir::lExpr out_p = llir::lVar::make(index_t, "out_p");
+
+        stmts.emplace_back(llir::Declare::make(index_t, "a_p", start_a));
+        stmts.emplace_back(llir::Declare::make(index_t, "b_p", start_b));
+
+        llir::lExpr a_p = llir::lVar::make(index_t, "a_p");
+        llir::lExpr b_p = llir::lVar::make(index_t, "b_p");
+
+        llir::lExpr result_var = llir::lVar::make(
+            llir::Generic_t::make(result_tensor.get_struct_name()), result_tensor.tensor_name);
+        llir::lExpr a_var = llir::lVar::make(
+            llir::Generic_t::make(tensor_a.get_struct_name()), tensor_a.tensor_name);
+        llir::lExpr b_var = llir::lVar::make(
+            llir::Generic_t::make(tensor_b.get_struct_name()), tensor_b.tensor_name);
+
+        // Boundary overlap fix (start): skip B element that was split
+        // from the previous thread's equal A element.
+        {
+            llir::lExpr boundary_cmp = llir::lFunctionCall::make("coo_compare<index_t, value_t>",
+                {llir::lVar::make(llir::Generic_t::make(tensor_a.get_struct_name()), tensor_a.tensor_name),
+                 start_a - llir::lConst::make((int64_t)1),
+                 llir::lVar::make(llir::Generic_t::make(tensor_b.get_struct_name()), tensor_b.tensor_name),
+                 start_b});
+            llir::lExpr cond =
+                tid > llir::lConst::make((int64_t)0) &&
+                start_a > llir::lConst::make((int64_t)0) &&
+                start_b < end_b &&
+                boundary_cmp == llir::lConst::make((int64_t)0);
+            stmts.emplace_back(llir::IfElse::make(cond,
+                llir::BaseExpr::make(llir::lIncrement::make(b_p)),
+                llir::lStmt()));
+        }
+
+        // Helper to build coordinate copy statements from a source tensor
+        auto make_coord_copies = [&](TensorLowerer &src, llir::lExpr src_p) {
+            std::vector<llir::lStmt> copies;
+            for (const auto &level : result_tensor.tensor_type.format.levels) {
+                std::string idx = level.index;
+                llir::lExpr dst = llir::lFieldAccess::make(result_var, result_tensor.get_indices_field_name(idx))[out_p];
+                llir::lExpr src_val = llir::lFieldAccess::make(
+                    llir::lVar::make(llir::Generic_t::make(src.get_struct_name()), src.tensor_name),
+                    src.get_indices_field_name(idx))[src_p];
+                copies.emplace_back(llir::Store::make(dst, src_val));
+            }
+            return copies;
+        };
+
+        // Main merge loop
+        {
+            std::vector<llir::lStmt> while_stmts;
+
+            llir::lExpr cmp = llir::lFunctionCall::make("coo_compare<index_t, value_t>",
+                {llir::lVar::make(llir::Generic_t::make(tensor_a.get_struct_name()), tensor_a.tensor_name),
+                 a_p,
+                 llir::lVar::make(llir::Generic_t::make(tensor_b.get_struct_name()), tensor_b.tensor_name),
+                 b_p});
+
+            while_stmts.emplace_back(llir::Declare::make(index_t, "cmp", cmp));
+            llir::lExpr cmp_var = llir::lVar::make(index_t, "cmp");
+
+            // cmp < 0: A only
+            {
+                std::vector<llir::lStmt> a_only;
+                auto copies = make_coord_copies(tensor_a, a_p);
+                a_only.insert(a_only.end(), copies.begin(), copies.end());
+                a_only.emplace_back(llir::Store::make(
+                    llir::lFieldAccess::make(result_var, "values")[out_p],
+                    llir::lFieldAccess::make(a_var, "values")[a_p]));
+                a_only.emplace_back(llir::BaseExpr::make(llir::lIncrement::make(a_p)));
+
+                // cmp > 0: B only
+                std::vector<llir::lStmt> b_or_both;
+                {
+                    std::vector<llir::lStmt> b_only;
+                    auto b_copies = make_coord_copies(tensor_b, b_p);
+                    b_only.insert(b_only.end(), b_copies.begin(), b_copies.end());
+                    b_only.emplace_back(llir::Store::make(
+                        llir::lFieldAccess::make(result_var, "values")[out_p],
+                        llir::lFieldAccess::make(b_var, "values")[b_p]));
+                    b_only.emplace_back(llir::BaseExpr::make(llir::lIncrement::make(b_p)));
+
+                    // cmp == 0: Both
+                    std::vector<llir::lStmt> both;
+                    auto both_copies = make_coord_copies(tensor_a, a_p);
+                    both.insert(both.end(), both_copies.begin(), both_copies.end());
+                    both.emplace_back(llir::Store::make(
+                        llir::lFieldAccess::make(result_var, "values")[out_p],
+                        llir::lFieldAccess::make(a_var, "values")[a_p] +
+                            llir::lFieldAccess::make(b_var, "values")[b_p]));
+                    both.emplace_back(llir::BaseExpr::make(llir::lIncrement::make(a_p)));
+                    both.emplace_back(llir::BaseExpr::make(llir::lIncrement::make(b_p)));
+
+                    b_or_both.emplace_back(llir::IfElse::make(
+                        cmp_var > llir::lConst::make((int64_t)0),
+                        llir::Sequence::make(std::move(b_only)),
+                        llir::Sequence::make(std::move(both))));
+                }
+
+                while_stmts.emplace_back(llir::IfElse::make(
+                    cmp_var < llir::lConst::make((int64_t)0),
+                    llir::Sequence::make(std::move(a_only)),
+                    llir::Sequence::make(std::move(b_or_both))));
+            }
+
+            while_stmts.emplace_back(llir::BaseExpr::make(llir::lIncrement::make(out_p)));
+
+            stmts.emplace_back(llir::While::make(
+                a_p < end_a && b_p < end_b,
+                llir::Sequence::make(std::move(while_stmts))));
+        }
+
+        // Drain remaining A elements
+        {
+            std::vector<llir::lStmt> drain_a;
+            auto copies = make_coord_copies(tensor_a, a_p);
+            drain_a.insert(drain_a.end(), copies.begin(), copies.end());
+            drain_a.emplace_back(llir::Store::make(
+                llir::lFieldAccess::make(result_var, "values")[out_p],
+                llir::lFieldAccess::make(a_var, "values")[a_p]));
+            drain_a.emplace_back(llir::BaseExpr::make(llir::lIncrement::make(a_p)));
+            drain_a.emplace_back(llir::BaseExpr::make(llir::lIncrement::make(out_p)));
+
+            stmts.emplace_back(llir::While::make(
+                a_p < end_a,
+                llir::Sequence::make(std::move(drain_a))));
+        }
+
+        // Drain remaining B elements
+        {
+            std::vector<llir::lStmt> drain_b;
+            auto copies = make_coord_copies(tensor_b, b_p);
+            drain_b.insert(drain_b.end(), copies.begin(), copies.end());
+            drain_b.emplace_back(llir::Store::make(
+                llir::lFieldAccess::make(result_var, "values")[out_p],
+                llir::lFieldAccess::make(b_var, "values")[b_p]));
+            drain_b.emplace_back(llir::BaseExpr::make(llir::lIncrement::make(b_p)));
+            drain_b.emplace_back(llir::BaseExpr::make(llir::lIncrement::make(out_p)));
+
+            stmts.emplace_back(llir::While::make(
+                b_p < end_b,
+                llir::Sequence::make(std::move(drain_b))));
+        }
+
+        // Boundary overlap fix (end): if our last A element equals the next
+        // thread's first B element, add B's value to our last output.
+        {
+            llir::lExpr boundary_cmp = llir::lFunctionCall::make("coo_compare<index_t, value_t>",
+                {llir::lVar::make(llir::Generic_t::make(tensor_a.get_struct_name()), tensor_a.tensor_name),
+                 end_a - llir::lConst::make((int64_t)1),
+                 llir::lVar::make(llir::Generic_t::make(tensor_b.get_struct_name()), tensor_b.tensor_name),
+                 end_b});
+            llir::lExpr cond =
+                tid < max_tid &&
+                end_a > start_a &&
+                end_b < b_nnz &&
+                boundary_cmp == llir::lConst::make((int64_t)0);
+            // Z.values[out_p - 1] += B.values[end_b]
+            stmts.emplace_back(llir::IfElse::make(cond,
+                llir::Accumulate::make(
+                    llir::lFieldAccess::make(result_var, "values")[out_p - llir::lConst::make((int64_t)1)],
+                    llir::lFieldAccess::make(b_var, "values")[end_b]),
+                llir::lStmt()));
+        }
+
+        stmts.emplace_back(llir::Return::make());
+
+        llir::lStmt body = llir::Sequence::make(std::move(stmts));
+        printer.print(llir::Function::make(
+            std::move(generics), std::move(attributes), std::move(args),
+            llir::Generic_t::make("void"),
+            "compute_" + loop_suffix + "_kernel",
+            std::move(body)));
+    }
+
+    void CINLowerer::lower_coo_host_function() {
+        std::string loop_suffix;
+        for (const auto &lvl : result_tensor.tensor_type.format.levels) {
+            loop_suffix += lvl.index;
+        }
+
+        std::vector<std::string> generics = {"index_t", "value_t"};
+        std::vector<llir::Function::Attribute> attributes = {llir::Function::host};
+        llir::lType ret_type = llir::Generic_t::make("void");
+        std::string name = result_tensor.tensor_name + "_compute";
+
+        std::vector<llir::Function::Argument> func_args;
+        for (const auto &it : operand_tensors) {
+            func_args.emplace_back(llir::Function::Argument{
+                .mutating = false,
+                .type = llir::Generic_t::make(it.second.get_struct_name() + "<index_t, value_t>"),
+                .name = it.second.tensor_name});
+        }
+        func_args.emplace_back(llir::Function::Argument{
+            .mutating = true,
+            .by_reference = true,
+            .type = llir::Generic_t::make(result_tensor.get_struct_name() + "<index_t, value_t>"),
+            .name = result_tensor.tensor_name});
+
+        auto operand_list = std::vector<std::pair<std::string, TensorLowerer>>(
+            operand_tensors.begin(), operand_tensors.end());
+        auto &tensor_a = operand_list[0].second;
+        auto &tensor_b = operand_list[1].second;
+
+        std::vector<llir::lStmt> body_stmts;
+
+        // Boilerplate
+        body_stmts.emplace_back(llir::Declare::make(index_t, "num_blocks", llir::lConst::make((int64_t)256)));
+        body_stmts.emplace_back(llir::Declare::make(index_t, "threads_per_block", llir::lConst::make((int64_t)256)));
+        body_stmts.emplace_back(llir::Declare::make(index_t, "num_threads",
+            llir::lVar::make(index_t, "num_blocks") * llir::lVar::make(index_t, "threads_per_block")));
+        body_stmts.emplace_back(llir::RawCode::make("const cudaStream_t stream = cudaStreamPerThread;"));
+
+        llir::lExpr num_blocks_var = llir::lVar::make(index_t, "num_blocks");
+        llir::lExpr tpb_var = llir::lVar::make(index_t, "threads_per_block");
+        llir::lExpr num_threads_var = llir::lVar::make(index_t, "num_threads");
+        llir::lExpr stream_var = llir::lVar::make(llir::Generic_t::make("cudaStream_t"), "stream");
+
+        // total_work = A.nnz + B.nnz
+        body_stmts.emplace_back(llir::RawCode::make(
+            "index_t total_work_0 = " + tensor_a.tensor_name + ".nnz + " + tensor_b.tensor_name + ".nnz;"));
+        body_stmts.emplace_back(llir::RawCode::make(
+            "index_t per_thread_work_0 = total_work_0 / num_threads + 1;"));
+
+        // Allocate partition struct
+        std::string part_struct = "partition_" + loop_suffix;
+        body_stmts.emplace_back(llir::RawCode::make(
+            part_struct + "<index_t> partitions_0;"));
+        for (const auto &it : operand_tensors) {
+            body_stmts.emplace_back(llir::RawCode::make(
+                "cudaMallocAsync((void**)&partitions_0." + it.second.tensor_name +
+                "_p, num_threads * sizeof(index_t), stream);"));
+        }
+
+        // Launch partition kernel
+        {
+            std::vector<llir::lExpr> launch_args;
+            for (const auto &it : operand_tensors) {
+                launch_args.push_back(llir::lVar::make(
+                    llir::Generic_t::make(it.second.get_struct_name() + "<index_t, value_t>"),
+                    it.second.tensor_name));
+            }
+            launch_args.push_back(llir::lVar::make(
+                llir::Generic_t::make(part_struct + "<index_t>"), "partitions_0"));
+            launch_args.push_back(llir::lVar::make(index_t, "per_thread_work_0"));
+            launch_args.push_back(llir::lVar::make(index_t, "total_work_0"));
+
+            body_stmts.emplace_back(llir::KernelLaunch::make(
+                "partition_" + loop_suffix + "_kernel", {"index_t", "value_t"},
+                num_blocks_var, tpb_var, std::move(launch_args),
+                llir::lExpr(), stream_var));
+        }
+
+        // Allocate count struct
+        body_stmts.emplace_back(llir::RawCode::make(
+            "result_per_thread_count<index_t> count_offsets_0;"));
+        body_stmts.emplace_back(llir::RawCode::make(
+            "cudaMallocAsync((void**)&count_offsets_0.nnz_count, num_threads * sizeof(index_t), stream);"));
+
+        // Launch precompute kernel
+        {
+            std::vector<llir::lExpr> launch_args;
+            for (const auto &it : operand_tensors) {
+                launch_args.push_back(llir::lVar::make(
+                    llir::Generic_t::make(it.second.get_struct_name() + "<index_t, value_t>"),
+                    it.second.tensor_name));
+            }
+            launch_args.push_back(llir::lVar::make(
+                llir::Generic_t::make(part_struct + "<index_t>"), "partitions_0"));
+            launch_args.push_back(llir::lVar::make(
+                llir::Generic_t::make("result_per_thread_count<index_t>"), "count_offsets_0"));
+            launch_args.push_back(llir::lVar::make(index_t, "per_thread_work_0"));
+
+            body_stmts.emplace_back(llir::KernelLaunch::make(
+                "precompute_" + loop_suffix + "_kernel", {"index_t", "value_t"},
+                num_blocks_var, tpb_var, std::move(launch_args),
+                llir::lExpr(), stream_var));
+        }
+
+        // CUB prefix sum on nnz_count
+        body_stmts.emplace_back(llir::RawCode::make("index_t* count_offsets_0_nnz_count_prefix;"));
+        body_stmts.emplace_back(llir::RawCode::make(
+            "cudaMallocAsync((void**)&count_offsets_0_nnz_count_prefix, (num_threads + 1) * sizeof(index_t), stream);"));
+        body_stmts.emplace_back(llir::RawCode::make(
+            "cudaMemsetAsync(count_offsets_0_nnz_count_prefix, 0, (num_threads + 1) * sizeof(index_t), stream);"));
+        body_stmts.emplace_back(llir::RawCode::make("void* d_temp_storage_0_nnz_count = nullptr;"));
+        body_stmts.emplace_back(llir::RawCode::make("size_t temp_storage_bytes_0_nnz_count = 0;"));
+        body_stmts.emplace_back(llir::RawCode::make(
+            "cub::DeviceScan::InclusiveSum(d_temp_storage_0_nnz_count, temp_storage_bytes_0_nnz_count, "
+            "count_offsets_0.nnz_count, count_offsets_0_nnz_count_prefix + 1, num_threads, stream);"));
+        body_stmts.emplace_back(llir::RawCode::make(
+            "cudaMallocAsync(&d_temp_storage_0_nnz_count, temp_storage_bytes_0_nnz_count, stream);"));
+        body_stmts.emplace_back(llir::RawCode::make(
+            "cub::DeviceScan::InclusiveSum(d_temp_storage_0_nnz_count, temp_storage_bytes_0_nnz_count, "
+            "count_offsets_0.nnz_count, count_offsets_0_nnz_count_prefix + 1, num_threads, stream);"));
+        body_stmts.emplace_back(llir::RawCode::make("cudaFreeAsync(d_temp_storage_0_nnz_count, stream);"));
+        body_stmts.emplace_back(llir::RawCode::make("cudaFreeAsync(count_offsets_0.nnz_count, stream);"));
+        body_stmts.emplace_back(llir::RawCode::make("count_offsets_0.nnz_count = count_offsets_0_nnz_count_prefix;"));
+
+        // Read output nnz
+        body_stmts.emplace_back(llir::RawCode::make("index_t out_nnz;"));
+        body_stmts.emplace_back(llir::RawCode::make(
+            "cudaMemcpyAsync(&out_nnz, count_offsets_0_nnz_count_prefix + num_threads, "
+            "sizeof(index_t), cudaMemcpyDeviceToHost, stream);"));
+        body_stmts.emplace_back(llir::RawCode::make("cudaStreamSynchronize(stream);"));
+
+        // Allocate output arrays: dim_X_indices for each dim + values
+        for (const auto &level : result_tensor.tensor_type.format.levels) {
+            body_stmts.emplace_back(llir::RawCode::make(
+                "cudaMallocAsync((void**)&" + result_tensor.tensor_name + "." +
+                result_tensor.get_indices_field_name(level.index) +
+                ", out_nnz * sizeof(index_t), stream);"));
+        }
+        body_stmts.emplace_back(llir::RawCode::make(
+            "cudaMallocAsync((void**)&" + result_tensor.tensor_name +
+            ".values, out_nnz * sizeof(value_t), stream);"));
+
+        // Launch compute kernel
+        {
+            std::vector<llir::lExpr> launch_args;
+            for (const auto &it : operand_tensors) {
+                launch_args.push_back(llir::lVar::make(
+                    llir::Generic_t::make(it.second.get_struct_name() + "<index_t, value_t>"),
+                    it.second.tensor_name));
+            }
+            launch_args.push_back(llir::lVar::make(
+                llir::Generic_t::make(part_struct + "<index_t>"), "partitions_0"));
+            launch_args.push_back(llir::lVar::make(
+                llir::Generic_t::make("result_per_thread_count<index_t>"), "count_offsets_0"));
+            launch_args.push_back(llir::lVar::make(index_t, "per_thread_work_0"));
+            launch_args.push_back(llir::lVar::make(
+                llir::Generic_t::make(result_tensor.get_struct_name() + "<index_t, value_t>"),
+                result_tensor.tensor_name));
+
+            body_stmts.emplace_back(llir::KernelLaunch::make(
+                "compute_" + loop_suffix + "_kernel", {"index_t", "value_t"},
+                num_blocks_var, tpb_var, std::move(launch_args),
+                llir::lExpr(), stream_var));
+        }
+
+        // Update result tensor fields
+        body_stmts.emplace_back(llir::RawCode::make(
+            result_tensor.tensor_name + ".nnz = out_nnz;"));
+
+        // Free intermediates
+        for (const auto &it : operand_tensors) {
+            body_stmts.emplace_back(llir::RawCode::make(
+                "cudaFreeAsync(partitions_0." + it.second.tensor_name + "_p, stream);"));
+        }
+        body_stmts.emplace_back(llir::RawCode::make(
+            "cudaFreeAsync(count_offsets_0.nnz_count, stream);"));
+
+        llir::lStmt body = llir::Sequence::make(std::move(body_stmts));
+        printer.print(llir::Function::make(
+            std::move(generics), std::move(attributes), std::move(func_args),
+            std::move(ret_type), name, std::move(body)));
+    }
+
+    void CINLowerer::lower_coo_flat_wrapper(const std::string &op_name) {
+        llir::lType value_t = llir::Generic_t::make("value_t");
+        std::vector<std::string> generics = {"index_t", "value_t"};
+        std::vector<llir::Function::Attribute> attributes = {llir::Function::host};
+        llir::lType ret_type = llir::Generic_t::make("void");
+
+        std::vector<llir::Function::Argument> args;
+
+        // For each operand: add all struct fields as flat args
+        for (const auto &[name, tensor] : operand_tensors) {
+            llir::lType struct_type = tensor.lower_tensor_struct_definition();
+            const auto *st = struct_type.as<llir::Struct_t>();
+            for (const auto &[field_name, field_type] : st->fields) {
+                args.push_back({
+                    .mutating = true,
+                    .type = field_type,
+                    .name = name + "_" + field_name
+                });
+            }
+        }
+
+        // Result size fields
+        for (size_t i = 0; i < result_tensor.tensor_type.format.levels.size(); i++) {
+            auto idx = result_tensor.tensor_type.format.levels[i].index;
+            args.push_back({
+                .mutating = true,
+                .type = index_t,
+                .name = "result_" + result_tensor.get_size_field_name(idx)
+            });
+        }
+
+        // Output references: nnz
+        args.push_back({
+            .mutating = true, .by_reference = true, .type = index_t, .name = "out_nnz"});
+
+        // Output references: dim_X_indices for each Coordinate dim
+        for (int i = (int)result_tensor.tensor_type.format.levels.size() - 1; i >= 0; i--) {
+            auto idx = result_tensor.tensor_type.format.levels[i].index;
+            args.push_back({
+                .mutating = true, .by_reference = true,
+                .type = llir::Ptr_t::make(index_t),
+                .name = "out_" + result_tensor.get_indices_field_name(idx)
+            });
+        }
+
+        // Output reference: values
+        args.push_back({
+            .mutating = true, .by_reference = true,
+            .type = llir::Ptr_t::make(value_t),
+            .name = "out_values"
+        });
+
+        // Build function body
+        std::vector<llir::lStmt> body_stmts;
+
+        // Create and populate operand structs
+        for (const auto &[name, tensor] : operand_tensors) {
+            body_stmts.push_back(llir::RawCode::make(
+                tensor.get_struct_name() + "<index_t, value_t> " + name + ";"));
+            llir::lType struct_type = tensor.lower_tensor_struct_definition();
+            const auto *st = struct_type.as<llir::Struct_t>();
+            for (const auto &[field_name, field_type] : st->fields) {
+                body_stmts.push_back(llir::RawCode::make(
+                    name + "." + field_name + " = " + name + "_" + field_name + ";"));
+            }
+        }
+
+        // Create result struct and populate size fields
+        body_stmts.push_back(llir::RawCode::make(
+            result_tensor.get_struct_name() + "<index_t, value_t> " +
+            result_tensor.tensor_name + ";"));
+        for (size_t i = 0; i < result_tensor.tensor_type.format.levels.size(); i++) {
+            auto idx = result_tensor.tensor_type.format.levels[i].index;
+            std::string size_field = result_tensor.get_size_field_name(idx);
+            body_stmts.push_back(llir::RawCode::make(
+                result_tensor.tensor_name + "." + size_field +
+                " = result_" + size_field + ";"));
+        }
+
+        // Call compute function
+        std::string call = result_tensor.tensor_name + "_compute<index_t, value_t>(";
+        bool first = true;
+        for (const auto &[name, tensor] : operand_tensors) {
+            if (!first) call += ", ";
+            call += name;
+            first = false;
+        }
+        call += ", " + result_tensor.tensor_name + ");";
+        body_stmts.push_back(llir::RawCode::make(call));
+
+        // Extract outputs
+        body_stmts.push_back(llir::RawCode::make(
+            "out_nnz = " + result_tensor.tensor_name + ".nnz;"));
+        for (int i = (int)result_tensor.tensor_type.format.levels.size() - 1; i >= 0; i--) {
+            auto idx = result_tensor.tensor_type.format.levels[i].index;
+            body_stmts.push_back(llir::RawCode::make(
+                "out_" + result_tensor.get_indices_field_name(idx) + " = " +
+                result_tensor.tensor_name + "." +
+                result_tensor.get_indices_field_name(idx) + ";"));
         }
         body_stmts.push_back(llir::RawCode::make(
             "out_values = " + result_tensor.tensor_name + ".values;"));

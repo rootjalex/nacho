@@ -214,16 +214,15 @@ Format add_formats(const Format &a, const Format &b) {
     internal_assert(compatible_formats(a, b))
         << "Incompatible formats: " << a << " + " << b;
 
-    // Now build a format z based on the following rules:
-    // Any ordering in a or b must exist in the ordered `levels` of z
-    // Any index that is dense in *either* a or b must be dense in z
-    // Any index that is sparse in *both* a and b must be sparse in z.
-
+    // Union semantics: Dense > Compressed > Coordinate.
+    // Either Dense → Dense; mixed Compressed+Coordinate → Compressed;
+    // both Coordinate → Coordinate; both Compressed → Compressed.
     return make_format(a, b, [](LevelFormat fa, LevelFormat fb) {
-        // Dense if either is dense
         if (fa == LevelFormat::Dense || fb == LevelFormat::Dense)
             return LevelFormat::Dense;
-        return LevelFormat::Compressed;
+        if (fa == LevelFormat::Compressed || fb == LevelFormat::Compressed)
+            return LevelFormat::Compressed;
+        return LevelFormat::Coordinate;
     });
 }
 
@@ -231,13 +230,12 @@ Format mul_formats(const Format &a, const Format &b) {
     internal_assert(compatible_formats(a, b))
         << "Incompatible formats: " << a << " * " << b;
 
-    // Now build a format z based on the following rules:
-    // Any ordering in a or b must exist in the ordered `levels` of z
-    // Any index that is sparse in *either* a or b must be sparse in z
-    // Any index that is dense in *both* a and b must be dense in z.
-
+    // Intersection semantics: Coordinate > Compressed > Dense.
+    // Either Coordinate → Coordinate; either Compressed → Compressed;
+    // both Dense → Dense.
     return make_format(a, b, [](LevelFormat fa, LevelFormat fb) {
-        // Sparse if either is sparse
+        if (fa == LevelFormat::Coordinate || fb == LevelFormat::Coordinate)
+            return LevelFormat::Coordinate;
         if (fa == LevelFormat::Compressed || fb == LevelFormat::Compressed)
             return LevelFormat::Compressed;
         return LevelFormat::Dense;
@@ -247,6 +245,12 @@ Format mul_formats(const Format &a, const Format &b) {
 bool Format::are_all_lvls_dense() const {
     return std::all_of(levels.begin(), levels.end(),
                        [](const Level &lvl) { return lvl.format == LevelFormat::Dense; });
+}
+
+bool Format::is_all_coordinate() const {
+    return !levels.empty() &&
+           std::all_of(levels.begin(), levels.end(),
+                       [](const Level &lvl) { return lvl.format == LevelFormat::Coordinate; });
 }
 
 } // namespace nacho

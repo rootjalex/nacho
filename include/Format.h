@@ -11,11 +11,16 @@ namespace nacho {
 enum class LevelFormat {
     Dense,
     Compressed,
-    // TODO: Coordinate, Hash, etc (Change below function too when adding more sparse types)
+    Coordinate,
+    // TODO: Hash, etc (Change below function too when adding more sparse types)
 };
 
 inline bool is_sparse_format(const LevelFormat lvl_fmt) {
-    return lvl_fmt == LevelFormat::Compressed;
+    return lvl_fmt == LevelFormat::Compressed || lvl_fmt == LevelFormat::Coordinate;
+}
+
+inline bool is_coordinate_format(const LevelFormat lvl_fmt) {
+    return lvl_fmt == LevelFormat::Coordinate;
 }
 
 struct Level {
@@ -66,6 +71,7 @@ struct Format {
     bool level_exists(const std::string &idx) const;
     bool is_bc_lvl(const std::string &idx) const;
     bool are_all_lvls_dense() const;
+    bool is_all_coordinate() const;
 };
 
 // Format inference.

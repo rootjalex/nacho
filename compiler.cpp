@@ -142,6 +142,49 @@ void test_tcsf_add() {
 }
 
 // ===========================================================================
+// COO (Coordinate) Format Tests
+// ===========================================================================
+
+void test_coo2_add() {
+    Format coo = Format::ordered({
+        {"i", LevelFormat::Coordinate},
+        {"j", LevelFormat::Coordinate},
+    });
+    TensorType coo_f32(coo, dType::Float32);
+
+    Expr a = Tensor::make(coo_f32, "A");
+    Expr b = Tensor::make(coo_f32, "B");
+    compile_and_lower("COO 2D Add: A+B", a + b);
+}
+
+void test_coo3_add() {
+    Format coo = Format::ordered({
+        {"i", LevelFormat::Coordinate},
+        {"j", LevelFormat::Coordinate},
+        {"k", LevelFormat::Coordinate},
+    });
+    TensorType coo_f32(coo, dType::Float32);
+
+    Expr a = Tensor::make(coo_f32, "A");
+    Expr b = Tensor::make(coo_f32, "B");
+    compile_and_lower("COO 3D Add: A+B", a + b);
+}
+
+void test_coo4_add() {
+    Format coo = Format::ordered({
+        {"i", LevelFormat::Coordinate},
+        {"j", LevelFormat::Coordinate},
+        {"k", LevelFormat::Coordinate},
+        {"l", LevelFormat::Coordinate},
+    });
+    TensorType coo_f32(coo, dType::Float32);
+
+    Expr a = Tensor::make(coo_f32, "A");
+    Expr b = Tensor::make(coo_f32, "B");
+    compile_and_lower("COO 4D Add: A+B", a + b);
+}
+
+// ===========================================================================
 // Format Inference Tests
 // ===========================================================================
 
@@ -190,6 +233,25 @@ void test_format_inference() {
               << "  (expect Dense)\n";
     std::cout << "dense  + dense  -> " << (c_i + d_i).type().format
               << "  (expect Dense)\n";
+
+    // Coordinate format inference
+    Format coo_1d = Format::ordered({{"i", LevelFormat::Coordinate}});
+    TensorType coo_f32(coo_1d, dType::Float32);
+    Expr e_coo = Tensor::make(coo_f32, "e_coo");
+    Expr f_coo = Tensor::make(coo_f32, "f_coo");
+
+    std::cout << "coord + coord   -> " << (e_coo + f_coo).type().format
+              << "  (expect Coordinate)\n";
+    std::cout << "coord * coord   -> " << (e_coo * f_coo).type().format
+              << "  (expect Coordinate)\n";
+    std::cout << "coord + sparse  -> " << (e_coo + a_i).type().format
+              << "  (expect Compressed)\n";
+    std::cout << "coord * sparse  -> " << (e_coo * a_i).type().format
+              << "  (expect Coordinate)\n";
+    std::cout << "coord + dense   -> " << (e_coo + c_i).type().format
+              << "  (expect Dense)\n";
+    std::cout << "coord * dense   -> " << (e_coo * c_i).type().format
+              << "  (expect Coordinate)\n";
 
     // Broadcast format inference
     std::cout << "bc(k, CSR) + bc(k, DCSR) -> "
@@ -350,6 +412,33 @@ const std::map<std::string, ExprBuilder> EXPRESSIONS = {
         TensorType tcsf_f32(tcsf, dType::Float32);
         return Tensor::make(tcsf_f32, "A") + Tensor::make(tcsf_f32, "B");
     }},
+    {"coo2_add", []() {
+        Format coo = Format::ordered({
+            {"i", LevelFormat::Coordinate},
+            {"j", LevelFormat::Coordinate},
+        });
+        TensorType coo_f32(coo, dType::Float32);
+        return Tensor::make(coo_f32, "A") + Tensor::make(coo_f32, "B");
+    }},
+    {"coo3_add", []() {
+        Format coo = Format::ordered({
+            {"i", LevelFormat::Coordinate},
+            {"j", LevelFormat::Coordinate},
+            {"k", LevelFormat::Coordinate},
+        });
+        TensorType coo_f32(coo, dType::Float32);
+        return Tensor::make(coo_f32, "A") + Tensor::make(coo_f32, "B");
+    }},
+    {"coo4_add", []() {
+        Format coo = Format::ordered({
+            {"i", LevelFormat::Coordinate},
+            {"j", LevelFormat::Coordinate},
+            {"k", LevelFormat::Coordinate},
+            {"l", LevelFormat::Coordinate},
+        });
+        TensorType coo_f32(coo, dType::Float32);
+        return Tensor::make(coo_f32, "A") + Tensor::make(coo_f32, "B");
+    }},
 };
 // clang-format on
 
@@ -418,29 +507,36 @@ static void emit_to_file(const std::string &dir, const std::string &op_name,
     }
     // Output refs: nnz
     ofs << ", int&";
-    // Output refs: length for non-innermost sparse dims
-    {
-        int innermost_sparse = -1;
+    if (lowerer.result_tensor.tensor_type.format.is_all_coordinate()) {
+        // COO: just indices per dim, no length or offsets
+        for (int i = (int)lowerer.result_tensor.tensor_type.format.levels.size() - 1; i >= 0; i--) {
+            ofs << ", int*&";
+        }
+    } else {
+        // Output refs: length for non-innermost sparse dims
+        {
+            int innermost_sparse = -1;
+            for (int i = (int)lowerer.result_tensor.tensor_type.format.levels.size() - 1; i >= 0; i--) {
+                auto idx = lowerer.result_tensor.tensor_type.format.levels[i].index;
+                if (is_sparse_format(lowerer.result_tensor.tensor_type.format.lvlfmt_of(idx))) {
+                    innermost_sparse = i;
+                    break;
+                }
+            }
+            for (int i = 0; i < (int)lowerer.result_tensor.tensor_type.format.levels.size(); i++) {
+                auto idx = lowerer.result_tensor.tensor_type.format.levels[i].index;
+                if (is_sparse_format(lowerer.result_tensor.tensor_type.format.lvlfmt_of(idx)) && i != innermost_sparse) {
+                    ofs << ", int&";
+                }
+            }
+        }
+        // Output refs: indices (and offsets for non-outermost)
         for (int i = (int)lowerer.result_tensor.tensor_type.format.levels.size() - 1; i >= 0; i--) {
             auto idx = lowerer.result_tensor.tensor_type.format.levels[i].index;
             if (is_sparse_format(lowerer.result_tensor.tensor_type.format.lvlfmt_of(idx))) {
-                innermost_sparse = i;
-                break;
+                ofs << ", int*&";
+                if (i != 0) ofs << ", int*&";
             }
-        }
-        for (int i = 0; i < (int)lowerer.result_tensor.tensor_type.format.levels.size(); i++) {
-            auto idx = lowerer.result_tensor.tensor_type.format.levels[i].index;
-            if (is_sparse_format(lowerer.result_tensor.tensor_type.format.lvlfmt_of(idx)) && i != innermost_sparse) {
-                ofs << ", int&";
-            }
-        }
-    }
-    // Output refs: indices (and offsets for non-outermost)
-    for (int i = (int)lowerer.result_tensor.tensor_type.format.levels.size() - 1; i >= 0; i--) {
-        auto idx = lowerer.result_tensor.tensor_type.format.levels[i].index;
-        if (is_sparse_format(lowerer.result_tensor.tensor_type.format.lvlfmt_of(idx))) {
-            ofs << ", int*&";
-            if (i != 0) ofs << ", int*&";
         }
     }
     // Output ref: values
@@ -467,6 +563,9 @@ const std::map<std::string, TestFunc> TESTS = {
     {"dcsr_add",          test_dcsr_add},
     {"csr_add",           test_csr_add},
     {"tcsf_add",          test_tcsf_add},
+    {"coo2_add",          test_coo2_add},
+    {"coo3_add",          test_coo3_add},
+    {"coo4_add",          test_coo4_add},
     {"format_inference",  test_format_inference},
     {"lattice",           test_lattice},
     {"locator",           test_locator_optimization},

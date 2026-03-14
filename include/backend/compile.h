@@ -64,6 +64,14 @@ namespace backend {
             // the compiler and runtime.
             void lower_flat_wrapper(const std::string &op_name);
 
+            // COO (all-Coordinate format) specific codegen
+            void lower_coo_cin();
+            void lower_coo_compare_function();
+            void lower_coo_partition_kernel();
+            void lower_coo_precompute_kernel();
+            void lower_coo_compute_kernel();
+            void lower_coo_host_function();
+            void lower_coo_flat_wrapper(const std::string &op_name);
         };
 
 
