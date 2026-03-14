@@ -105,7 +105,9 @@ After setup, activate the environment: `conda activate nacho`
 
 ## Runtime (`runtime/`)
 
-The `runtime/` subdirectory (formerly the `sparse_gpu` repo) is the GPU runtime and benchmark suite. nacho generates CUDA kernel code via `CINLowerer`, which is placed into `runtime/src/` `.cu` files. The runtime compiles kernels with CUDA, exposes them via Python/nanobind, and benchmarks against cuSPARSE.
+The `runtime/` subdirectory (formerly the `sparse_gpu` repo) is the GPU runtime and benchmark suite. nacho generates CUDA kernel code via `CINLowerer`. Generated `.cu` files are **not** stored in the source tree — `runtime/CMakeLists.txt` invokes `compiler --emit <build_dir>/generated/nacho_generated/ --name <op>` during the build, so `pip install runtime/` handles codegen automatically. The runtime compiles kernels with CUDA, exposes them via Python/nanobind, and benchmarks against cuSPARSE.
+
+Do **not** manually run `compiler --emit runtime/src/` — that pollutes the source tree. To verify generated CUDA for a refactoring, use a scratch directory (e.g. `--emit build/generated_candidate --name csr_add`) and diff against a baseline.
 
 Build systems are independent by default — nacho's CMakeLists.txt only builds the runtime when `-Dnacho_BUILD_RUNTIME=ON` is passed (requires CUDA).
 

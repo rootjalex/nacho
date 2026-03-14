@@ -33,15 +33,15 @@ namespace backend {
             CINLowerer(CIN cin, std::ostream &os);
 
             std::vector<std::string> get_loop_order();
-            std::vector<CIN> get_forall_list();
+            std::vector<CIN> get_forall_loops();
             void lower_cin();
             void lower_struct_definitions(int last_sparse_intersection);
-            std::vector<int> get_all_sparse_intersection_levels(CIN& cin);
-            CIN get_modified_cin_for_sparse_intersection(int target_level, CIN& cin);
+            std::vector<int> get_sparse_intersection_levels(CIN& cin);
+            CIN get_phase_cin_for_sparse_intersection(int target_level, CIN& cin);
 
             void lower_binary_search_function();
-            llir::lType lower_result_pos_to_operand_pos_map_struct(int last_sparse_intersection);
-            std::map<std::string, TensorLowerer> get_included_tensors_for_level(int level);
+            llir::lType lower_result_to_operand_pos_map_struct(int last_sparse_intersection);
+            std::map<std::string, TensorLowerer> get_active_tensors_for_level(int level);
 
             // Host function generation
             std::vector<KernelInfo> kernel_infos;
@@ -50,10 +50,10 @@ namespace backend {
             struct PhaseStructInfo {
                 llir::lType partition_struct;
                 llir::lType counts_struct;
-                int previous_sparse_intersection;
-                int current_sparse_intersection;
-                int next_sparse_intersection;
-                bool has_precompute;
+                int previous_sparse_intersection_level;
+                int current_sparse_intersection_level;
+                int next_sparse_intersection_level;
+                bool has_precompute_kernel;
             };
             std::vector<PhaseStructInfo> phase_struct_infos;
 
