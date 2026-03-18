@@ -1,5 +1,6 @@
 #include "Format.h"
 
+#include <functional>
 #include "Error.h"
 #include "Printer.h"
 
