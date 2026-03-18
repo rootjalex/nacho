@@ -1096,15 +1096,18 @@ llir::lStmt ComputeKernelLowerer::lower_loop(
 
             // Add locators.
             value = llir::lVar::make(index_t, forall->idx);
-            if(!has_universe_iter && !ls.empty() && !has_dense_iter) {
-                const Index *idx = ls[0].as<Index>();
-                internal_assert(idx && !idx->is_sparse) << ls[0];
+            std::set<std::string> declared_locator_iters;
+            for (const auto &loc : ls) {
+                const Index *idx = loc.as<Index>();
+                internal_assert(idx && !idx->is_sparse) << loc;
                 TensorLowerer tlower = get_tensor(idx->tensor);
                 // This is necesary for reads
                 // later. Hopefully, copy propagation is good on this generated
                 // code.
-                stmts.push_back(llir::Declare::make(
-                    index_t, tlower.get_iter_name(TensorLevelNum(idx->level)), value));
+                std::string name = tlower.get_iter_name(TensorLevelNum(idx->level));
+                if (declared_locator_iters.insert(name).second) {
+                    stmts.push_back(llir::Declare::make(index_t, name, value));
+                }
             }
             return stmts;
         };

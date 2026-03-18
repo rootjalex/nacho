@@ -686,27 +686,33 @@ namespace backend {
                         is_last_loop? mid_var : mid_var - 1
                     )};
 
-        for(int i=0;i<tensors_with_curr_dim_sparse.size();i++) {
-            TensorLowerer tensor = tensors_with_curr_dim_sparse[i];
-            llir::lExpr start_position_var = llir::lVar::make(index_t, tensor.get_start_name(forall_idx));
-            llir::lExpr end_position_var = llir::lVar::make(index_t, tensor.get_end_name(forall_idx));
-            llir::lExpr position_var = llir::lVar::make(index_t, tensor.get_iterator_suffix(forall_idx));
-            auto store_stmt = llir::Store::make(start_position_var, position_var);
-            if(need_to_exclude_tensors_at_runtime && loop_num != BEFORE_FIRST_LOOP+1) {
-                store_stmt = llir::IfElse::make(
-                    llir::lOp::make(llir::lOp::Not, tensor_partitioned_vars.at(tensor.tensor_name)),
-                    store_stmt, nullptr
+        if(need_to_exclude_tensors_at_runtime) {
+            for(int i=0;i<(int)tensors_with_curr_dim_sparse.size();i++) {
+                TensorLowerer tensor = tensors_with_curr_dim_sparse[i];
+                llir::lExpr start_position_var = llir::lVar::make(index_t, tensor.get_start_name(forall_idx));
+                llir::lExpr end_position_var = llir::lVar::make(index_t, tensor.get_end_name(forall_idx));
+                llir::lExpr position_var = llir::lVar::make(index_t, tensor.get_iterator_suffix(forall_idx));
+                start_modifier_statements.emplace_back(
+                    llir::IfElse::make(
+                        llir::lOp::make(llir::lOp::Not, tensor_partitioned_vars.at(tensor.tensor_name)),
+                        llir::Store::make(
+                            start_position_var,
+                            position_var
+                        ),
+                        nullptr
+                    )
+                );
+                end_modifier_statements.emplace_back(
+                    llir::IfElse::make(
+                        llir::lOp::make(llir::lOp::Not, tensor_partitioned_vars.at(tensor.tensor_name)),
+                        llir::Store::make(
+                            end_position_var,
+                            position_var
+                        ),
+                        nullptr
+                    )
                 );
             }
-            start_modifier_statements.emplace_back(store_stmt);
-            store_stmt = llir::Store::make(end_position_var,position_var);
-            if(need_to_exclude_tensors_at_runtime && loop_num != BEFORE_FIRST_LOOP+1) {
-                store_stmt = llir::IfElse::make(
-                    llir::lOp::make(llir::lOp::Not, tensor_partitioned_vars.at(tensor.tensor_name)),
-                    store_stmt, nullptr
-                );
-            }
-            end_modifier_statements.emplace_back(store_stmt);
         }
 
         while_stmts.emplace_back(
