@@ -41,12 +41,10 @@ class ErrorReport {
     }
 
     [[noreturn]]
-    ~ErrorReport() noexcept(false) {
+    ~ErrorReport() noexcept {
         stream << "\n";
-        // TODO: debug mode should do this.
-        // std::cerr << stream.str();
-        // abort();
-        throw Error(stream.str());
+        std::cerr << stream.str();
+        std::abort();
     }
 
   private:

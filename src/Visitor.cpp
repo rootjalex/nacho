@@ -145,6 +145,10 @@ void Visitor::visit(const llir::lIncrement *node) {
     node->var.accept(this);
 }
 
+void Visitor::visit(const llir::lAddress *node) {
+    node->var.accept(this);
+}
+
 void Visitor::visit(const llir::Declare *node) { if(node->init.defined())node->init.accept(this); }
 
 void Visitor::visit(const llir::IfElse *node) {

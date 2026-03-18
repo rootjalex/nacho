@@ -18,13 +18,12 @@ namespace nacho {
         struct BaseKernelLowerer{
             std::map<std::string, TensorLowerer> &operand_tensors;
             TensorLowerer &result_tensor;
-
             std::map<std::string, TensorLowerer> &included_tensors;
             std::vector<CIN> forall_list;
             LoopNum previous_sparse_intersection;
             LoopNum current_sparse_intersection;
             LoopNum next_sparse_intersection;
-
+            LoopNum reduction_loop;
             llir::lType index_t = llir::Generic_t::make("index_t");
             llir::lType value_t = llir::Generic_t::make("value_t");
 
@@ -34,12 +33,14 @@ namespace nacho {
                 TensorLowerer &result_tensor,
                 std::map<std::string, TensorLowerer> &included_tensors,
                 const std::vector<CIN> &forall_list, 
-                LoopNum previous_sparse_intersection, LoopNum current_sparse_intersection, LoopNum next_sparse_intersection)
+                LoopNum previous_sparse_intersection, LoopNum current_sparse_intersection, LoopNum next_sparse_intersection,
+                LoopNum reduction_loop)
                 : operand_tensors(operand_tensors), result_tensor(result_tensor), included_tensors(included_tensors),
                   forall_list(forall_list), 
                   previous_sparse_intersection(previous_sparse_intersection),
                   current_sparse_intersection(current_sparse_intersection),
-                  next_sparse_intersection(next_sparse_intersection) {}
+                  next_sparse_intersection(next_sparse_intersection),
+                  reduction_loop(reduction_loop) {}
             
             // This is just a helper function to construct the suffix used in giving unique names to various generated kernels
             // The suffix is just the concatenation of all loop indices that the kernel operates on

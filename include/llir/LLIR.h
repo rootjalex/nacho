@@ -32,7 +32,8 @@ enum class lExprEnum {
     lFieldAccess,
     lPtrAccess,
     lFunctionCall,
-    lIncrement
+    lIncrement,
+    lAddress,
 };
 
 // Statements
@@ -342,6 +343,14 @@ struct lIncrement : lExprNode<lIncrement> {
     static lExpr make(lExpr var);
 
     static const lExprEnum node_type = lExprEnum::lIncrement;
+};
+
+struct lAddress : lExprNode<lAddress> {
+    lExpr var;
+
+    static lExpr make(lExpr var);
+
+    static const lExprEnum node_type = lExprEnum::lAddress;
 };
 
 struct Declare : lStmtNode<Declare> {

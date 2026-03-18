@@ -55,6 +55,7 @@ struct lPtrAccess;
 struct lVar;
 struct lFunctionCall;
 struct lIncrement;
+struct lAddress;
 
 struct lStmt;
 struct Declare;

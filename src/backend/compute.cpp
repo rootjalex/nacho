@@ -71,27 +71,45 @@ void ComputeKernelLowerer::add_partition_assignments(
                 iter_vars.emplace_back(std::move(iter_var));
             }
         } else {
-            auto [iters, locs] = partition_iterators_locators(forall->seq);
+            auto [iters, locs, has_universe_iter] = partition_iterators_locators(forall->seq);
 
-            if (iters.empty()) {
+            if (has_universe_iter) {
                 // Iterating over the universe!
-                // Need to get the maximum of the universe from one of the locators.
-                internal_assert(!locs.empty()) << forall->seq;
-                const Index *idx = locs[0].as<Index>();
-                internal_assert(idx) << locs[0];
-                // Use `size` for dense, `length` for sparse.
-                internal_assert(!idx->is_sparse) << locs[0];
-                llir::lExpr max_iter = get_max_iterator(idx);
+                const Index * idx;
+                // get any index either from iterators or locators
+                // just need to get the (logical) size of the level
+                internal_assert(!locs.empty() || !iters.empty());
+                if(!locs.empty()) {
+                    idx = locs[0].as<Index>();
+                    internal_assert(idx) << locs[0];
+                } else {
+                    idx = iters[0].as<Index>();
+                    internal_assert(idx) << iters[0];
+                }
                 auto tlow = get_tensor(idx->tensor);
-                llir::lExpr iter_var =
-                    add_single_partition_load(tlow, TensorLevelNum(idx->level), max_iter);
+                llir::lExpr max_iter = tlow.get_size_field(TensorLevelNum(idx->level))-1;
+                stmts.emplace_back(
+                    llir::Declare::make(
+                        index_t, "start_" + forall->idx,
+                        llir::lFieldAccess::make(partitions_var, forall->idx)[thread_id_var]
+                    ));
+                stmts.emplace_back(
+                    llir::Declare::make(
+                        index_t, "end_" + forall->idx,
+                        llir::lSelect::make(thread_id_var < max_thread_id_var,
+                                            llir::lFieldAccess::make(partitions_var, forall->idx)[thread_id_var + 1],
+                                            max_iter)
+                    ));
+                llir::lExpr iter_var = llir::lVar::make(index_t, "start_" + forall->idx);
                 iter_vars.emplace_back(std::move(iter_var));
             } else {
+                bool has_dense_iter = false;
                 // For each iterator, construct
                 for (const auto &iter : iters) {
                     const Index *idx = iter.as<Index>();
                     internal_assert(idx) << iter;
                     TensorLowerer tlow = get_tensor(idx->tensor);
+                    has_dense_iter |= !tlow.is_sparse(TensorLevelNum(idx->level)); 
                     llir::lExpr max_iter = get_max_iterator(idx);
                     llir::lExpr iter_var =
                         add_single_partition_load(tlow, TensorLevelNum(idx->level), max_iter);
@@ -193,7 +211,7 @@ llir::lStmt ComputeKernelLowerer::
     // result. These will be stored in count_offsets at the end.
     for (LoopNum i = BEFORE_FIRST_LOOP+1; i <= current_sparse_intersection; ++i) {
         auto index = result_tensor.loop_name(i);
-        if (result_tensor.is_sparse(i)) {
+        if (result_tensor.tensor_level_exists(i) && result_tensor.is_sparse(i)) {
             stmts.emplace_back(llir::Declare::make(
                 index_t, "count_" + index, llir::lConst::make((int64_t)0)));
         }
@@ -205,7 +223,7 @@ llir::lStmt ComputeKernelLowerer::
 
     for (LoopNum i = BEFORE_FIRST_LOOP+1; i <= current_sparse_intersection; ++i) {
         auto index = result_tensor.loop_name(i);
-        if (result_tensor.is_sparse(i)) {
+        if (result_tensor.tensor_level_exists(i) && result_tensor.is_sparse(i)) {
             stmts.emplace_back(llir::Store::make(
                 llir::lArrayAccess::make(
                     llir::lFieldAccess::make(
@@ -306,7 +324,7 @@ llir::lStmt ComputeKernelLowerer::
 
     for (LoopNum i = BEFORE_FIRST_LOOP+1; i <= current_sparse_intersection; ++i) {
         auto index = result_tensor.loop_name(i);
-        if (result_tensor.is_sparse(i)) {
+        if (result_tensor.tensor_level_exists(i) && result_tensor.is_sparse(i)) {
             stmts.emplace_back(llir::Declare::make(
                 index_t, "offset_" + index,
                 llir::lArrayAccess::make(
@@ -355,76 +373,68 @@ llir::lStmt ComputeKernelLowerer::lower_assign_statement(
         return llir::lStmt();
     }
 
+    struct Converter : public Visitor {
+        llir::lExpr result;
+        std::map<std::string, TensorLowerer>& operand_tensors;
+        Converter(std::map<std::string, TensorLowerer>& operand_tensors)
+            : operand_tensors(operand_tensors) {}
+
+        void visit(const cAdd *node) override {
+            node->a.accept(this);
+            auto a = std::move(result);
+            node->b.accept(this);
+            auto b = std::move(result);
+            result = a + b;
+        }
+
+        void visit(const cMul *node) override {
+            node->a.accept(this);
+            auto a = std::move(result);
+            node->b.accept(this);
+            auto b = std::move(result);
+            result = a * b;
+        }
+
+
+        void visit(const cTensor *node) override {
+            auto get_iter_vars_operands = [&](TensorLowerer &tlower, TensorLevelNum end_level) {
+                std::map<TensorLevelNum, llir::lExpr> iter_vars;
+                for (TensorLevelNum level = BEFORE_FIRST_LEVEL+1; level <= end_level; ++level) {
+                    std::string iter_name = tlower.get_iter_name(level);
+                    iter_vars[level] = llir::lVar::make(
+                        llir::Generic_t::make("index_t"),
+                        iter_name
+                    );
+                }
+                return iter_vars;
+            };
+
+            result =  llir::lArrayAccess::make(
+                llir::lFieldAccess::make(
+                    llir::lVar::make(
+                        llir::Generic_t::make(operand_tensors[node->name].get_struct_name()),
+                        node->name
+                    ),
+                    operand_tensors[node->name].get_values_field_name()
+                ),
+                operand_tensors[node->name].get_level_indexing_expression(
+                    operand_tensors[node->name].end_tensor_level(),
+                    false,
+                    get_iter_vars_operands(
+                        operand_tensors[node->name],
+                        operand_tensors[node->name].end_tensor_level()
+                    )
+                )
+            );
+        };
+    };
 
     if(assign.as<Assign>()) {
-        struct Converter : public Visitor {
-            llir::lExpr result;
-            std::map<std::string, TensorLowerer>& operand_tensors;
-            Converter(std::map<std::string, TensorLowerer>& operand_tensors)
-                : operand_tensors(operand_tensors) {}
-
-            void visit(const cAdd *node) override {
-                node->a.accept(this);
-                auto a = std::move(result);
-                node->b.accept(this);
-                auto b = std::move(result);
-                result = a + b;
-            }
-
-            void visit(const cMul *node) override {
-                node->a.accept(this);
-                auto a = std::move(result);
-                node->b.accept(this);
-                auto b = std::move(result);
-                result = a * b;
-            }
-
-
-            void visit(const cTensor *node) override {
-                auto get_iter_vars_operands = [&](TensorLowerer &tlower, TensorLevelNum end_level) {
-                    std::map<TensorLevelNum, llir::lExpr> iter_vars;
-                    for (TensorLevelNum level = BEFORE_FIRST_LEVEL+1; level <= end_level; ++level) {
-                        std::string iter_name = tlower.get_iter_name(level);
-                        iter_vars[level] = llir::lVar::make(
-                            llir::Generic_t::make("index_t"),
-                            iter_name
-                        );
-                    }
-                    return iter_vars;
-                };
-
-                result =  llir::lArrayAccess::make(
-                    llir::lFieldAccess::make(
-                        llir::lVar::make(
-                            llir::Generic_t::make(operand_tensors[node->name].get_struct_name()),
-                            node->name
-                        ),
-                        operand_tensors[node->name].get_values_field_name()
-                    ),
-                    operand_tensors[node->name].get_level_indexing_expression(
-                        operand_tensors[node->name].end_tensor_level(),
-                        false,
-                        get_iter_vars_operands(
-                            operand_tensors[node->name],
-                            operand_tensors[node->name].end_tensor_level()
-                        )
-                    )
-                );
-            };
-        };
-
         const Assign* assign_stmt = assign.as<Assign>();
         auto converter = Converter(operand_tensors);
         assign_stmt->expr.accept(&converter);
         return llir::Store::make(
-            llir::lArrayAccess::make(
-                llir::lFieldAccess::make(
-                    llir::lVar::make(
-                        llir::Generic_t::make(result_tensor.get_struct_name()),
-                        result_tensor.tensor_name
-                    ),
-                    result_tensor.get_values_field_name()
-                ),
+            result_tensor.get_values_field()[
                 result_tensor.get_level_indexing_expression(
                     result_tensor.end_tensor_level(),
                     false,
@@ -432,13 +442,46 @@ llir::lStmt ComputeKernelLowerer::lower_assign_statement(
                         result_tensor,
                         result_tensor.end_tensor_level()
                     )
-                )
-            ),
+                )],
             converter.result
         );
 
     } else if(assign.as<Accumulate>()) {
-        internal_assert(false) << "TODO: Generation for Accumulate/Reductions not supported.";
+        // internal_assert(false) << "TODO: Generation for Accumulate/Reductions not supported.";
+        const Accumulate* accumulate_stmt = assign.as<Accumulate>();
+        auto converter = Converter(operand_tensors);
+        accumulate_stmt->expr.accept(&converter);
+
+        // Append reduction case
+        if(result_tensor.get_loop_num_for_last_sparse_level() <= reduction_loop) {
+            if(reduction_loop + 1 == result_tensor.end_loop_num()) {
+                return llir::Accumulate::make(
+                    llir::lVar::make(value_t, "value"),
+                    converter.result
+                );
+            } else {
+                return llir::BaseExpr::make(
+                llir::lFunctionCall::make(
+                    "atomicAdd",
+                    {
+                        llir::lAddress::make(result_tensor.get_values_field()[
+                            result_tensor.get_level_indexing_expression(
+                                result_tensor.end_tensor_level(),
+                                false,
+                                get_iter_vars_result(
+                                    result_tensor,
+                                    result_tensor.end_tensor_level()
+                                )
+                            )]),
+                        converter.result
+                    }
+                )
+            );
+            }
+        } else {
+            internal_assert(false) << "TODO: Code Generation for Scatter Reductions not yet supported.";
+        }
+
     } else if(assign.as<CalculateWork>()) {
         llir::lExpr work_expr = llir::lConst::make((int64_t)0);
         auto get_work_expr = [&](TensorLowerer& Tensor) {
@@ -520,7 +563,7 @@ llir::lStmt ComputeKernelLowerer::lower_assign_statement(
 llir::lStmt ComputeKernelLowerer::lower_loop(
     CIN loop, const std::set<Seq, SeqLessThan> &defined,
     bool is_precompute, LoopNum loop_num) {
-
+    // std::cout<<"Lowering loop "<<loop<<std::endl;
     const Forall *forall = loop.as<Forall>();
     internal_assert(forall) << "Expected Forall in lower_loop: " << loop;
 
@@ -549,72 +592,132 @@ llir::lStmt ComputeKernelLowerer::lower_loop(
 
     llir::lType index_t = llir::Generic_t::make("index_t");
 
-    auto [forall_iters, _] =
+    auto [forall_iters, _, has_universe_iter] =
         partition_iterators_locators(forall->seq);
 
+    // std::cout<<forall->seq<<" iters: "<<std::endl;
+    // for(const auto& iter: forall_iters) {
+    //     std::cout<<iter<<", ";
+    // }
+    // std::cout<<std::endl;
+    
     if(is_loop_before_prev_intersection) {
         internal_assert(result_tensor.tensor_level_exists(loop_num)) << "Yet to suport reductions above any sparse intersections";
         // If this loop is before the previous intersection, then we are going to iterate only over the result tensor index
-        forall_iters = result_tensor.is_sparse(forall->idx) ? std::vector<Seq>{result_tensor.get_index_sequence(result_tensor.loop_num_to_tensor_level(loop_num))} : std::vector<Seq>{};
+        forall_iters = std::vector<Seq>{result_tensor.get_index_sequence(result_tensor.loop_num_to_tensor_level(loop_num))};
+        has_universe_iter = false; // universe iterator is not needed for loops before the previous intersection since we are only iterating over the result tensor index
     }
 
     using lExprPair = std::pair<llir::lExpr, llir::lExpr>;
     std::map<Seq, lExprPair, SeqLessThan> imap;
 
+    auto get_start = [&](TensorLevelNum level, TensorLowerer& tlower) {
+        if(tlower.tensor_level_to_loop_num(level) <= previous_sparse_intersection) {
+            // For levels before the previous intersection, we only iterate over the result tensor index, so the start is just the iterator variable of the result tensor.
+            return result_tensor.get_start(level);
+        } else {
+            return tlower.get_start(level);
+        }
+    };
+
+    auto get_end = [&](TensorLevelNum level, TensorLowerer& tlower) {
+        if(tlower.tensor_level_to_loop_num(level) <= previous_sparse_intersection) {
+            // For levels before the previous intersection, we only iterate over the result tensor index, so the start is just the iterator variable of the result tensor.
+            return result_tensor.get_end(level);
+        } else {
+            return tlower.get_end(level);
+        }
+    };
+
+    auto get_iter = [&](TensorLevelNum level, TensorLowerer& tlower) {
+        if(tlower.tensor_level_to_loop_num(level) <= previous_sparse_intersection) {
+            // For levels before the previous intersection, we only iterate over the result tensor index, so the start is just the iterator variable of the result tensor.
+            return result_tensor.get_iter(level);
+        } else {
+            return tlower.get_iter(level);
+        }
+    };
+
+    auto get_stop = [&](TensorLevelNum level, TensorLowerer& tlower) {
+        if(tlower.tensor_level_to_loop_num(level) <= previous_sparse_intersection) {
+            // For levels before the previous intersection, we only iterate over the result tensor index, so the start is just the iterator variable of the result tensor.
+            return result_tensor.get_stop(level);
+        } else {
+            return tlower.get_stop(level);
+        }
+    };
+
+    // gets all the iterator initialze conditions for a particular loop 'loop_num"
+    // This condition is needed to initialze an iterator in a lower loop in a tensor, 
+    // if 'loop_num' is not a level in that tensor
+    std::function<llir::lExpr(LoopNum, bool)> get_all_iterator_conditions =
+        [&](LoopNum loop_num, bool end) -> llir::lExpr {
+            llir::lExpr cond;
+            const Forall * forall = forall_list[loop_num.get()].as<Forall>();
+            std::string loop_idx = forall->idx;
+            auto [iters, _, has_universe_iter] = partition_iterators_locators(forall->seq);
+            if(is_loop_before_prev_intersection) {
+                forall_iters = std::vector<Seq>{result_tensor.get_index_sequence(result_tensor.loop_num_to_tensor_level(loop_num))};
+                has_universe_iter = false;
+            }
+            if(has_universe_iter)
+                return llir::lVar::make(index_t, "iter_" + loop_idx) ==
+                    (end ? llir::lVar::make(index_t, "end_" + loop_idx) : llir::lVar::make(index_t, "start_" + loop_idx));
+
+            for(const auto& iter: iters) {
+                auto idx = iter.as<Index>();
+                TensorLowerer tlower = get_tensor(idx->tensor);
+                llir::lExpr val = get_iter(TensorLevelNum(idx->level), tlower);
+                llir::lExpr extrema = end ? get_end(TensorLevelNum(idx->level), tlower) : get_start(TensorLevelNum(idx->level), tlower);
+                if(cond.defined()) {
+                    cond = cond && (val == extrema);
+                } else {
+                    cond = val == extrema;
+                }
+            }
+            return cond;
+        };
+
     // Insert prologue (initiate iterators!).
-    if (forall_iters.empty()) {
+    if (has_universe_iter) {
         // Iterating the universe!
+        llir::lExpr start_cond;
+        llir::lExpr stop_cond;
+        for(LoopNum ln = BEFORE_FIRST_LOOP+1; ln < loop_num; ++ln) {
+            if(start_cond.defined()) {
+                start_cond = start_cond && get_all_iterator_conditions(ln, false);
+                stop_cond = stop_cond && get_all_iterator_conditions(ln, true);
+            } else {
+                start_cond = get_all_iterator_conditions(ln, false);
+                stop_cond = get_all_iterator_conditions(ln, true);
+            }
+        }
+
+        auto it = std::find_if(operand_tensors.begin(), operand_tensors.end(), [&](const auto& op_tensor) {
+            return op_tensor.second.tensor_level_exists(loop_num);
+        });
+        internal_assert(it != operand_tensors.end()) << "No tensor found for loop num: " << loop_num;
+
         stmts.push_back(llir::Declare::make(
-            index_t, forall->idx,
-            llir::lVar::make(index_t, "start_" + forall->idx)));
+            index_t, "iter_" + forall->idx,
+            start_cond.defined() 
+                ? llir::lSelect::make(std::move(start_cond), llir::lVar::make(index_t, "start_" + forall->idx), llir::lConst::make((int32_t)0))
+                : llir::lVar::make(index_t, "start_" + forall->idx))) ;
+        stmts.push_back(llir::Declare::make(
+            index_t, "stop_" + forall->idx,
+            stop_cond.defined() 
+                ? llir::lSelect::make(std::move(stop_cond), llir::lVar::make(index_t, "end_" + forall->idx), it->second.get_size_field(it->second.loop_num_to_tensor_level(loop_num))-1)
+                : llir::lVar::make(index_t, "end_" + forall->idx)));
+        imap[Empty::make(false)] = {llir::lVar::make(index_t, "iter_" + forall->idx), llir::lVar::make(index_t, "stop_" + forall->idx)};
     }
-
-
     for (const auto &i : forall_iters) {
         const Index *idx = i.as<Index>();
         internal_assert(idx) << i;
 
         TensorLowerer tlower = get_tensor(idx->tensor);
 
-        auto get_start = [&](TensorLevelNum level) {
-            if(tlower.tensor_level_to_loop_num(level) <= previous_sparse_intersection) {
-                // For levels before the previous intersection, we only iterate over the result tensor index, so the start is just the iterator variable of the result tensor.
-                return result_tensor.get_start(level);
-            } else {
-                return tlower.get_start(level);
-            }
-            
-        };
-
-        auto get_end = [&](TensorLevelNum level) {
-            if(tlower.tensor_level_to_loop_num(level) <= previous_sparse_intersection) {
-                // For levels before the previous intersection, we only iterate over the result tensor index, so the start is just the iterator variable of the result tensor.
-                return result_tensor.get_end(level);
-            } else {
-                return tlower.get_end(level);
-            }
-        };
-
-        auto get_iter = [&](TensorLevelNum level) {
-            if(tlower.tensor_level_to_loop_num(level) <= previous_sparse_intersection) {
-                // For levels before the previous intersection, we only iterate over the result tensor index, so the start is just the iterator variable of the result tensor.
-                return result_tensor.get_iter(level);
-            } else {
-                return tlower.get_iter(level);
-            }
-        };
-
-        auto get_stop = [&](TensorLevelNum level) {
-            if(tlower.tensor_level_to_loop_num(level) <= previous_sparse_intersection) {
-                // For levels before the previous intersection, we only iterate over the result tensor index, so the start is just the iterator variable of the result tensor.
-                return result_tensor.get_stop(level);
-            } else {
-                return tlower.get_stop(level);
-            }
-        };
-
-        llir::lExpr pidx = get_start(TensorLevelNum(idx->level));
-        llir::lExpr pend = get_end(TensorLevelNum(idx->level));
+        llir::lExpr pidx = get_start(TensorLevelNum(idx->level), tlower);
+        llir::lExpr pend = get_end(TensorLevelNum(idx->level), tlower);
 
         llir::lExpr start_value;
         llir::lExpr stop_value;
@@ -623,18 +726,23 @@ llir::lStmt ComputeKernelLowerer::lower_loop(
             start_value = pidx;
             stop_value = pend;
         } else {
-            std::function<llir::lExpr(TensorLevelNum, bool)> get_condition =
-                [&](TensorLevelNum level, bool end) -> llir::lExpr {
-                internal_assert(level > BEFORE_FIRST_LEVEL) << level;
-                
-                llir::lExpr val = get_iter(level);
-                llir::lExpr extrema = end ? get_end(level) : get_start(level);
+            std::function<llir::lExpr(LoopNum, bool)> get_condition =
+                [&](LoopNum loop_num, bool end) -> llir::lExpr {
+                internal_assert(loop_num > BEFORE_FIRST_LOOP) << loop_num;
+                llir::lExpr cond;
+                if(tlower.tensor_level_exists(loop_num)){
+                    auto level = tlower.loop_num_to_tensor_level(loop_num);
+                    llir::lExpr val = get_iter(level, tlower);
+                    llir::lExpr extrema = end ? get_end(level, tlower) : get_start(level, tlower);
 
-                llir::lExpr cond = val == extrema;
-                if (level == BEFORE_FIRST_LEVEL + 1) {
+                    cond = val == extrema;
+                } else {
+                    cond = get_all_iterator_conditions(loop_num, end);
+                }
+                if (loop_num == BEFORE_FIRST_LOOP + 1) {
                     return cond;
                 } else {
-                    llir::lExpr rec = get_condition(level - 1, end);
+                    llir::lExpr rec = get_condition(loop_num - 1, end);
                     return cond && rec;
                 }
             };
@@ -647,7 +755,7 @@ llir::lStmt ComputeKernelLowerer::lower_loop(
             // For the start value, if all previous iterators are at their
             // respective starts, then use this start, otherwise get the
             // iterator from the data structure!
-            llir::lExpr start_cond = get_condition(TensorLevelNum(idx->level - 1), false);
+            llir::lExpr start_cond = get_condition(tlower.tensor_level_to_loop_num(TensorLevelNum(idx->level))-1, false);
             start_value = llir::lSelect::make(
                 std::move(start_cond), pidx,
                 tlower.get_bound(TensorLevelNum(idx->level), /*upper_bound=*/false, pos_vars));
@@ -655,7 +763,7 @@ llir::lStmt ComputeKernelLowerer::lower_loop(
             // For the stop, if all previous iterators are at their respective
             // ends, then use this stop, otherwise get the iterator from the
             // data structure!
-            llir::lExpr stop_cond = get_condition(TensorLevelNum(idx->level - 1), true);
+            llir::lExpr stop_cond = get_condition(tlower.tensor_level_to_loop_num(TensorLevelNum(idx->level))-1, true);
             llir::lExpr bound =
                 tlower.get_bound(TensorLevelNum(idx->level), /*upper_bound=*/true, pos_vars);
             stop_value = llir::lSelect::make(std::move(stop_cond), pend,
@@ -669,7 +777,7 @@ llir::lStmt ComputeKernelLowerer::lower_loop(
             index_t, tlower.get_stop_name(TensorLevelNum(idx->level)), stop_value));
 
 
-        lExprPair p = {get_iter(TensorLevelNum(idx->level)), get_stop(TensorLevelNum(idx->level))};
+        lExprPair p = {get_iter(TensorLevelNum(idx->level), tlower), get_stop(TensorLevelNum(idx->level), tlower)};
         imap[i] = std::move(p);
     }
 
@@ -678,22 +786,36 @@ llir::lStmt ComputeKernelLowerer::lower_loop(
     //     llir::Generic_t::make("bool"), "atleast_one_iter_" + forall->idx, atleast_one_iter_cond));
     // }
 
+    if(reduction_loop + 1 == result_tensor.end_loop_num() && loop_num==reduction_loop && !is_precompute) {
+        stmts.push_back(llir::Declare::make(
+            llir::Generic_t::make("value_t"), "value",
+            llir::lConst::make((int64_t)0)
+        ));
+    }
 
     auto make_loop = [&](const Seq &s) {
-        auto [is, _] = partition_iterators_locators(s);
+        auto [is, _, has_universe_iter] = partition_iterators_locators(s);
 
         if(is_loop_before_prev_intersection) {
              internal_assert(result_tensor.tensor_level_exists(loop_num)) << "Yet to support reductions above any sparse intersections";
             // If this loop is before the previous intersection, then we are going to iterate only over the result tensor index
-            is = result_tensor.is_sparse(forall->idx) ? std::vector<Seq>{result_tensor.get_index_sequence(result_tensor.loop_num_to_tensor_level(loop_num))} : std::vector<Seq>{};
+            is = std::vector<Seq>{result_tensor.get_index_sequence(result_tensor.loop_num_to_tensor_level(loop_num))};
+            has_universe_iter = false; // universe iterator is not needed for loops before the previous intersection since we are only iterating over the result tensor index
         }
 
         std::vector<lExprPair> iters;
-        iters.reserve(is.size());
+        iters.reserve(is.size() + (has_universe_iter ? 1 : 0));
 
         llir::lExpr cond;
         // the condition for offset write eg - Z.dim_j_offsets[offset_i + 1] = offset_j;
         llir::lExpr offset_write_cond;
+        if(has_universe_iter) {
+            const auto & miter = imap.find(Empty::make(false));
+            internal_assert(miter != imap.end()) << "Expected universe iterator to be present in imap";
+            iters.push_back(miter->second);
+            cond = miter->second.first <= miter->second.second;
+            offset_write_cond = (miter->second.first < miter->second.second);
+        }
         for (const auto &i : is) {
             const auto &miter = imap.find(i);
             internal_assert(miter != imap.end()) << i;
@@ -706,13 +828,7 @@ llir::lStmt ComputeKernelLowerer::lower_loop(
                 offset_write_cond = (miter->second.first < miter->second.second);
             }
         }
-        if (is.empty()) {
-            // Iterating over the universe.
-            cond = llir::lVar::make(index_t, forall->idx) <=
-                   llir::lVar::make(index_t, "end_" + forall->idx);
-            offset_write_cond = llir::lVar::make(index_t, forall->idx) <
-                                llir::lVar::make(index_t, "end_" + forall->idx);
-        }
+
         offset_write_cond = offset_write_cond || (llir::lVar::make(index_t, "thread_id") == llir::lVar::make(index_t, "max_thread_id"));
         internal_assert(cond.defined()) << s;
 
@@ -725,20 +841,7 @@ llir::lStmt ComputeKernelLowerer::lower_loop(
 
             llir::lStmt stmt;
 
-            // // Get the condition for the particular (tensor,level) this level iterates
-            // // till the extrema i.e stop_var != end_var
-            // auto get_condition_stop_eq_extrema = [&](const Index *idx) -> llir::lExpr {
-            //         internal_assert(idx) << idx;
-            //         TensorLowerer tlower(idx->tensor, idx->type);
-            //         llir::lExpr stop_var = llir::lVar::make(
-            //             index_t, tlower.get_stop_name(idx->level));
-            //         llir::lExpr end_var = llir::lVar::make(
-            //             index_t, tlower.get_end_name(idx->level));
-            //         llir::lExpr cond = stop_var != end_var;
-            //         return cond;
-            // };
-
-            if (result_tensor.is_sparse(forall->idx)) {
+            if (result_tensor.tensor_level_exists(forall->idx) && result_tensor.is_sparse(forall->idx)) {
                 // Count this loop iteration.
                 stmt = llir::BaseExpr::make(
                     llir::lIncrement::make(llir::lVar::make(
@@ -749,7 +852,7 @@ llir::lStmt ComputeKernelLowerer::lower_loop(
             auto nextForall = nextCin.as<Forall>();
             // If this is not the innermost loop need to wrap the increment statement under a condition
             // also, add the offset calculation statement here
-            if(nextForall && result_tensor.is_sparse(nextForall->idx)) {
+            if(nextForall && result_tensor.tensor_level_exists(nextForall->idx) && result_tensor.is_sparse(nextForall->idx)) {
                 // offset calculation statement here
                 // eg :- result.dim_j_offsets[offset_i + 1] = offset_j
                 TensorLevelNum level = result_tensor.loop_num_to_tensor_level(loop_num+1);
@@ -821,7 +924,8 @@ llir::lStmt ComputeKernelLowerer::lower_loop(
                     }
                 }
             } else {
-                internal_assert(false) << "TODO: Handle reduction case";
+                //internal_assert(false) << "TODO: Handle reduction case";
+                return llir::lStmt();
             }
             if(stmts.size() == 0) {
                 return llir::lStmt();
@@ -844,7 +948,8 @@ llir::lStmt ComputeKernelLowerer::lower_loop(
                     std::cout << "def: " << d << "\n";
                 }
             }
-            internal_assert(cin.defined()) << forall->body;
+
+            internal_assert(cin.defined()) << (CIN)forall;
 
 
             llir::lStmt body;
@@ -862,12 +967,11 @@ llir::lStmt ComputeKernelLowerer::lower_loop(
             }
 
             if(assign_indices_stmt.defined()){
-                body = llir::Sequence::make(
-                    {assign_indices_stmt, std::move(body)});
+                body =  body.defined() ? llir::Sequence::make(
+                    {assign_indices_stmt, std::move(body)}) : std::move(assign_indices_stmt);
             }
 
             auto epilogue_stmt = get_body_epilogue_stmt(cin, a, forall);
-            assert(body.defined() || epilogue_stmt.defined());
             if (body.defined() && epilogue_stmt.defined()) {
                 body = llir::Sequence::make({std::move(body), std::move(epilogue_stmt)});
             } else if (epilogue_stmt.defined()) {
@@ -879,7 +983,12 @@ llir::lStmt ComputeKernelLowerer::lower_loop(
         // required only for multiple iterators case
         auto make_if_else_condition = [&](const Seq &a) {
             // auto as = indexes(a);
-            auto [as, _] = partition_iterators_locators(a);
+            auto [as, _, has_universe_iter] = partition_iterators_locators(a);
+            // only dense or universe left. Condition is always true
+            // as coord will always exist
+            if(as.size() == 0) {
+                return llir::lConst::make(true);
+            }
             llir::lExpr cond;
             llir::lExpr var = llir::lVar::make(index_t, forall->idx);
             for (const auto &term : as) {
@@ -903,7 +1012,7 @@ llir::lStmt ComputeKernelLowerer::lower_loop(
         auto make_evals = [&](const Seq &a) {
             std::vector<llir::lStmt> stmts;
             // auto as = indexes(a);
-            auto [as, ls] = partition_iterators_locators(a);
+            auto [as, ls, has_universe_iter] = partition_iterators_locators(a);
             if(is_loop_before_prev_intersection) {
                 for(const auto &term: as) {
                      const Index *idx = term.as<Index>();
@@ -922,8 +1031,9 @@ llir::lStmt ComputeKernelLowerer::lower_loop(
                     );
                 }
             }
-            // TODO: different eval for locators!!
+
             llir::lExpr value;
+            bool has_dense_iter = false;
             for (const auto &term : as) {
                 const Index *idx = term.as<Index>();
                 internal_assert(idx) << term;
@@ -937,40 +1047,46 @@ llir::lStmt ComputeKernelLowerer::lower_loop(
                         tlower.get_coord_var(TensorLevelNum(idx->level), index_t),
                         std::move(value));
                 }
+                has_dense_iter = has_dense_iter || !tlower.is_sparse(TensorLevelNum(idx->level));
             }
             internal_assert(value.defined() == !as.empty()) << a;
 
-            if (!as.empty()) {
-                // not iterating over the universe, evaluate index in universe.
-                stmts.push_back(llir::Declare::make(index_t, forall->idx,
-                                                    std::move(value)));
+            if (has_universe_iter){
+                value = imap.find(Empty::make(false))->second.first;
             }
+
+            // not iterating over the universe, evaluate index in universe.
+            stmts.push_back(llir::Declare::make(index_t, forall->idx,
+                                                std::move(value)));
+            
 
             // Add locators.
             value = llir::lVar::make(index_t, forall->idx);
-            for (const auto &loc : ls) {
-                const Index *idx = loc.as<Index>();
-                internal_assert(idx && !idx->is_sparse) << loc;
+            if(!has_universe_iter && !ls.empty() && !has_dense_iter) {
+                const Index *idx = ls[0].as<Index>();
+                internal_assert(idx && !idx->is_sparse) << ls[0];
                 TensorLowerer tlower = get_tensor(idx->tensor);
-                // Iterators are the dense thing, this is necesary for reads
+                // This is necesary for reads
                 // later. Hopefully, copy propagation is good on this generated
                 // code.
                 stmts.push_back(llir::Declare::make(
                     index_t, tlower.get_iter_name(TensorLevelNum(idx->level)), value));
             }
-
             return stmts;
         };
 
         auto make_incs = [&](const Seq &a, std::vector<llir::lStmt> &stmts) {
             // auto as = indexes(a);
-            auto [as, _] = partition_iterators_locators(a);
+            auto [as, _, has_universe_iter] = partition_iterators_locators(a);
 
             for (const auto &term : as) {
                 const Index *idx = term.as<Index>();
                 internal_assert(idx) << term;
                 TensorLowerer tlower = get_tensor(idx->tensor);
                 stmts.push_back(tlower.make_inc(TensorLevelNum(idx->level), index_t));
+            }
+            if(has_universe_iter) {
+                stmts.push_back(llir::Accumulate::make(llir::lVar::make(index_t, "iter_"+forall->idx), llir::lConst::make(1)));
             }
             // TODO: what if as is empty??
         };
@@ -982,6 +1098,7 @@ llir::lStmt ComputeKernelLowerer::lower_loop(
             auto stmts = make_evals(s);
 
             llir::lStmt body = make_body(s);
+            assert(body.defined());
 
             if (const auto *as_seq = body.as<llir::Sequence>()) {
                 stmts.insert(stmts.end(), as_seq->stmts.begin(),
@@ -997,7 +1114,7 @@ llir::lStmt ComputeKernelLowerer::lower_loop(
                                 std::move(body));
 
         } else {
-            if (iters.size() == 0) {
+            if (iters.size() == 1 && has_universe_iter) {
                 // For loop (dense)!
                 static const llir::lExpr _1 = llir::lConst::make(1);
 
@@ -1016,9 +1133,9 @@ llir::lStmt ComputeKernelLowerer::lower_loop(
                 body = llir::Sequence::make(std::move(stmts));
 
                 // TODO: load index if sparse iterator
-                return llir::For::make(forall->idx, std::move(cond), _1,
+                return llir::For::make(iters[0].first.as<llir::lVar>()->name, std::move(cond), _1,
                                     std::move(body));
-            } else if (iters.size() == 1) {
+            } else if (iters.size() == 1 && !has_universe_iter) {
                 // internal_error << "TODO: handle sparse for loop optimization";
                 // For loop (sparse)!
                 const llir::lVar *start = iters[0].first.as<llir::lVar>();
@@ -1044,10 +1161,16 @@ llir::lStmt ComputeKernelLowerer::lower_loop(
                     body = make_body(s);
                 }
                 
+                if(!body.defined()) {
+                    assert(loop_num+1 == LoopNum(forall_list.size()));
+                    return llir::lStmt();
+                }
+
                 // TODO: load index if sparse iterator
                 return llir::For::make(start->name, std::move(cond), _1,
                                     std::move(body));
             } else {
+                internal_assert(iters.size() > 1) << "Expected multiple iterators";
                 // While loop
                 auto cases = lattice.sub_points(s);
 
@@ -1057,23 +1180,29 @@ llir::lStmt ComputeKernelLowerer::lower_loop(
                         return llir::lStmt();
                     }
                     llir::lStmt b = make_body(cases[count]);
-                    internal_assert(b.defined());
-                    if (cases.size() == 1 &&
-                        std::get<0>(partition_iterators_locators(cases[0]))
-                            .empty()) {
-                        // Iterating over the universe
+                    auto [iters, _, has_universe_iter] = partition_iterators_locators(cases[count]);
+                    if (iters.empty() && has_universe_iter) {
+                        // Iterating only over the universe
                         return b;
                     }
-                    auto ifelse = llir::IfElse::make(make_if_else_condition(cases[count]), b,
+                    if(b.defined()) {
+                        auto ifelse = llir::IfElse::make(make_if_else_condition(cases[count]), b,
                                             build_ifelse(count + 1));
-                    return ifelse;
+                        return ifelse;
+                    } else {
+                        return build_ifelse(count + 1);
+                    }
                 };
 
                 // Prologue (evaluate)
                 auto stmts = make_evals(s);
 
+                auto if_else = build_ifelse(0); 
+                if(!if_else.defined()) {
+                    return llir::lStmt();
+                }
                 // Execute
-                stmts.push_back(build_ifelse(0));
+                stmts.push_back(if_else);
                 // Epilogue (incrments!)
                 make_incs(s, stmts);
 
@@ -1089,11 +1218,38 @@ llir::lStmt ComputeKernelLowerer::lower_loop(
         const auto tsort = lattice.topological_order();
 
         for (const auto &s : tsort) {
-            stmts.push_back(make_loop(s));
+            // std::cout << "Building loop for: " << s << std::endl;
+            auto loop = make_loop(s);
+            if(loop.defined()) {
+                stmts.push_back(std::move(loop));
+            }
+        }
+        if(reduction_loop + 1 == result_tensor.end_loop_num() && loop_num==reduction_loop && !is_precompute) {
+            // need to add the final store for reduction variable here since reduction variable is not stored in the loop body when there are sparse intersections
+            stmts.push_back(
+                llir::BaseExpr::make(
+                llir::lFunctionCall::make(
+                    "atomicAdd",
+                    {
+                        llir::lAddress::make(result_tensor.get_values_field()[
+                            result_tensor.get_level_indexing_expression(
+                                result_tensor.end_tensor_level(),
+                                false,
+                                get_iter_vars_result(
+                                    result_tensor,
+                                    result_tensor.end_tensor_level()
+                                )
+                            )]),
+                        llir::lVar::make(value_t, "value")
+                    }
+                )
+            ));
         }
     }
-
-    return llir::Sequence::make(std::move(stmts));
+    if (!stmts.empty()) {
+        return llir::Sequence::make(std::move(stmts));
+    }
+    return llir::lStmt();
 }
 
 } // namespace backend

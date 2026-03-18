@@ -317,15 +317,13 @@ TensorLowerer::lower_work_function(std::vector<std::string> partial_loop_order,
                     );
 
         stmts.emplace_back(llir::Declare::make(
-            index_t,
-            "end",
+            index_t, "end",
             next_sparse_level < last_tensor_level_in_partial_loop + 1
                 ? this->get_offsets_field(next_sparse_level)[end_expr]
                 : end_expr));
 
         stmts.emplace_back(llir::Declare::make(
-            index_t,
-            "start",
+            index_t, "start",
             next_sparse_level < last_tensor_level_in_partial_loop + 1
                 ? this->get_offsets_field(next_sparse_level)[start_expr]
                 : start_expr));
@@ -382,7 +380,7 @@ TensorLowerer::lower_work_function(std::vector<std::string> partial_loop_order,
     // if target_dim is a broad cast level need to multiple by the arg of
     // target_dim
     if (!tensor_level_exists(target_loop_num) && !is_target_loop_value_fixed) {
-        work_expr = work_expr * llir::lVar::make(index_t, loop_name(target_loop_num));
+        work_expr = work_expr * (llir::lVar::make(index_t, loop_name(target_loop_num))+1);
     }
 
     // Multiply by the required broadcast levels

@@ -241,6 +241,14 @@ lExpr lIncrement::make(lExpr var) {
     return node;
 }
 
+lExpr lAddress::make(lExpr var) {
+    internal_assert(var.defined()) << "Undefined var in lAddress::make()";
+    lAddress *node = new lAddress;
+    node->var = std::move(var);
+    return node;
+}
+
+
 lStmt Declare::make(lType type, std::string name, lExpr init) {
     internal_assert(!name.empty()) << "Cannot make Declare with empty name.";
     internal_assert(init.defined())
