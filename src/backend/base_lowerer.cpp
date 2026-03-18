@@ -23,7 +23,7 @@ llir::lType BaseKernelLowerer::lower_result_per_thread_count_struct() {
 
 
 //  check whether result_to_operand_pos_map contains a field to lookup pos for this operand_tensor at current forall sparse intersection
-bool BaseKernelLowerer::has_result_to_operand_pos_field(const Forall* forall, TensorLowerer& op_tensor) {
+bool BaseKernelLowerer::exists_field_in_result_to_operand_pos_map(const Forall* forall, TensorLowerer& op_tensor) {
     std::string index = forall->idx;
     if(!op_tensor.tensor_type.format.level_exists(index)) {
         return false;
@@ -51,8 +51,8 @@ bool BaseKernelLowerer::has_result_to_operand_pos_field(const Forall* forall, Te
 }
 
 // map a result tensor (pos, coord) pair to corresponding pos in operand_tensor
-llir::lExpr BaseKernelLowerer::build_operand_position_from_result_position(const Forall* forall, TensorLowerer& operand_tensor, llir::lExpr result_tensor_pos, llir::lExpr result_tensor_coord) {
-    if(has_result_to_operand_pos_field(forall, operand_tensor)) {
+llir::lExpr BaseKernelLowerer::map_result_pos_to_operand_pos(const Forall* forall, TensorLowerer& operand_tensor, llir::lExpr result_tensor_pos, llir::lExpr result_tensor_coord) {
+    if(exists_field_in_result_to_operand_pos_map(forall, operand_tensor)) {
         return llir::lFieldAccess::make(llir::lVar::make(
             llir::Generic_t::make(get_result_to_operand_pos_map_struct_name()),
             get_result_to_operand_pos_map_var_name()
@@ -77,10 +77,10 @@ llir::lExpr BaseKernelLowerer::build_operand_position_from_result_position(const
     return llir::lExpr();
 }
 
-llir::lExpr BaseKernelLowerer::build_partition_boundary_initializer_expr(const int forall_level, TensorLowerer& tensor, bool is_last_thread) {
-    std::string forall_idx = forall_loops[forall_level].as<Forall>()->idx;
+llir::lExpr BaseKernelLowerer::get_partition_initializer_expr_for_boundary_cases(const int forall_level, TensorLowerer& tensor, bool is_last_thread) {
+    std::string forall_idx = forall_list[forall_level].as<Forall>()->idx;
     
-    if(forall_level <= previous_sparse_intersection_level) {
+    if(forall_level <= previous_sparse_intersection) {
         if(is_last_thread) {
             return tensor.is_sparse(forall_idx) ? tensor.get_length_field(forall_idx) - 1 : tensor.get_size_field(forall_idx) - 1;
         } else {
@@ -88,10 +88,10 @@ llir::lExpr BaseKernelLowerer::build_partition_boundary_initializer_expr(const i
         }
     }
 
-    // forall_level > previous_sparse_intersection_level
+    // forall_level > previous_sparse_intersection
 
     
-    llir::lExpr init_value_expr = llir::lConst::make((int64_t)0) - (forall_level == current_sparse_intersection_level? 1 : 0);
+    llir::lExpr init_value_expr = llir::lConst::make((int64_t)0) - (forall_level == current_sparse_intersection? 1 : 0);
     if(is_last_thread) {
         init_value_expr = tensor.is_sparse(forall_idx)
                               ? tensor.get_length_field(forall_idx) - 1
@@ -100,23 +100,23 @@ llir::lExpr BaseKernelLowerer::build_partition_boundary_initializer_expr(const i
     // For some cases initializers need to be the form
     // partitions.a_j_p[thread_id] = a.dim_j_offsets[Z.i_map_a[0]]-1;
     // when the data in sparse level of the tensor is being skipped due to previous sparse intersections
-    if(previous_sparse_intersection_level!=-1) {
+    if(previous_sparse_intersection!=-1) {
         std::vector<llir::lExpr> dim_vars_for_offset_expression;
         int start_level = tensor.tensor_type.format.get_prev_sparse_level(forall_level);
         // result_to_operand_map may have -1 value, we need to add a check for this to prevent 
         // illegal memory access
         llir::lExpr check_expr;
-        if(start_level!=-1 && start_level<=previous_sparse_intersection_level)
+        if(start_level!=-1 && start_level<=previous_sparse_intersection)
         {
-            const Forall* forall_j = forall_loops[start_level].as<Forall>();
+            const Forall* forall_j = forall_list[start_level].as<Forall>();
             std::string forall_j_idx = forall_j->idx;
-            check_expr = build_operand_position_from_result_position(
+            check_expr = map_result_pos_to_operand_pos(
                     forall_j, tensor, 
                     llir::lConst::make((int64_t)0)
                 ) != llir::lConst::make((int64_t)-1);
 
             if(is_last_thread) {
-                check_expr = build_operand_position_from_result_position(
+                check_expr = map_result_pos_to_operand_pos(
                     forall_j, tensor, 
                     result_tensor.is_sparse(forall_j_idx) ? result_tensor.get_length_field(forall_j_idx) - 1 : result_tensor.get_size_field(forall_j_idx) - 1
                 ) != llir::lConst::make((int64_t)-1);
@@ -125,11 +125,11 @@ llir::lExpr BaseKernelLowerer::build_partition_boundary_initializer_expr(const i
 
         int end_level = forall_level-1;
         for(int j=std::max(0, start_level);j<=end_level;j++) {
-            const Forall* forall_j = forall_loops[j].as<Forall>();
+            const Forall* forall_j = forall_list[j].as<Forall>();
             std::string forall_j_idx = forall_j->idx;
-            if(j<=previous_sparse_intersection_level) {
+            if(j<=previous_sparse_intersection) {
                 dim_vars_for_offset_expression.push_back(
-                    build_operand_position_from_result_position(
+                    map_result_pos_to_operand_pos(
                         forall_j, tensor, 
                         is_last_thread ? (result_tensor.is_sparse(forall_j_idx) ? result_tensor.get_length_field(forall_j_idx) - 1 : result_tensor.get_size_field(forall_j_idx) - 1) : llir::lConst::make((int64_t)0) 
                 ));
@@ -146,7 +146,7 @@ llir::lExpr BaseKernelLowerer::build_partition_boundary_initializer_expr(const i
                 false,
                 true,
                 dim_vars_for_offset_expression 
-            ) ] - (forall_level == current_sparse_intersection_level? 1 : 0);
+            ) ] - (forall_level == current_sparse_intersection? 1 : 0);
         if(is_last_thread) {
             init_value_expr =  tensor.get_offsets_field(forall_idx)[
                 tensor.get_offset_expression_for_next_sparse(

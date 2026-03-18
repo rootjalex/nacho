@@ -19,11 +19,11 @@ namespace nacho {
             std::map<std::string, TensorLowerer> &operand_tensors;
             TensorLowerer &result_tensor;
 
-            std::map<std::string, TensorLowerer> &active_phase_tensors;
-            std::vector<CIN> forall_loops;
-            int previous_sparse_intersection_level;
-            int current_sparse_intersection_level;
-            int next_sparse_intersection_level;
+            std::map<std::string, TensorLowerer> &included_tensors;
+            std::vector<CIN> forall_list;
+            int previous_sparse_intersection;
+            int current_sparse_intersection;
+            int next_sparse_intersection;
 
             llir::lType index_t = llir::Generic_t::make("index_t");
             llir::lType value_t = llir::Generic_t::make("value_t");
@@ -32,27 +32,27 @@ namespace nacho {
             BaseKernelLowerer(
                 std::map<std::string, TensorLowerer> &operand_tensors,
                 TensorLowerer &result_tensor,
-                std::map<std::string, TensorLowerer> &active_phase_tensors,
-                const std::vector<CIN> &forall_loops, 
-                int previous_sparse_intersection_level, int current_sparse_intersection_level,int next_sparse_intersection_level)
-                : operand_tensors(operand_tensors), result_tensor(result_tensor), active_phase_tensors(active_phase_tensors),
-                  forall_loops(forall_loops), 
-                  previous_sparse_intersection_level(previous_sparse_intersection_level),
-                  current_sparse_intersection_level(current_sparse_intersection_level),
-                  next_sparse_intersection_level(next_sparse_intersection_level) {}
+                std::map<std::string, TensorLowerer> &included_tensors,
+                const std::vector<CIN> &forall_list, 
+                int previous_sparse_intersection, int current_sparse_intersection,int next_sparse_intersection)
+                : operand_tensors(operand_tensors), result_tensor(result_tensor), included_tensors(included_tensors),
+                  forall_list(forall_list), 
+                  previous_sparse_intersection(previous_sparse_intersection),
+                  current_sparse_intersection(current_sparse_intersection),
+                  next_sparse_intersection(next_sparse_intersection) {}
 
             
             // This is just a helper function to construct the suffix used in giving unique names to various generated kernels
             // The suffix is just the concatenation of all loop indices that the kernel operates on
-            inline std::string get_loop_suffix_up_to_level(int level) {
+            inline std::string get_all_loops_string(int level) {
                 std::string all_loops_string = "";
                 for(int i=0;i<=level;i++)
-                    all_loops_string += forall_loops[i].as<Forall>()->idx;
+                    all_loops_string += forall_list[i].as<Forall>()->idx;
                 return all_loops_string;
             }
 
             inline std::string get_partition_function_name() {
-                return  "partition_" + get_loop_suffix_up_to_level(current_sparse_intersection_level) + "_kernel";
+                return  "partition_" + get_all_loops_string(current_sparse_intersection) + "_kernel";
             }
 
             inline llir::lExpr get_partition_struct_current_thread_field(std::string field_name) {
@@ -67,7 +67,7 @@ namespace nacho {
             }
 
             inline std::string get_partition_struct_name() {
-                return "partition_" + get_loop_suffix_up_to_level(current_sparse_intersection_level);
+                return "partition_" + get_all_loops_string(current_sparse_intersection);
             }
 
             inline std::string get_counts_struct_name() {
@@ -79,11 +79,11 @@ namespace nacho {
             }
 
             inline std::string get_precompute_function_name() {
-                return  "precompute_" + get_loop_suffix_up_to_level(current_sparse_intersection_level) + "_kernel";
+                return  "precompute_" + get_all_loops_string(current_sparse_intersection) + "_kernel";
             }
 
             inline std::string get_compute_function_name() {
-                return  "compute_" + get_loop_suffix_up_to_level(current_sparse_intersection_level) + "_kernel";
+                return  "compute_" + get_all_loops_string(current_sparse_intersection) + "_kernel";
             }
 
 
@@ -97,10 +97,10 @@ namespace nacho {
                 return result_tensor.tensor_name + "_pos_map";
             }
 
-            bool has_result_to_operand_pos_field(const Forall* forall, TensorLowerer& operand_tensor);
-            llir::lExpr build_operand_position_from_result_position(const Forall* forall, TensorLowerer& operand_tensor, llir::lExpr result_tensor_pos, llir::lExpr result_tensor_coord  = llir::lExpr());
+            bool exists_field_in_result_to_operand_pos_map(const Forall* forall, TensorLowerer& operand_tensor);
+            llir::lExpr map_result_pos_to_operand_pos(const Forall* forall, TensorLowerer& operand_tensor, llir::lExpr result_tensor_pos, llir::lExpr result_tensor_coord  = llir::lExpr());
 
-            llir::lExpr build_partition_boundary_initializer_expr(const int forall_level, TensorLowerer& tensor, bool is_last_thread);
+            llir::lExpr get_partition_initializer_expr_for_boundary_cases(const int forall_level, TensorLowerer& tensor, bool is_last_thread);
         };
     }
 }

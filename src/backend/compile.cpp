@@ -60,20 +60,20 @@ namespace backend {
         return loop_order;
     }
 
-    std::vector<CIN> CINLowerer::get_forall_loops() {
-        std::vector<CIN> forall_loops;
+    std::vector<CIN> CINLowerer::get_forall_list() {
+        std::vector<CIN> forall_list;
         struct ForallVisitor : Visitor {
-            std::vector<CIN> &forall_loops;
-            ForallVisitor(std::vector<CIN> &forall_loops) : forall_loops(forall_loops) {}
+            std::vector<CIN> &forall_list;
+            ForallVisitor(std::vector<CIN> &forall_list) : forall_list(forall_list) {}
 
             void visit(const Forall *node) override {
-                forall_loops.push_back(node);
+                forall_list.push_back(node);
                 node->body.accept(this);
             }
         };
-        ForallVisitor visitor(forall_loops);
+        ForallVisitor visitor(forall_list);
         cin.accept(&visitor);
-        return forall_loops;
+        return forall_list;
     }
 
     void CINLowerer::lower_cin() {
@@ -85,9 +85,9 @@ namespace backend {
         }
 
         std::vector<std::string> loop_order = get_loop_order();
-        auto forall_loops = get_forall_loops();
+        auto forall_list = get_forall_list();
 
-        std::vector<int> sparse_intersection_levels = get_sparse_intersection_levels(cin);
+        std::vector<int> sparse_intersection_levels = get_all_sparse_intersection_levels(cin);
 
         sparse_intersection_levels.insert(sparse_intersection_levels.begin(), -1);
         if(sparse_intersection_levels.back()!=(int)loop_order.size()-1) {
@@ -98,25 +98,25 @@ namespace backend {
         this->lower_struct_definitions(sparse_intersection_levels[sparse_intersection_levels.size()-2]);
 
         for(int i=0; i< (int)sparse_intersection_levels.size()-1;i++) {
-            int previous_sparse_intersection_level = sparse_intersection_levels[i];
-            int current_sparse_intersection_level = sparse_intersection_levels[i+1];
-            int next_sparse_intersection_level = i!=(int)sparse_intersection_levels.size()-2 ? sparse_intersection_levels[i+2] : forall_loops.size() ;
+            int previous_sparse_intersection = sparse_intersection_levels[i];
+            int current_sparse_intersection = sparse_intersection_levels[i+1];
+            int next_sparse_intersection = i!=(int)sparse_intersection_levels.size()-2 ? sparse_intersection_levels[i+2] : forall_list.size() ;
 
-            auto previous_loop_order = std::vector<std::string>(loop_order.begin(), loop_order.begin() + previous_sparse_intersection_level + 1);
-            auto current_loop_order = std::vector<std::string>(loop_order.begin(), loop_order.begin() + current_sparse_intersection_level + 1);
+            auto previous_loop_order = std::vector<std::string>(loop_order.begin(), loop_order.begin() + previous_sparse_intersection + 1);
+            auto current_loop_order = std::vector<std::string>(loop_order.begin(), loop_order.begin() + current_sparse_intersection + 1);
 
             // Generate work functions for partition kernel
-            for(int level=0; level<=previous_sparse_intersection_level;level++) {
+            for(int level=0; level<=previous_sparse_intersection;level++) {
                 printer.print(result_tensor.lower_work_function(previous_loop_order, level));
             }
-            for(int level = previous_sparse_intersection_level + 1; level <= current_sparse_intersection_level; level++) {
+            for(int level = previous_sparse_intersection + 1; level <= current_sparse_intersection; level++) {
                 for (auto it : operand_tensors) {
                     printer.print(it.second.lower_work_function(current_loop_order, level));
                 }
             }
 
-            auto active_phase_tensors = get_active_tensors_for_level(current_sparse_intersection_level);
-            PartitionKernelLowerer partition_lowerer(operand_tensors, result_tensor, active_phase_tensors, forall_loops, previous_sparse_intersection_level, current_sparse_intersection_level, next_sparse_intersection_level);
+            auto included_tensors = get_included_tensors_for_level(current_sparse_intersection);
+            PartitionKernelLowerer partition_lowerer(operand_tensors, result_tensor, included_tensors, forall_list, previous_sparse_intersection, current_sparse_intersection, next_sparse_intersection);
 
             llir::lType partition_struct_type = partition_lowerer.lower_partition_struct_definition();
             printer.print(partition_struct_type);
@@ -135,16 +135,16 @@ namespace backend {
             CIN modified_cin = cin;
 
             if(i!=(int)sparse_intersection_levels.size()-2){
-                modified_cin = get_phase_cin_for_sparse_intersection(current_sparse_intersection_level, cin);
-                active_phase_tensors = get_active_tensors_for_level(next_sparse_intersection_level);
+                modified_cin = get_modified_cin_for_sparse_intersection(current_sparse_intersection, cin);
+                included_tensors = get_included_tensors_for_level(next_sparse_intersection);
             }
 
-            ComputeKernelLowerer compute_lowerer(operand_tensors, result_tensor, active_phase_tensors, forall_loops, modified_cin, previous_sparse_intersection_level, current_sparse_intersection_level, next_sparse_intersection_level);
+            ComputeKernelLowerer compute_lowerer(operand_tensors, result_tensor, included_tensors, forall_list, modified_cin, previous_sparse_intersection, current_sparse_intersection, next_sparse_intersection);
 
             // Generate Precompute kernels
-            bool has_precompute_kernel = result_tensor.tensor_type.format.get_prev_sparse_level(current_sparse_intersection_level+1) != -1;
-            if(has_precompute_kernel) {
-                printer.print(compute_lowerer.lower_precompute_kernel());
+            bool has_precompute = result_tensor.tensor_type.format.get_prev_sparse_level(current_sparse_intersection+1) != -1;
+            if(has_precompute) {
+                printer.print(compute_lowerer.lower_precompute_function());
 
                 // Collect precompute kernel info
                 kernel_infos.push_back({
@@ -161,11 +161,11 @@ namespace backend {
             // The target_dim value is fixed for this work function.
             if(i!=(int)sparse_intersection_levels.size()-2){
                 for (auto it : operand_tensors) {
-                    auto next_loop_order = std::vector<std::string>(loop_order.begin(), loop_order.begin() + next_sparse_intersection_level + 1);
-                    printer.print(it.second.lower_work_function(next_loop_order, current_sparse_intersection_level, true));
+                    auto next_loop_order = std::vector<std::string>(loop_order.begin(), loop_order.begin() + next_sparse_intersection + 1);
+                    printer.print(it.second.lower_work_function(next_loop_order, current_sparse_intersection, true));
                 }
             }
-            printer.print(compute_lowerer.lower_compute_kernel());
+            printer.print(compute_lowerer.lower_compute_function());
 
             // Collect compute kernel info
             kernel_infos.push_back({
@@ -179,19 +179,19 @@ namespace backend {
             // Collect struct info for this phase
             // Build count struct type using BaseKernelLowerer
             llir::lType counts_struct_type;
-            if(has_precompute_kernel) {
+            if(has_precompute) {
                 auto empty_map = std::map<std::string, TensorLowerer>();
-                BaseKernelLowerer base_lowerer(operand_tensors, result_tensor, empty_map, forall_loops, previous_sparse_intersection_level, current_sparse_intersection_level, next_sparse_intersection_level);
+                BaseKernelLowerer base_lowerer(operand_tensors, result_tensor, empty_map, forall_list, previous_sparse_intersection, current_sparse_intersection, next_sparse_intersection);
                 counts_struct_type = base_lowerer.lower_result_per_thread_count_struct();
             }
 
             phase_struct_infos.push_back({
                 .partition_struct = partition_struct_type,
                 .counts_struct = counts_struct_type,
-                .previous_sparse_intersection_level = previous_sparse_intersection_level,
-                .current_sparse_intersection_level = current_sparse_intersection_level,
-                .next_sparse_intersection_level = next_sparse_intersection_level,
-                .has_precompute_kernel = has_precompute_kernel
+                .previous_sparse_intersection = previous_sparse_intersection,
+                .current_sparse_intersection = current_sparse_intersection,
+                .next_sparse_intersection = next_sparse_intersection,
+                .has_precompute = has_precompute
             });
 
         }
@@ -215,32 +215,32 @@ namespace backend {
 
         // Use BaseKernelLowerer to lower the one time struct definitions of result_per_thread_count struct and result_to_operand_pos_map struct
         auto empty_map = std::map<std::string, TensorLowerer>();
-        BaseKernelLowerer BaseLowerer(operand_tensors, result_tensor, empty_map, get_forall_loops(), -1, -1, -1);
+        BaseKernelLowerer BaseLowerer(operand_tensors, result_tensor, empty_map, get_forall_list(), -1, -1, -1);
         // Need to lower this struct only once
         if(!result_tensor.tensor_type.format.are_all_lvls_dense()) {
             printer.print(BaseLowerer.lower_result_per_thread_count_struct());
         }
 
-        auto result_operand_pos_map = lower_result_to_operand_pos_map_struct(last_sparse_intersection);
+        auto result_operand_pos_map = lower_result_pos_to_operand_pos_map_struct(last_sparse_intersection);
         if(result_operand_pos_map.get() != nullptr) {
             printer.print(result_operand_pos_map);
         }
     }
 
-    llir::lType CINLowerer::lower_result_to_operand_pos_map_struct(int last_sparse_intersection) {
+    llir::lType CINLowerer::lower_result_pos_to_operand_pos_map_struct(int last_sparse_intersection) {
         std::vector<std::string> generics = {"index_t"};
         std::vector<std::pair<std::string, llir::lType>> fields;
-        auto forall_loops = get_forall_loops(); auto empty_map = std::map<std::string, TensorLowerer>();
-        BaseKernelLowerer BaseLowerer(operand_tensors, result_tensor, empty_map, forall_loops, -1, -1, -1);
+        auto forall_list = get_forall_list(); auto empty_map = std::map<std::string, TensorLowerer>();
+        BaseKernelLowerer BaseLowerer(operand_tensors, result_tensor, empty_map, forall_list, -1, -1, -1);
         for(int level=0; level<=last_sparse_intersection;level++) {
-            if(level == -1 || level >= forall_loops.size()-1) {
+            if(level == -1 || level >= forall_list.size()-1) {
                 continue;
             }
-            const Forall* forall = forall_loops[level].as<Forall>();
+            const Forall* forall = forall_list[level].as<Forall>();
             std::string forall_idx = forall->idx;
 
             for(auto& [name, tensor] : operand_tensors) {
-                if(BaseLowerer.has_result_to_operand_pos_field(forall, tensor)) {
+                if(BaseLowerer.exists_field_in_result_to_operand_pos_map(forall, tensor)) {
                     fields.emplace_back(tensor.get_iterator_suffix(forall_idx), llir::Ptr_t::make(index_t));
                 }
             }
@@ -253,7 +253,7 @@ namespace backend {
                                  std::move(generics));
     }
 
-    std::vector<int> CINLowerer::get_sparse_intersection_levels(CIN& cin) {
+    std::vector<int> CINLowerer::get_all_sparse_intersection_levels(CIN& cin) {
         struct Checker : public Visitor {
             int loop_level = -1;
             bool inside_sparse_intersection = false;
@@ -328,7 +328,7 @@ namespace backend {
         return checker.sparse_intersection_levels;
     }
 
-    CIN CINLowerer::get_phase_cin_for_sparse_intersection(int target_level, CIN& cin) {
+    CIN CINLowerer::get_modified_cin_for_sparse_intersection(int target_level, CIN& cin) {
         struct Modifier: public Mutator {
             int loop_level = -1;
             int target_level;
@@ -430,11 +430,11 @@ namespace backend {
         printer.print(llir::Function::make(std::move(generics), std::move(attributes), std::move(args), std::move(ret_type), name, std::move(body)));
     }
 
-    std::map<std::string, TensorLowerer> CINLowerer::get_active_tensors_for_level(int level) {
-            auto forall  = get_forall_loops()[level].as<Forall>();
+    std::map<std::string, TensorLowerer> CINLowerer::get_included_tensors_for_level(int level) {
+            auto forall  = get_forall_list()[level].as<Forall>();
             std::vector<Seq> locators = get_dense_locators(forall->seq);
 
-            std::map<std::string, TensorLowerer> active_phase_tensors;
+            std::map<std::string, TensorLowerer> included_tensors;
 
             // included tensors are the tensors which are included in the work
             // calculation. Non-included tensors are not co-iterated and instead looked up.
@@ -452,11 +452,11 @@ namespace backend {
             }
             for(auto it : operand_tensors) {
                 if(excluded_tensors.find(it.first) == excluded_tensors.end()) {
-                    active_phase_tensors[it.first] = it.second;
+                    included_tensors[it.first] = it.second;
                 }
             }
-            //std::cout<<" At level "<< level << " included tensors: "<< active_phase_tensors.size() << "\n";
-            return active_phase_tensors;
+            //std::cout<<" At level "<< level << " included tensors: "<< included_tensors.size() << "\n";
+            return included_tensors;
     }
 
 
@@ -516,14 +516,14 @@ namespace backend {
                 "// ========== Phase " + std::to_string(phase) + " =========="));
 
             // 1. Compute total_work and per_thread_work
-            if (phase_info.previous_sparse_intersection_level == -1) {
+            if (phase_info.previous_sparse_intersection == -1) {
                 // Phase 0: total_work = sum of operand nnz (length of innermost sparse dim)
                 // Use the included tensors' work computation
                 std::string total_work_expr;
                 bool first = true;
                 for (const auto &it : operand_tensors) {
-                    // Find the work contribution - use the length of the sparse dim at current_sparse_intersection_level
-                    auto forall = get_forall_loops()[phase_info.current_sparse_intersection_level].as<Forall>();
+                    // Find the work contribution - use the length of the sparse dim at current_sparse_intersection
+                    auto forall = get_forall_list()[phase_info.current_sparse_intersection].as<Forall>();
                     std::string idx = forall->idx;
                     if (it.second.tensor_type.format.level_exists(idx) &&
                         is_sparse_format(it.second.tensor_type.format.lvlfmt_of(idx))) {
@@ -533,7 +533,7 @@ namespace backend {
                         first = false;
                     }
                 }
-                // If result tensor has a dense dim at the current_sparse_intersection_level level,
+                // If result tensor has a dense dim at the current_sparse_intersection level,
                 // we may need size from operand's nnz or similar
                 if (first) {
                     // Fallback: sum all operand nnz-like fields
@@ -614,9 +614,9 @@ namespace backend {
                 }
             }
 
-            // 4-6. Precompute + prefix sum (if has_precompute_kernel)
+            // 4-6. Precompute + prefix sum (if has_precompute)
             std::string counts_var = "count_offsets_" + std::to_string(phase);
-            if (phase_info.has_precompute_kernel) {
+            if (phase_info.has_precompute) {
                 const llir::Struct_t *counts_struct = phase_info.counts_struct.as<llir::Struct_t>();
 
                 // 4. Allocate count struct fields
@@ -699,7 +699,7 @@ namespace backend {
                 // 7. Read nnz from device
                 // For each sparse dimension in the result, read the total count
                 bool has_nnz_read = false;
-                for (int lvl = 0; lvl <= phase_info.current_sparse_intersection_level; lvl++) {
+                for (int lvl = 0; lvl <= phase_info.current_sparse_intersection; lvl++) {
                     auto idx = result_tensor.tensor_type.format.levels[lvl].index;
                     if (is_sparse_format(result_tensor.tensor_type.format.lvlfmt_of(idx))) {
                         std::string nnz_name = "nnz_" + idx + "_" + std::to_string(phase);
@@ -722,7 +722,7 @@ namespace backend {
                 // Allocate indices and values arrays for sparse dimensions
                 // Skip levels already allocated in previous phases
                 int alloc_start = prev_phase_max_sparse + 1;
-                for (int lvl = alloc_start; lvl <= phase_info.current_sparse_intersection_level; lvl++) {
+                for (int lvl = alloc_start; lvl <= phase_info.current_sparse_intersection; lvl++) {
                     auto idx = result_tensor.tensor_type.format.levels[lvl].index;
                     if (is_sparse_format(result_tensor.tensor_type.format.lvlfmt_of(idx))) {
                         std::string nnz_name = "nnz_" + idx + "_" + std::to_string(phase);
@@ -736,7 +736,7 @@ namespace backend {
                 if (phase == num_phases - 1) {
                     // Find the innermost sparse dimension's nnz for values allocation
                     std::string values_nnz;
-                    for (int lvl = phase_info.current_sparse_intersection_level; lvl >= 0; lvl--) {
+                    for (int lvl = phase_info.current_sparse_intersection; lvl >= 0; lvl--) {
                         auto idx = result_tensor.tensor_type.format.levels[lvl].index;
                         if (is_sparse_format(result_tensor.tensor_type.format.lvlfmt_of(idx))) {
                             values_nnz = "nnz_" + idx + "_" + std::to_string(phase);
@@ -752,7 +752,7 @@ namespace backend {
 
                 // Allocate offsets arrays for non-outermost sparse dimensions
                 // (outermost sparse dim has no offsets field in the struct)
-                for (int lvl = 1; lvl <= phase_info.current_sparse_intersection_level; lvl++) {
+                for (int lvl = 1; lvl <= phase_info.current_sparse_intersection; lvl++) {
                     auto idx = result_tensor.tensor_type.format.levels[lvl].index;
                     if (is_sparse_format(result_tensor.tensor_type.format.lvlfmt_of(idx))) {
                         // Offsets size depends on the parent dimension
@@ -778,7 +778,7 @@ namespace backend {
                 // Defer result length/nnz updates until after compute launch.
                 // Compute kernels in later phases may still need previous phase
                 // length fields while traversing intermediate buffers.
-                for (int lvl = 0; lvl <= phase_info.current_sparse_intersection_level; lvl++) {
+                for (int lvl = 0; lvl <= phase_info.current_sparse_intersection; lvl++) {
                     auto idx = result_tensor.tensor_type.format.levels[lvl].index;
                     if (is_sparse_format(result_tensor.tensor_type.format.lvlfmt_of(idx))) {
                         std::string nnz_name = "nnz_" + idx + "_" + std::to_string(phase);
@@ -790,7 +790,7 @@ namespace backend {
                 }
                 if (phase == num_phases - 1) {
                     // Set nnz to innermost sparse dim's count
-                    for (int lvl = phase_info.current_sparse_intersection_level; lvl >= 0; lvl--) {
+                    for (int lvl = phase_info.current_sparse_intersection; lvl >= 0; lvl--) {
                         auto idx = result_tensor.tensor_type.format.levels[lvl].index;
                         if (is_sparse_format(result_tensor.tensor_type.format.lvlfmt_of(idx))) {
                             delayed_result_field_updates.push_back(
@@ -808,7 +808,7 @@ namespace backend {
             bool is_last_phase = (phase == num_phases - 1);
             std::string phase_outermost_nnz;
             if (!is_last_phase) {
-                for (int lvl = 0; lvl <= phase_info.current_sparse_intersection_level; lvl++) {
+                for (int lvl = 0; lvl <= phase_info.current_sparse_intersection; lvl++) {
                     auto idx = result_tensor.tensor_type.format.levels[lvl].index;
                     if (is_sparse_format(result_tensor.tensor_type.format.lvlfmt_of(idx))) {
                         phase_outermost_nnz = "nnz_" + idx + "_" + std::to_string(phase);
@@ -824,7 +824,7 @@ namespace backend {
                 std::string guard;
                 guard += "if (" + phase_outermost_nnz + " == 0) {\n";
                 // Set remaining output fields to zero
-                for (int lvl = phase_info.current_sparse_intersection_level + 1;
+                for (int lvl = phase_info.current_sparse_intersection + 1;
                      lvl < (int)result_tensor.tensor_type.format.levels.size(); lvl++) {
                     auto idx = result_tensor.tensor_type.format.levels[lvl].index;
                     if (is_sparse_format(result_tensor.tensor_type.format.lvlfmt_of(idx))) {
@@ -837,7 +837,7 @@ namespace backend {
                 for (const auto &field : partition_struct->fields) {
                     guard += "  cudaFreeAsync(" + partition_var + "." + field.first + ", stream);\n";
                 }
-                if (phase_info.has_precompute_kernel) {
+                if (phase_info.has_precompute) {
                     const llir::Struct_t *counts_struct = phase_info.counts_struct.as<llir::Struct_t>();
                     for (const auto &field : counts_struct->fields) {
                         guard += "  cudaFreeAsync(" + counts_var + "." + field.first + ", stream);\n";
@@ -850,21 +850,21 @@ namespace backend {
 
             // Allocate result_to_operand_pos_map if this is not the last phase.
             if (!is_last_phase && !phase_outermost_nnz.empty()) {
-                auto forall_loops = get_forall_loops();
+                auto forall_list = get_forall_list();
                 auto empty_map = std::map<std::string, TensorLowerer>();
                 BaseKernelLowerer base_lowerer(operand_tensors, result_tensor, empty_map,
-                                               forall_loops, -1, -1, -1);
+                                               forall_list, -1, -1, -1);
                 std::string pos_map_struct = base_lowerer.get_result_to_operand_pos_map_struct_name();
                 std::string pos_map_var = base_lowerer.get_result_to_operand_pos_map_var_name();
 
                 body_stmts.emplace_back(llir::RawCode::make(
                     pos_map_struct + "<index_t> " + pos_map_var + ";"));
-                for (int lvl = 0; lvl <= phase_info.current_sparse_intersection_level; lvl++) {
-                    if (lvl >= (int)forall_loops.size() - 1) continue;
-                    const Forall *forall = forall_loops[lvl].as<Forall>();
+                for (int lvl = 0; lvl <= phase_info.current_sparse_intersection; lvl++) {
+                    if (lvl >= (int)forall_list.size() - 1) continue;
+                    const Forall *forall = forall_list[lvl].as<Forall>();
                     std::string forall_idx = forall->idx;
                     for (auto &[name, tensor] : operand_tensors) {
-                        if (base_lowerer.has_result_to_operand_pos_field(forall, tensor)) {
+                        if (base_lowerer.exists_field_in_result_to_operand_pos_map(forall, tensor)) {
                             std::string field = tensor.get_iterator_suffix(forall_idx);
                             body_stmts.emplace_back(llir::RawCode::make(
                                 "cudaMallocAsync((void**)&" + pos_map_var + "." + field +
@@ -962,7 +962,7 @@ namespace backend {
 
             // Free count struct intermediates (if precompute exists and this is the last phase)
             // Count structs are consumed by compute kernel, so free after compute
-            if (phase_info.has_precompute_kernel && is_last_phase) {
+            if (phase_info.has_precompute && is_last_phase) {
                 const llir::Struct_t *counts_struct = phase_info.counts_struct.as<llir::Struct_t>();
                 for (const auto &field : counts_struct->fields) {
                     body_stmts.emplace_back(llir::RawCode::make(
@@ -974,7 +974,7 @@ namespace backend {
             if (!phase_outermost_nnz.empty()) {
                 prev_phase_outermost_nnz = phase_outermost_nnz;
             }
-            prev_phase_max_sparse = phase_info.current_sparse_intersection_level;
+            prev_phase_max_sparse = phase_info.current_sparse_intersection;
         }
 
         llir::lStmt body = llir::Sequence::make(std::move(body_stmts));
