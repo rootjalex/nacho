@@ -1,5 +1,6 @@
 #include "Format.h"
 
+#include <functional>
 #include "Error.h"
 #include "Printer.h"
 
@@ -152,40 +153,40 @@ make_format(const Format &a, const Format &b,
 
 } // namespace
 
-int Format::get_prev_sparse_level(int curr_level) const {
-    for (int i = curr_level - 1; i >= 0; --i) {
-        if (is_sparse_format(levels[i].format)) {
+TensorLevelNum Format::get_prev_sparse_level(TensorLevelNum curr_level) const {
+    for (TensorLevelNum i = curr_level - 1; i > BEFORE_FIRST_LEVEL; --i) {
+        if (is_sparse_format(levels[i.get()].format)) {
+            return TensorLevelNum(i);
+        }
+    }
+    return BEFORE_FIRST_LEVEL;
+}
+
+TensorLevelNum Format::get_next_sparse_level(TensorLevelNum curr_level) const {
+    for (TensorLevelNum i = curr_level + 1; i < TensorLevelNum(static_cast<int>(levels.size())); ++i) {
+        if (is_sparse_format(levels[i.get()].format)) {
             return i;
         }
     }
-    return -1;
+    return TensorLevelNum(static_cast<int>(levels.size()));
 }
 
-int Format::get_next_sparse_level(int curr_level) const {
-    for (size_t i = curr_level + 1; i < levels.size(); ++i) {
-        if (is_sparse_format(levels[i].format)) {
-            return static_cast<int>(i);
-        }
-    }
-    return static_cast<int>(levels.size());
-}
-
-int Format::get_last_sparse_level() const {
+TensorLevelNum Format::get_last_sparse_level() const {
     for (int i = static_cast<int>(levels.size()) - 1; i >= 0; --i) {
         if (is_sparse_format(levels[i].format)) {
-            return i;
+            return TensorLevelNum(i);
         }
     }
-    return -1;
+    return BEFORE_FIRST_LEVEL;
 }
 
-int Format::get_level_order(const std::string &idx) const {
+TensorLevelNum Format::get_level_order(const std::string &idx) const {
     for (size_t i = 0; i < levels.size(); ++i) {
         if (levels[i].index == idx) {
-            return static_cast<int>(i);
+            return TensorLevelNum(static_cast<int>(i));
         }
     }
-    return -1;
+    return BEFORE_FIRST_LEVEL;
 }
 
 LevelFormat Format::lvlfmt_of(const std::string &idx) const {
@@ -214,15 +215,16 @@ Format add_formats(const Format &a, const Format &b) {
     internal_assert(compatible_formats(a, b))
         << "Incompatible formats: " << a << " + " << b;
 
-    // Union semantics: Dense > Compressed > Coordinate.
-    // Either Dense → Dense; mixed Compressed+Coordinate → Compressed;
-    // both Coordinate → Coordinate; both Compressed → Compressed.
+    // Now build a format z based on the following rules:
+    // Any ordering in a or b must exist in the ordered `levels` of z
+    // Any index that is dense in *either* a or b must be dense in z
+    // Any index that is sparse in *both* a and b must be sparse in z.
+
     return make_format(a, b, [](LevelFormat fa, LevelFormat fb) {
+        // Dense if either is dense
         if (fa == LevelFormat::Dense || fb == LevelFormat::Dense)
             return LevelFormat::Dense;
-        if (fa == LevelFormat::Compressed || fb == LevelFormat::Compressed)
-            return LevelFormat::Compressed;
-        return LevelFormat::Coordinate;
+        return LevelFormat::Compressed;
     });
 }
 
@@ -230,12 +232,13 @@ Format mul_formats(const Format &a, const Format &b) {
     internal_assert(compatible_formats(a, b))
         << "Incompatible formats: " << a << " * " << b;
 
-    // Intersection semantics: Coordinate > Compressed > Dense.
-    // Either Coordinate → Coordinate; either Compressed → Compressed;
-    // both Dense → Dense.
+    // Now build a format z based on the following rules:
+    // Any ordering in a or b must exist in the ordered `levels` of z
+    // Any index that is sparse in *either* a or b must be sparse in z
+    // Any index that is dense in *both* a and b must be dense in z.
+
     return make_format(a, b, [](LevelFormat fa, LevelFormat fb) {
-        if (fa == LevelFormat::Coordinate || fb == LevelFormat::Coordinate)
-            return LevelFormat::Coordinate;
+        // Sparse if either is sparse
         if (fa == LevelFormat::Compressed || fb == LevelFormat::Compressed)
             return LevelFormat::Compressed;
         return LevelFormat::Dense;
@@ -245,12 +248,6 @@ Format mul_formats(const Format &a, const Format &b) {
 bool Format::are_all_lvls_dense() const {
     return std::all_of(levels.begin(), levels.end(),
                        [](const Level &lvl) { return lvl.format == LevelFormat::Dense; });
-}
-
-bool Format::is_all_coordinate() const {
-    return !levels.empty() &&
-           std::all_of(levels.begin(), levels.end(),
-                       [](const Level &lvl) { return lvl.format == LevelFormat::Coordinate; });
 }
 
 } // namespace nacho

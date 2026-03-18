@@ -1,5 +1,6 @@
 #include "Lattice.h"
 
+#include <functional>
 #include "Mutator.h"
 #include "Simplify.h"
 #include "Visitor.h"

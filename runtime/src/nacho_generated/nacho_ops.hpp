@@ -26,13 +26,3 @@ CSR<int, float> nacho_csr_add_nb(CSR<int, float> A, CSR<int, float> B);
 
 // TCSF operations (3D all-sparse, TCSF in/out)
 TCSF<int, float> nacho_tcsf_add_nb(TCSF<int, float> A, TCSF<int, float> B);
-
-// COO operations (nacho-generated Coordinate format)
-NachoCOO2D<int, float> nacho_coo2_add_nb(NachoCOO2D<int, float> A,
-                                          NachoCOO2D<int, float> B);
-
-NachoCOO3D<int, float> nacho_coo3_add_nb(NachoCOO3D<int, float> A,
-                                          NachoCOO3D<int, float> B);
-
-NachoCOO4D<int, float> nacho_coo4_add_nb(NachoCOO4D<int, float> A,
-                                          NachoCOO4D<int, float> B);

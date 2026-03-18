@@ -20,34 +20,29 @@ namespace backend {
         // Memoized lattices, used for both compute and precompute.
         std::map<Seq, Lattice, SeqLessThan> lattices;
         bool need_operand_pos_map;
-        // Track iterator symbols already declared within the generated kernel
-        // body so nested lowering can assign without redeclaring.
-        std::set<std::string> declared_iter_symbols;
-        std::set<std::string> declared_stop_symbols;
 
         ComputeKernelLowerer(
             std::map<std::string, TensorLowerer> &operand_tensors,
             TensorLowerer &result_tensor,
             std::map<std::string, TensorLowerer> &included_tensors,
             const std::vector<CIN> &forall_list, const CIN &cin,
-            int previous_sparse_intersection, int current_sparse_intersection, int next_sparse_intersection)
+            LoopNum previous_sparse_intersection, LoopNum current_sparse_intersection, LoopNum next_sparse_intersection)
             : BaseKernelLowerer(operand_tensors, result_tensor, included_tensors, forall_list, previous_sparse_intersection, current_sparse_intersection, next_sparse_intersection), cin(cin) {}
 
         llir::lStmt lower_precompute_function();
-        std::vector<llir::Function::Argument> get_precompute_kernel_args();
 
         llir::lStmt lower_compute_function();
-        std::vector<llir::Function::Argument> get_compute_kernel_args();
 
         llir::lStmt lower_loop(CIN loop,
             const std::set<Seq, SeqLessThan> &defined,
-            bool is_precompute, int loop_level);
+            bool is_precompute, LoopNum loop_num);
 
         llir::lStmt lower_assign_statement(CIN assign, bool is_precompute);
 
-        llir::lExpr get_condition_to_initialise_iterators(int level, bool end);
-
         void add_partition_assignments(std::vector<llir::lStmt> &stmts);
+
+        std::vector<llir::Function::Argument> get_precompute_kernel_args();
+        std::vector<llir::Function::Argument> get_compute_kernel_args();
     };
 
 } // namespace backend

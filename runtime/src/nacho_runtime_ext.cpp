@@ -105,40 +105,6 @@ NB_MODULE(nacho_runtime_ext, m) {
     m.def("gpu_broadcast_xA", &broadcast_xA<int32_t, int32_t, float>);
     m.def("spgemm", &spgemm<int32_t, float>);
 
-    nb::class_<NachoCOO2D<int32_t, float>>(m, "NachoCOO2D")
-        .def(nb::init<const Int32Vector &, const Int32Vector &,
-             const Float32Vector &, const int32_t &, const int32_t &>())
-        .def_ro("dim_i_indices", &NachoCOO2D<int32_t, float>::dim_i_indices, nb::rv_policy::reference)
-        .def_ro("dim_j_indices", &NachoCOO2D<int32_t, float>::dim_j_indices, nb::rv_policy::reference)
-        .def_ro("data", &NachoCOO2D<int32_t, float>::data, nb::rv_policy::reference)
-        .def_ro("dim_i_size", &NachoCOO2D<int32_t, float>::dim_i_size, nb::rv_policy::reference)
-        .def_ro("dim_j_size", &NachoCOO2D<int32_t, float>::dim_j_size, nb::rv_policy::reference);
-
-    nb::class_<NachoCOO3D<int32_t, float>>(m, "NachoCOO3D")
-        .def(nb::init<const Int32Vector &, const Int32Vector &, const Int32Vector &,
-             const Float32Vector &, const int32_t &, const int32_t &, const int32_t &>())
-        .def_ro("dim_i_indices", &NachoCOO3D<int32_t, float>::dim_i_indices, nb::rv_policy::reference)
-        .def_ro("dim_j_indices", &NachoCOO3D<int32_t, float>::dim_j_indices, nb::rv_policy::reference)
-        .def_ro("dim_k_indices", &NachoCOO3D<int32_t, float>::dim_k_indices, nb::rv_policy::reference)
-        .def_ro("data", &NachoCOO3D<int32_t, float>::data, nb::rv_policy::reference)
-        .def_ro("dim_i_size", &NachoCOO3D<int32_t, float>::dim_i_size, nb::rv_policy::reference)
-        .def_ro("dim_j_size", &NachoCOO3D<int32_t, float>::dim_j_size, nb::rv_policy::reference)
-        .def_ro("dim_k_size", &NachoCOO3D<int32_t, float>::dim_k_size, nb::rv_policy::reference);
-
-    nb::class_<NachoCOO4D<int32_t, float>>(m, "NachoCOO4D")
-        .def(nb::init<const Int32Vector &, const Int32Vector &, const Int32Vector &,
-             const Int32Vector &, const Float32Vector &,
-             const int32_t &, const int32_t &, const int32_t &, const int32_t &>())
-        .def_ro("dim_i_indices", &NachoCOO4D<int32_t, float>::dim_i_indices, nb::rv_policy::reference)
-        .def_ro("dim_j_indices", &NachoCOO4D<int32_t, float>::dim_j_indices, nb::rv_policy::reference)
-        .def_ro("dim_k_indices", &NachoCOO4D<int32_t, float>::dim_k_indices, nb::rv_policy::reference)
-        .def_ro("dim_l_indices", &NachoCOO4D<int32_t, float>::dim_l_indices, nb::rv_policy::reference)
-        .def_ro("data", &NachoCOO4D<int32_t, float>::data, nb::rv_policy::reference)
-        .def_ro("dim_i_size", &NachoCOO4D<int32_t, float>::dim_i_size, nb::rv_policy::reference)
-        .def_ro("dim_j_size", &NachoCOO4D<int32_t, float>::dim_j_size, nb::rv_policy::reference)
-        .def_ro("dim_k_size", &NachoCOO4D<int32_t, float>::dim_k_size, nb::rv_policy::reference)
-        .def_ro("dim_l_size", &NachoCOO4D<int32_t, float>::dim_l_size, nb::rv_policy::reference);
-
     // nacho-generated operations
     m.def("nacho_sparse_vec_mul", &nacho_sparse_vec_mul_nb);
     m.def("nacho_sparse_vec_add", &nacho_sparse_vec_add_nb);
@@ -148,9 +114,6 @@ NB_MODULE(nacho_runtime_ext, m) {
     m.def("nacho_dcsr_add", &nacho_dcsr_add_nb);
     m.def("nacho_csr_add", &nacho_csr_add_nb);
     m.def("nacho_tcsf_add", &nacho_tcsf_add_nb);
-    m.def("nacho_coo2_add", &nacho_coo2_add_nb);
-    m.def("nacho_coo3_add", &nacho_coo3_add_nb);
-    m.def("nacho_coo4_add", &nacho_coo4_add_nb);
 
     // handwritten
     // m.def("cv_collapse_coo", &cv_collapse_coo<uint32_t, uint32_t, float>);

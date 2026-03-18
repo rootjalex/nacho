@@ -21,10 +21,6 @@ std::ostream &operator<<(std::ostream &os, const Level &lvl) {
         os << "C";
         break;
     }
-    case LevelFormat::Coordinate: {
-        os << "O";
-        break;
-    }
     }
     return os;
 }
@@ -742,7 +738,6 @@ void Printer::visit(const llir::KernelLaunch *node) {
 }
 
 void Printer::visit(const llir::RawCode *node) {
-    // Print each line with proper indentation
     std::istringstream stream(node->code);
     std::string line;
     while (std::getline(stream, line)) {
