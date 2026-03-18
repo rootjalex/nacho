@@ -413,7 +413,8 @@ namespace backend {
         return llir::Sequence::make(std::move(store_partition_stmts));
     }
 
-    llir::lExpr PartitionKernelLowerer::get_call_work_function_expr(LoopNum loop_num, bool is_last_loop, TensorLowerer& tensor, llir::lExpr index_value) {
+    // get_lower_bound gets the work for index_value -1 (sparse iterators are already assumed to be corresponding to index-1)
+    llir::lExpr PartitionKernelLowerer::get_call_work_function_expr(LoopNum loop_num, TensorLowerer& tensor, llir::lExpr index_value) {
         const Forall* forall = forall_list[loop_num.get()].as<Forall>();
         std::string forall_idx = forall->idx;
 
@@ -434,7 +435,7 @@ namespace backend {
                 llir::lVar::make(index_t, tensor.get_iterator_suffix(forall_idx))
             );
         } else {
-            work_args.emplace_back(is_last_loop? index_value : index_value - 1);
+            work_args.emplace_back(index_value);
         }
 
 
@@ -657,8 +658,8 @@ namespace backend {
                     work_var + (need_to_exclude_tensors_at_runtime && loop_num != BEFORE_FIRST_LOOP+1 ? llir::lSelect::make(
                         tensor_partitioned_vars.at(tensor.tensor_name),
                         llir::lConst::make((int64_t)0),
-                        get_call_work_function_expr(loop_num, is_last_loop, tensor, mid_var)
-                    ) : get_call_work_function_expr(loop_num, is_last_loop, tensor, mid_var))
+                        get_call_work_function_expr(loop_num, tensor, is_last_loop ? mid_var : mid_var - 1)
+                    ) : get_call_work_function_expr(loop_num, tensor, is_last_loop ? mid_var : mid_var - 1))
                 )
             );
         }
@@ -1027,52 +1028,19 @@ namespace backend {
         while_stmts.emplace_back(
             llir::Store::make(
                 work_var,
-                get_call_work_function_expr(loop_num, false, result_tensor, mid_var)
+                get_call_work_function_expr(loop_num, result_tensor, mid_var-1)
             )
         );
-        
-        while_stmts.emplace_back(
-            llir::IfElse::make(
-                work_var < rem_count_var,
-                llir::Store::make(
-                    start_var,
-                    mid_var
-                ),
-                llir::Store::make(
-                    end_var,
-                    mid_var - 1
-                )
-            )
-        );
-
+    
 
         std::vector<llir::lStmt> break_stmts;
 
-        break_stmts.emplace_back(
-            llir::Store::make(mid_var, mid_expr)
-        );
-
-        break_stmts.emplace_back(
-            llir::Store::make(
-                work_var,
-                get_call_work_function_expr(loop_num, true, result_tensor, mid_var)
-            )
-        );
         break_stmts.emplace_back(llir::Store::make(rem_count_var, rem_count_var - work_var));
-
-        // auto index_value = result_tensor.tensor_type.format.is_sparse(forall_idx) ? result_tensor.get_indices_field(forall_idx)[mid_var] :mid_var ;
-        // break_stmts.emplace_back(
-        //     llir::Declare::make(
-        //         index_t, forall_idx,
-        //         index_value
-        //     )
-        // );
-        // break_stmts.emplace_back(get_store_partition_statements(loop_index, llir::lVar::make(index_t, forall_idx), need_to_exclude_tensors_at_runtime, false));
 
         break_stmts.emplace_back(
             llir::Store::make(
             get_partition_struct_current_thread_field(result_tensor.get_iterator_suffix(forall_idx)),
-            mid_var+1)
+            result_tensor.is_sparse(forall_idx) ? mid_var+1 : mid_var)
         );
 
         for(auto it : included_tensors) {
@@ -1081,7 +1049,7 @@ namespace backend {
                     break_stmts.emplace_back(
                         llir::Store::make(
                             llir::lVar::make(index_t, it.second.get_iterator_suffix(forall_idx)),
-                            map_result_pos_to_operand_pos(forall, it.second, mid_var+1)
+                            map_result_pos_to_operand_pos(forall, it.second, result_tensor.is_sparse(forall_idx) ? mid_var+1 : mid_var)
                         )
                     );
                     break_stmts.emplace_back(
@@ -1103,6 +1071,20 @@ namespace backend {
             )
         );
 
+        while_stmts.emplace_back(
+            llir::IfElse::make(
+                work_var < rem_count_var,
+                llir::Store::make(
+                    start_var,
+                    mid_var
+                ),
+                llir::Store::make(
+                    end_var,
+                    mid_var - 1
+                )
+            )
+        );
+
         stmts.emplace_back(
             llir::While::make(
                 llir::lConst::make((bool)true),
@@ -1111,7 +1093,7 @@ namespace backend {
         );
         if(result_tensor.is_sparse(forall_idx)) {
             stmts.emplace_back(
-                llir::Declare::make(index_t, forall_idx, result_tensor.get_indices_field(forall_idx)[mid_var+1])
+                llir::Declare::make(index_t, forall_idx, result_tensor.get_indices_field(forall_idx)[result_tensor.is_sparse(forall_idx) ? mid_var+1 : mid_var])
             );
         }
 

@@ -56,7 +56,7 @@ void ComputeKernelLowerer::add_partition_assignments(
     auto get_max_iterator = [&](const Index *idx) {
         TensorLowerer tlow = get_tensor(idx->tensor);
         if(!tlow.is_sparse(TensorLevelNum(idx->level))) {
-            return tlow.get_length_field(TensorLevelNum(idx->level)) - 1;
+            return tlow.get_size_field(TensorLevelNum(idx->level)) - 1;
         }
         return get_partition_initializer_expr_for_boundary_cases(tlow.tensor_level_to_loop_num(TensorLevelNum(idx->level)), tlow, true);
     };
@@ -220,7 +220,7 @@ llir::lStmt ComputeKernelLowerer::
 
     std::set<Seq, SeqLessThan> defined; // initially empty
     internal_assert(cin.defined());
-    stmts.push_back(lower_loop(cin, defined, /*is_precompute*/ true, BEFORE_FIRST_LOOP+1));
+    stmts.push_back(lower_loop(cin, defined, /*is_precompute*/ true, BEFORE_FIRST_LOOP+1, nullptr));
 
     for (LoopNum i = BEFORE_FIRST_LOOP+1; i <= current_sparse_intersection; ++i) {
         auto index = result_tensor.loop_name(i);
@@ -342,7 +342,7 @@ llir::lStmt ComputeKernelLowerer::
 
     std::set<Seq, SeqLessThan> defined; // initially empty
     internal_assert(cin.defined());
-    stmts.push_back(lower_loop(cin, defined, /*is_precompute*/ false, BEFORE_FIRST_LOOP+1));
+    stmts.push_back(lower_loop(cin, defined, /*is_precompute*/ false, BEFORE_FIRST_LOOP+1, nullptr));
 
     stmts.emplace_back(llir::Return::make());
     body = llir::Sequence::make(std::move(stmts));
@@ -506,7 +506,7 @@ llir::lStmt ComputeKernelLowerer::lower_assign_statement(
                     work_args.emplace_back(Tensor.get_iter_var(Tensor.loop_num_to_tensor_level(j), index_t));
             }
 
-            if(Tensor.tensor_level_exists(current_sparse_intersection)) {
+            if(Tensor.tensor_level_exists(current_sparse_intersection) && Tensor.is_sparse(current_sparse_intersection)) {
                 work_args.emplace_back(Tensor.get_iter_var(Tensor.loop_num_to_tensor_level(current_sparse_intersection), index_t));
             } else {
                 work_args.emplace_back(llir::lVar::make(index_t, Tensor.loop_name(current_sparse_intersection)));
@@ -556,7 +556,7 @@ llir::lStmt ComputeKernelLowerer::lower_assign_statement(
             llir::lVar::make(llir::Generic_t::make("index_t"), "T_work_offsets")[
                 result_tensor.get_level_indexing_expression(
                     result_tensor.loop_num_to_tensor_level(current_sparse_intersection)+1,
-                    false,
+                    true,
                     get_iter_vars_result(
                         result_tensor,
                         result_tensor.loop_num_to_tensor_level(current_sparse_intersection)+1
@@ -574,7 +574,7 @@ llir::lStmt ComputeKernelLowerer::lower_assign_statement(
 
 llir::lStmt ComputeKernelLowerer::lower_loop(
     CIN loop, const std::set<Seq, SeqLessThan> &defined,
-    bool is_precompute, LoopNum loop_num) {
+    bool is_precompute, LoopNum loop_num, llir::lExpr offset_write_cond) {
     // std::cout<<"Lowering loop "<<loop<<std::endl;
     const Forall *forall = loop.as<Forall>();
     internal_assert(forall) << "Expected Forall in lower_loop: " << loop;
@@ -830,30 +830,35 @@ llir::lStmt ComputeKernelLowerer::lower_loop(
         std::vector<lExprPair> iters;
         iters.reserve(is.size() + (has_universe_iter ? 1 : 0));
 
-        llir::lExpr cond;
+        
         // the condition for offset write eg - Z.dim_j_offsets[offset_i + 1] = offset_j;
-        llir::lExpr offset_write_cond;
+        if(!offset_write_cond.defined())
+            offset_write_cond = (llir::lVar::make(index_t, "thread_id") == llir::lVar::make(index_t, "max_thread_id"));
+
+        llir::lExpr cond;
+        llir::lExpr offset_write_sub_cond;
         if(has_universe_iter) {
             const auto & miter = imap.find(Empty::make(false));
             internal_assert(miter != imap.end()) << "Expected universe iterator to be present in imap";
             iters.push_back(miter->second);
             cond = miter->second.first <= miter->second.second;
-            offset_write_cond = (miter->second.first < miter->second.second);
+            offset_write_sub_cond = (miter->second.first < miter->second.second);
         }
         for (const auto &i : is) {
             const auto &miter = imap.find(i);
             internal_assert(miter != imap.end()) << i;
             iters.push_back(miter->second);
+            
             if (cond.defined()) {
                 cond = cond && miter->second.first <= miter->second.second;
-                offset_write_cond = offset_write_cond || (miter->second.first < miter->second.second);
+                offset_write_sub_cond = offset_write_sub_cond || (miter->second.first < miter->second.second);
             } else {
                 cond = miter->second.first <= miter->second.second;
-                offset_write_cond = (miter->second.first < miter->second.second);
+                offset_write_sub_cond = (miter->second.first < miter->second.second);
             }
         }
 
-        offset_write_cond = offset_write_cond || (llir::lVar::make(index_t, "thread_id") == llir::lVar::make(index_t, "max_thread_id"));
+        offset_write_cond = offset_write_cond || offset_write_sub_cond;
         internal_assert(cond.defined()) << s;
 
         auto get_body_epilogue_stmt = [&](const CIN nextCin, Seq seq, const Forall *forall) {
@@ -978,7 +983,7 @@ llir::lStmt ComputeKernelLowerer::lower_loop(
 
             llir::lStmt body;
             if (cin.as<Forall>()) {
-                body = lower_loop(cin, new_def, is_precompute, loop_num + 1);
+                body = lower_loop(cin, new_def, is_precompute, loop_num + 1, offset_write_cond);
             } else {
                 body = lower_assign_statement(cin, is_precompute);
             }
@@ -1117,14 +1122,14 @@ llir::lStmt ComputeKernelLowerer::lower_loop(
             // TODO: what if as is empty??
         };
         
-        if(is_loop_before_prev_intersection) {
+        if ((iters.size() == 1 && has_universe_iter) || is_loop_before_prev_intersection) {
+            // For loop (dense)!
             static const llir::lExpr _1 = llir::lConst::make(1);
-            std::string name = result_tensor.is_sparse(forall->idx) ? iters[0].first.as<llir::lVar>()->name : forall->idx;
+            std::string name = iters[0].first.as<llir::lVar>()->name;
             // Evaluate (prologue)
             auto stmts = make_evals(s);
 
             llir::lStmt body = make_body(s);
-            assert(body.defined());
 
             if (const auto *as_seq = body.as<llir::Sequence>()) {
                 stmts.insert(stmts.end(), as_seq->stmts.begin(),
@@ -1137,105 +1142,81 @@ llir::lStmt ComputeKernelLowerer::lower_loop(
 
             // TODO: load index if sparse iterator
             return llir::For::make(name, std::move(cond), _1,
-                                std::move(body));
+                            std::move(body));
+        } else if (iters.size() == 1 && !has_universe_iter) {
+            // internal_error << "TODO: handle sparse for loop optimization";
+            // For loop (sparse)!
+            const llir::lVar *start = iters[0].first.as<llir::lVar>();
+            
+            static const llir::lExpr _1 = llir::lConst::make(1);
 
-        } else {
-            if (iters.size() == 1 && has_universe_iter) {
-                // For loop (dense)!
-                static const llir::lExpr _1 = llir::lConst::make(1);
-
-                // Evaluate (prologue)
-                auto stmts = make_evals(s);
-
-                llir::lStmt body = make_body(s);
-
-                if (const auto *as_seq = body.as<llir::Sequence>()) {
-                    stmts.insert(stmts.end(), as_seq->stmts.begin(),
-                                as_seq->stmts.end());
-                } else {
-                    stmts.push_back(std::move(body));
-                }
-
-                body = llir::Sequence::make(std::move(stmts));
-
-                // TODO: load index if sparse iterator
-                return llir::For::make(iters[0].first.as<llir::lVar>()->name, std::move(cond), _1,
-                                    std::move(body));
-            } else if (iters.size() == 1 && !has_universe_iter) {
-                // internal_error << "TODO: handle sparse for loop optimization";
-                // For loop (sparse)!
-                const llir::lVar *start = iters[0].first.as<llir::lVar>();
-                
-                static const llir::lExpr _1 = llir::lConst::make(1);
-
-                auto index =  is[0].as<Index>();
-                if(!index) {
-                    internal_assert(false) << "Expected Index: " << is[0];
-                }
-                TensorLowerer tlower = get_tensor(index->tensor);
-
-                llir::lStmt body; 
-                
-                // Store the index value in the result
-                if(!is_precompute) {
-                    body = llir::Declare::make(index_t, forall->idx, tlower.get_coord(TensorLevelNum(index->level), index_t));
-                }
-
-                if( body.defined()) {
-                    body = llir::Sequence::make({std::move(body), make_body(s)});
-                } else {
-                    body = make_body(s);
-                }
-                
-                if(!body.defined()) {
-                    assert(loop_num+1 == LoopNum(forall_list.size()));
-                    return llir::lStmt();
-                }
-
-                // TODO: load index if sparse iterator
-                return llir::For::make(start->name, std::move(cond), _1,
-                                    std::move(body));
-            } else {
-                internal_assert(iters.size() > 1) << "Expected multiple iterators";
-                // While loop
-                auto cases = lattice.sub_points(s);
-
-                std::function<llir::lStmt(size_t)> build_ifelse =
-                    [&](size_t count) -> llir::lStmt {
-                    if (count >= cases.size()) {
-                        return llir::lStmt();
-                    }
-                    llir::lStmt b = make_body(cases[count]);
-                    auto [iters, _, has_universe_iter] = partition_iterators_locators(cases[count]);
-                    if (iters.empty() && has_universe_iter) {
-                        // Iterating only over the universe
-                        return b;
-                    }
-                    if(b.defined()) {
-                        auto ifelse = llir::IfElse::make(make_if_else_condition(cases[count]), b,
-                                            build_ifelse(count + 1));
-                        return ifelse;
-                    } else {
-                        return build_ifelse(count + 1);
-                    }
-                };
-
-                // Prologue (evaluate)
-                auto stmts = make_evals(s);
-
-                auto if_else = build_ifelse(0); 
-                if(!if_else.defined()) {
-                    return llir::lStmt();
-                }
-                // Execute
-                stmts.push_back(if_else);
-                // Epilogue (incrments!)
-                make_incs(s, stmts);
-
-                auto body = llir::Sequence::make(std::move(stmts));
-
-                return llir::While::make(std::move(cond), std::move(body));
+            auto index =  is[0].as<Index>();
+            if(!index) {
+                internal_assert(false) << "Expected Index: " << is[0];
             }
+            TensorLowerer tlower = get_tensor(index->tensor);
+
+            llir::lStmt body; 
+            
+            // Store the index value in the result
+            if(!is_precompute) {
+                body = llir::Declare::make(index_t, forall->idx, tlower.get_coord(TensorLevelNum(index->level), index_t));
+            }
+
+            if( body.defined()) {
+                body = llir::Sequence::make({std::move(body), make_body(s)});
+            } else {
+                body = make_body(s);
+            }
+            
+            if(!body.defined()) {
+                assert(loop_num+1 == LoopNum(forall_list.size()));
+                return llir::lStmt();
+            }
+
+            // TODO: load index if sparse iterator
+            return llir::For::make(start->name, std::move(cond), _1,
+                                std::move(body));
+        } else {
+            internal_assert(iters.size() > 1) << "Expected multiple iterators";
+            // While loop
+            auto cases = lattice.sub_points(s);
+
+            std::function<llir::lStmt(size_t)> build_ifelse =
+                [&](size_t count) -> llir::lStmt {
+                if (count >= cases.size()) {
+                    return llir::lStmt();
+                }
+                llir::lStmt b = make_body(cases[count]);
+                auto [iters, _, has_universe_iter] = partition_iterators_locators(cases[count]);
+                if (iters.empty() && has_universe_iter) {
+                    // Iterating only over the universe
+                    return b;
+                }
+                if(b.defined()) {
+                    auto ifelse = llir::IfElse::make(make_if_else_condition(cases[count]), b,
+                                        build_ifelse(count + 1));
+                    return ifelse;
+                } else {
+                    return build_ifelse(count + 1);
+                }
+            };
+
+            // Prologue (evaluate)
+            auto stmts = make_evals(s);
+
+            auto if_else = build_ifelse(0); 
+            if(!if_else.defined()) {
+                return llir::lStmt();
+            }
+            // Execute
+            stmts.push_back(if_else);
+            // Epilogue (incrments!)
+            make_incs(s, stmts);
+
+            auto body = llir::Sequence::make(std::move(stmts));
+
+            return llir::While::make(std::move(cond), std::move(body));
         }
     };
     if(is_loop_before_prev_intersection ) {
