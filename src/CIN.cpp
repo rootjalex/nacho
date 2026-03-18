@@ -7,21 +7,23 @@
 
 namespace nacho {
 
-cExpr cAdd::make(cExpr a, cExpr b) {
+cExpr cAdd::make(cExpr a, cExpr b, TensorType type) {
     internal_assert(a.defined() && b.defined())
         << "Add of undefined: " << a << " + " << b;
     cAdd *node = new cAdd;
     node->a = std::move(a);
     node->b = std::move(b);
+    node->type = std::move(type);
     return node;
 }
 
-cExpr cMul::make(cExpr a, cExpr b) {
+cExpr cMul::make(cExpr a, cExpr b, TensorType type) {
     internal_assert(a.defined() && b.defined())
         << "Mul of undefined: " << a << " + " << b;
     cMul *node = new cMul;
     node->a = std::move(a);
     node->b = std::move(b);
+    node->type = std::move(type);
     return node;
 }
 

@@ -124,16 +124,18 @@ CIN CINNode<T>::mutate_CIN(Mutator *m) const {
 // Scalar math
 struct cAdd : cExprNode<cAdd> {
     cExpr a, b;
-
-    static cExpr make(cExpr a, cExpr b);
+    TensorType type;
+    
+    static cExpr make(cExpr a, cExpr b, TensorType type);
 
     static const cExprEnum node_type = cExprEnum::cAdd;
 };
 
 struct cMul : cExprNode<cMul> {
     cExpr a, b;
+    TensorType type;
 
-    static cExpr make(cExpr a, cExpr b);
+    static cExpr make(cExpr a, cExpr b, TensorType type);
 
     static const cExprEnum node_type = cExprEnum::cMul;
 };

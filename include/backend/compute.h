@@ -36,7 +36,7 @@ namespace backend {
 
         llir::lStmt lower_loop(CIN loop,
             const std::set<Seq, SeqLessThan> &defined,
-            bool is_precompute, LoopNum loop_num);
+            bool is_precompute, LoopNum loop_num, llir::lExpr offset_write_cond);
 
         llir::lStmt lower_assign_statement(CIN assign, bool is_precompute);
 

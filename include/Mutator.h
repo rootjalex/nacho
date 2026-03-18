@@ -36,6 +36,16 @@ struct Mutator {
 
   private:
     template <typename Base, typename T>
+    Base mutate_binop_cexpr(const T *node) {
+        Base a = mutate(node->a);
+        Base b = mutate(node->b);
+        if (a.same_as(node->a) && b.same_as(node->b)) {
+            return node;
+        }
+        return T::make(std::move(a), std::move(b), std::move(node->type));
+    }
+
+    template <typename Base, typename T>
     Base mutate_binop(const T *node) {
         Base a = mutate(node->a);
         Base b = mutate(node->b);

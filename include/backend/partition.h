@@ -46,7 +46,7 @@ struct PartitionKernelLowerer: public BaseKernelLowerer {
 
     llir::lStmt get_store_partition_statements(LoopNum loop_num, llir::lExpr index_value, bool need_to_exclude_tensors_at_runtime, bool is_last_loop);
 
-    llir::lExpr get_call_work_function_expr(LoopNum loop_num, bool is_last_loop, TensorLowerer& tensor, llir::lExpr index_value);
+    llir::lExpr get_call_work_function_expr(LoopNum loop_num, TensorLowerer& tensor, llir::lExpr index_value);
 
     llir::lStmt get_statements_to_find_sparse_position(LoopNum loop_num, TensorLowerer& tensor, llir::lExpr index_value, bool need_to_exclude_tensors_at_runtime);
 

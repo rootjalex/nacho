@@ -196,7 +196,7 @@ struct Simplify : public SimplifySeq {
         if (a.same_as(node->a) && b.same_as(node->b)) {
             return node;
         }
-        return T::make(std::move(a), std::move(b));
+        return T::make(std::move(a), std::move(b), std::move(node->type));
     }
 
     cExpr visit(const cAdd *node) override {
