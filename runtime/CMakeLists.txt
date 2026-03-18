@@ -82,7 +82,24 @@ foreach (NACHO_OP IN LISTS NACHO_GENERATED_OPS)
   list(APPEND NACHO_GENERATED_CUDA_SRC "${NACHO_OP_CU}")
 endforeach ()
 set_source_files_properties(${NACHO_GENERATED_CUDA_SRC} PROPERTIES GENERATED TRUE)
-add_custom_target(generate_nacho_kernels DEPENDS ${NACHO_GENERATED_CUDA_SRC})
+
+# Generate runtime wrapper files (nacho_ops.h, .hpp, .cpp)
+set(NACHO_OPS_H "${NACHO_GENERATED_DIR}/nacho_ops.h")
+set(NACHO_OPS_HPP "${NACHO_GENERATED_DIR}/nacho_ops.hpp")
+set(NACHO_OPS_CPP "${NACHO_GENERATED_DIR}/nacho_ops.cpp")
+add_custom_command(
+  OUTPUT "${NACHO_OPS_H}" "${NACHO_OPS_HPP}" "${NACHO_OPS_CPP}"
+  COMMAND "${NACHO_COMPILER_EXE}" --emit-wrappers "${NACHO_GENERATED_DIR}"
+  DEPENDS "${NACHO_COMPILER_EXE}"
+  COMMENT "Generating nacho runtime wrapper code"
+  VERBATIM
+)
+set_source_files_properties("${NACHO_OPS_CPP}" PROPERTIES GENERATED TRUE)
+
+add_custom_target(generate_nacho_kernels DEPENDS
+  ${NACHO_GENERATED_CUDA_SRC}
+  "${NACHO_OPS_H}" "${NACHO_OPS_HPP}" "${NACHO_OPS_CPP}"
+)
 
 if (NOT SKBUILD)
   message(WARNING "\
@@ -185,7 +202,7 @@ set(nacho_runtime_CPP_SRC
     src/sparse_vector/sparse_vector.cpp
     src/broadcasts/broadcasts.cpp
     src/spgemm/spgemm.cpp
-    src/nacho_generated/nacho_ops.cpp
+    ${NACHO_OPS_CPP}
 )
 
 # Add the CUDA flags (Redwood GPU arch)
@@ -217,6 +234,14 @@ nanobind_add_module(
   ${nacho_runtime_CUDA_SRC}
 )
 add_dependencies(nacho_runtime_ext generate_nacho_kernels)
+
+# Include paths for generated wrapper files: the generated nacho_ops.cpp needs
+# nb_utils.hpp and cuda_utils/cuda_utils.h from src/, and nacho_runtime_ext.cpp
+# needs nacho_generated/nacho_ops.hpp from the build tree.
+target_include_directories(nacho_runtime_ext PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_BINARY_DIR}/generated
+)
 
 # Link the CUDA libraries (optional, only needed if you require specific CUDA libraries)
 # target_link_libraries(nacho_runtime_ext PRIVATE CUDA::cudart)

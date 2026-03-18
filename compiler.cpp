@@ -9,6 +9,7 @@
 #include <fstream>
 #include <functional>
 #include <map>
+#include <sstream>
 
 using namespace nacho;
 
@@ -353,6 +354,447 @@ const std::map<std::string, ExprBuilder> EXPRESSIONS = {
 };
 // clang-format on
 
+// ===========================================================================
+// Runtime Wrapper Code Generation
+// ===========================================================================
+// Generates nacho_ops.{h,hpp,cpp} that bridge the runtime's nanobind structs
+// (CVector, CSR, DCSR, TCSF) to the flat-API wrappers in the generated .cu
+// files.  The mapping from compiler struct fields to runtime struct accessors
+// is determined entirely by the tensor format.
+
+enum class RuntimeType { CVector, CSR, DCSR, TCSF };
+
+static RuntimeType get_runtime_type(const Format &fmt) {
+    int n = (int)fmt.levels.size();
+    int s = 0;
+    for (auto &l : fmt.levels)
+        if (is_sparse_format(l.format)) s++;
+    if (n == 1 && s == 1) return RuntimeType::CVector;
+    if (n == 2 && s == 1) return RuntimeType::CSR;
+    if (n == 2 && s == 2) return RuntimeType::DCSR;
+    if (n == 3 && s == 3) return RuntimeType::TCSF;
+    std::cerr << "Unsupported format for runtime wrapper generation\n";
+    exit(1);
+}
+
+static std::string runtime_type_str(RuntimeType rt) {
+    switch (rt) {
+    case RuntimeType::CVector: return "CVector<int, int, float>";
+    case RuntimeType::CSR:     return "CSR<int, float>";
+    case RuntimeType::DCSR:    return "DCSR<int, float>";
+    case RuntimeType::TCSF:    return "TCSF<int, float>";
+    }
+    return "";
+}
+
+// Map a compiler struct field kind + dimension position to a runtime struct
+// accessor expression.  `var` is the wrapper parameter name (e.g. "A").
+// `kind` is one of: size, length, indices, offsets, values, nnz.
+// `dim` is the 0-based dimension position in the format.
+static std::string rt_field(RuntimeType rt, const std::string &var,
+                            const std::string &kind, int dim = 0) {
+    if (kind == "values") return "(float *)" + var + ".data.data()";
+    if (kind == "nnz") {
+        switch (rt) {
+        case RuntimeType::CVector: return "(int)" + var + ".indices.shape(0)";
+        case RuntimeType::CSR:     return "(int)" + var + ".indices.shape(0)";
+        case RuntimeType::DCSR:    return "(int)" + var + ".col_indices.shape(0)";
+        case RuntimeType::TCSF:    return "(int)" + var + ".k_indices.shape(0)";
+        }
+    }
+    if (kind == "size") {
+        switch (rt) {
+        case RuntimeType::CVector: return var + ".size";
+        case RuntimeType::CSR:     return var + ".shape(" + std::to_string(dim) + ")";
+        case RuntimeType::DCSR:    return dim == 0 ? var + ".nrows" : var + ".ncols";
+        case RuntimeType::TCSF: {
+            const char *f[] = {"dim_i_size", "dim_j_size", "dim_k_size"};
+            return var + "." + f[dim];
+        }
+        }
+    }
+    if (kind == "length") {
+        switch (rt) {
+        case RuntimeType::CVector: return "(int)" + var + ".indices.shape(0)";
+        case RuntimeType::CSR:     return "(int)" + var + ".indices.shape(0)";
+        case RuntimeType::DCSR:
+            return "(int)" + var + (dim == 0 ? ".row_indices" : ".col_indices") + ".shape(0)";
+        case RuntimeType::TCSF: {
+            const char *f[] = {"i_indices", "j_indices", "k_indices"};
+            return "(int)" + var + "." + f[dim] + ".shape(0)";
+        }
+        }
+    }
+    if (kind == "indices") {
+        switch (rt) {
+        case RuntimeType::CVector: return "(int *)" + var + ".indices.data()";
+        case RuntimeType::CSR:     return "(int *)" + var + ".indices.data()";
+        case RuntimeType::DCSR:
+            return "(int *)" + var + (dim == 0 ? ".row_indices" : ".col_indices") + ".data()";
+        case RuntimeType::TCSF: {
+            const char *f[] = {"i_indices", "j_indices", "k_indices"};
+            return "(int *)" + var + "." + f[dim] + ".data()";
+        }
+        }
+    }
+    if (kind == "offsets") {
+        switch (rt) {
+        case RuntimeType::CVector: return "";
+        case RuntimeType::CSR:     return "(int *)" + var + ".indptr.data()";
+        case RuntimeType::DCSR:    return "(int *)" + var + ".row_offsets.data()";
+        case RuntimeType::TCSF: {
+            const char *f[] = {"", "j_offsets", "k_offsets"};
+            return "(int *)" + var + "." + f[dim] + ".data()";
+        }
+        }
+    }
+    return "";
+}
+
+// Build flat-API argument expressions for one operand, in the same order
+// as TensorLowerer::lower_tensor_struct_definition().
+static std::vector<std::string> build_operand_args(const Format &fmt,
+                                                    const std::string &var) {
+    RuntimeType rt = get_runtime_type(fmt);
+    std::vector<std::string> args;
+    // Size fields (forward order)
+    for (int i = 0; i < (int)fmt.levels.size(); i++)
+        args.push_back(rt_field(rt, var, "size", i));
+    // Data fields: built innermost-to-outermost, then reversed
+    std::vector<std::string> data;
+    data.push_back(rt_field(rt, var, "nnz"));
+    data.push_back(rt_field(rt, var, "values"));
+    for (int i = (int)fmt.levels.size() - 1; i >= 0; i--) {
+        if (is_sparse_format(fmt.levels[i].format)) {
+            data.push_back(rt_field(rt, var, "indices", i));
+            data.push_back(rt_field(rt, var, "length", i));
+            if (i != 0)
+                data.push_back(rt_field(rt, var, "offsets", i));
+        }
+    }
+    for (auto it = data.rbegin(); it != data.rend(); ++it)
+        args.push_back(*it);
+    return args;
+}
+
+// Find the innermost sparse level index in a format.
+static int find_innermost_sparse(const Format &fmt) {
+    for (int i = (int)fmt.levels.size() - 1; i >= 0; i--)
+        if (is_sparse_format(fmt.levels[i].format)) return i;
+    return -1;
+}
+
+// Uppercase the first character of a string (for wrapper param names).
+static std::string to_upper_first(const std::string &s) {
+    std::string r = s;
+    r[0] = (char)toupper(r[0]);
+    return r;
+}
+
+// ---------------------------------------------------------------------------
+// .h  — flat API forward declarations
+// ---------------------------------------------------------------------------
+static void emit_flat_forward_decl(std::ostream &os, const std::string &op,
+                                    const backend::CINLowerer &lowerer) {
+    const auto &rfmt = lowerer.result_tensor.tensor_type.format;
+    std::vector<std::string> params;
+
+    // Operand struct fields (same order as lower_tensor_struct_definition)
+    for (const auto &[name, tensor] : lowerer.operand_tensors) {
+        const auto &fmt = tensor.tensor_type.format;
+        for (int i = 0; i < (int)fmt.levels.size(); i++)
+            params.push_back("index_t " + name + "_dim_" + fmt.levels[i].index + "_size");
+        std::vector<std::string> dp;
+        dp.push_back("index_t " + name + "_nnz");
+        dp.push_back("value_t *" + name + "_values");
+        for (int i = (int)fmt.levels.size() - 1; i >= 0; i--) {
+            auto idx = fmt.levels[i].index;
+            if (is_sparse_format(fmt.levels[i].format)) {
+                dp.push_back("index_t *" + name + "_dim_" + idx + "_indices");
+                dp.push_back("index_t " + name + "_dim_" + idx + "_length");
+                if (i != 0)
+                    dp.push_back("index_t *" + name + "_dim_" + idx + "_offsets");
+            }
+        }
+        for (auto it = dp.rbegin(); it != dp.rend(); ++it)
+            params.push_back(*it);
+    }
+    // Result size fields
+    for (auto &lvl : rfmt.levels)
+        params.push_back("index_t result_dim_" + lvl.index + "_size");
+    // Output references
+    params.push_back("index_t &out_nnz");
+    int innermost = find_innermost_sparse(rfmt);
+    for (int i = 0; i < (int)rfmt.levels.size(); i++)
+        if (is_sparse_format(rfmt.levels[i].format) && i != innermost)
+            params.push_back("index_t &out_dim_" + rfmt.levels[i].index + "_length");
+    for (int i = (int)rfmt.levels.size() - 1; i >= 0; i--) {
+        auto idx = rfmt.levels[i].index;
+        if (is_sparse_format(rfmt.levels[i].format)) {
+            params.push_back("index_t *&out_dim_" + idx + "_indices");
+            if (i != 0)
+                params.push_back("index_t *&out_dim_" + idx + "_offsets");
+        }
+    }
+    params.push_back("value_t *&out_values");
+
+    // Emit
+    os << "template <typename index_t, typename value_t>\n";
+    os << "void " << op << "(";
+    std::string pad(op.size() + 6, ' ');
+    for (size_t i = 0; i < params.size(); i++) {
+        if (i > 0) os << ",\n" << pad;
+        os << params[i];
+    }
+    os << ");\n";
+}
+
+// ---------------------------------------------------------------------------
+// .hpp — wrapper function declarations
+// ---------------------------------------------------------------------------
+static void emit_wrapper_decl(std::ostream &os, const std::string &op,
+                               const backend::CINLowerer &lowerer) {
+    std::string rt_str = runtime_type_str(
+        get_runtime_type(lowerer.result_tensor.tensor_type.format));
+    std::string sig = rt_str + " nacho_" + op + "_nb(";
+    std::string pad(sig.size(), ' ');
+
+    os << sig;
+    bool first = true;
+    for (const auto &[name, tensor] : lowerer.operand_tensors) {
+        if (!first) os << ",\n" << pad;
+        first = false;
+        os << runtime_type_str(get_runtime_type(tensor.tensor_type.format))
+           << " " << to_upper_first(name);
+    }
+    os << ");\n";
+}
+
+// ---------------------------------------------------------------------------
+// .cpp — wrapper function implementations
+// ---------------------------------------------------------------------------
+static void emit_wrapper_impl(std::ostream &os, const std::string &op,
+                               const backend::CINLowerer &lowerer) {
+    const auto &rfmt = lowerer.result_tensor.tensor_type.format;
+    RuntimeType result_rt = get_runtime_type(rfmt);
+    int innermost = find_innermost_sparse(rfmt);
+
+    // Collect wrapper param names and runtime types for each operand
+    std::vector<std::string> pnames;
+    std::vector<RuntimeType> prts;
+    for (const auto &[name, tensor] : lowerer.operand_tensors) {
+        pnames.push_back(to_upper_first(name));
+        prts.push_back(get_runtime_type(tensor.tensor_type.format));
+    }
+
+    // --- Function signature ---
+    std::string rt_str = runtime_type_str(result_rt);
+    std::string sig = rt_str + " nacho_" + op + "_nb(";
+    std::string pad(sig.size(), ' ');
+    os << sig;
+    for (int idx = 0; idx < (int)pnames.size(); idx++) {
+        if (idx > 0) os << ",\n" << pad;
+        os << runtime_type_str(prts[idx]) << " " << pnames[idx];
+    }
+    os << ") {\n";
+
+    // --- Declare output variables ---
+    os << "    int out_nnz;\n";
+    for (int i = 0; i < (int)rfmt.levels.size(); i++)
+        if (is_sparse_format(rfmt.levels[i].format) && i != innermost)
+            os << "    int out_dim_" << rfmt.levels[i].index << "_length;\n";
+    for (int i = (int)rfmt.levels.size() - 1; i >= 0; i--)
+        if (is_sparse_format(rfmt.levels[i].format)) {
+            os << "    int *out_dim_" << rfmt.levels[i].index << "_indices;\n";
+            if (i != 0)
+                os << "    int *out_dim_" << rfmt.levels[i].index << "_offsets;\n";
+        }
+    os << "    float *out_values;\n\n";
+
+    // --- Build flat-API call arguments ---
+    std::vector<std::string> call_args;
+    {
+        int idx = 0;
+        for (const auto &[name, tensor] : lowerer.operand_tensors) {
+            auto a = build_operand_args(tensor.tensor_type.format, pnames[idx]);
+            call_args.insert(call_args.end(), a.begin(), a.end());
+            idx++;
+        }
+    }
+    // Result sizes from first operand
+    for (int i = 0; i < (int)rfmt.levels.size(); i++)
+        call_args.push_back(rt_field(prts[0], pnames[0], "size", i));
+    // Output refs
+    call_args.push_back("out_nnz");
+    for (int i = 0; i < (int)rfmt.levels.size(); i++)
+        if (is_sparse_format(rfmt.levels[i].format) && i != innermost)
+            call_args.push_back("out_dim_" + rfmt.levels[i].index + "_length");
+    for (int i = (int)rfmt.levels.size() - 1; i >= 0; i--)
+        if (is_sparse_format(rfmt.levels[i].format)) {
+            call_args.push_back("out_dim_" + rfmt.levels[i].index + "_indices");
+            if (i != 0)
+                call_args.push_back("out_dim_" + rfmt.levels[i].index + "_offsets");
+        }
+    call_args.push_back("out_values");
+
+    // --- Emit flat-API call ---
+    os << "    " << op << "<int, float>(\n";
+    for (size_t i = 0; i < call_args.size(); i++) {
+        os << "        " << call_args[i];
+        if (i + 1 < call_args.size()) os << ",";
+        os << "\n";
+    }
+    os << "    );\n\n";
+
+    // --- Empty-result handling ---
+    os << "    if (out_nnz == 0) {\n";
+    switch (result_rt) {
+    case RuntimeType::CVector: {
+        auto idx = rfmt.levels[0].index;
+        os << "        CHECK_CUDA(cudaMalloc((void **)&out_dim_" << idx
+           << "_indices, sizeof(int)));\n";
+        os << "        CHECK_CUDA(cudaMalloc((void **)&out_values, sizeof(float)));\n";
+        break;
+    }
+    case RuntimeType::CSR: {
+        auto idx = rfmt.levels[1].index;
+        std::string nrows = rt_field(prts[0], pnames[0], "size", 0);
+        os << "        CHECK_CUDA(cudaMalloc((void **)&out_dim_" << idx
+           << "_offsets, sizeof(int) * (" << nrows << " + 1)));\n";
+        os << "        CHECK_CUDA(cudaMemset(out_dim_" << idx
+           << "_offsets, 0, sizeof(int) * (" << nrows << " + 1)));\n";
+        os << "        CHECK_CUDA(cudaMalloc((void **)&out_dim_" << idx
+           << "_indices, sizeof(int)));\n";
+        os << "        CHECK_CUDA(cudaMalloc((void **)&out_values, sizeof(float)));\n";
+        break;
+    }
+    case RuntimeType::DCSR: {
+        auto i = rfmt.levels[0].index, j = rfmt.levels[1].index;
+        os << "        CHECK_CUDA(cudaMalloc((void **)&out_dim_" << i
+           << "_indices, sizeof(int)));\n";
+        os << "        CHECK_CUDA(cudaMalloc((void **)&out_dim_" << j
+           << "_offsets, sizeof(int)));\n";
+        os << "        CHECK_CUDA(cudaMemset(out_dim_" << j
+           << "_offsets, 0, sizeof(int)));\n";
+        os << "        CHECK_CUDA(cudaMalloc((void **)&out_dim_" << j
+           << "_indices, sizeof(int)));\n";
+        os << "        CHECK_CUDA(cudaMalloc((void **)&out_values, sizeof(float)));\n";
+        os << "        out_dim_" << i << "_length = 0;\n";
+        break;
+    }
+    case RuntimeType::TCSF: {
+        auto i = rfmt.levels[0].index, j = rfmt.levels[1].index,
+             k = rfmt.levels[2].index;
+        os << "        CHECK_CUDA(cudaMalloc((void **)&out_dim_" << i
+           << "_indices, sizeof(int)));\n";
+        os << "        CHECK_CUDA(cudaMalloc((void **)&out_dim_" << j
+           << "_offsets, sizeof(int)));\n";
+        os << "        CHECK_CUDA(cudaMemset(out_dim_" << j
+           << "_offsets, 0, sizeof(int)));\n";
+        os << "        CHECK_CUDA(cudaMalloc((void **)&out_dim_" << j
+           << "_indices, sizeof(int)));\n";
+        os << "        CHECK_CUDA(cudaMalloc((void **)&out_dim_" << k
+           << "_offsets, sizeof(int)));\n";
+        os << "        CHECK_CUDA(cudaMemset(out_dim_" << k
+           << "_offsets, 0, sizeof(int)));\n";
+        os << "        CHECK_CUDA(cudaMalloc((void **)&out_dim_" << k
+           << "_indices, sizeof(int)));\n";
+        os << "        CHECK_CUDA(cudaMalloc((void **)&out_values, sizeof(float)));\n";
+        os << "        out_dim_" << i << "_length = 0;\n";
+        os << "        out_dim_" << j << "_length = 0;\n";
+        break;
+    }
+    }
+    os << "    }\n\n";
+
+    // --- Return result ---
+    // Build constructor call matching the pointer-based ctors in nb_utils.hpp
+    os << "    return ";
+    switch (result_rt) {
+    case RuntimeType::CVector: {
+        auto idx = rfmt.levels[0].index;
+        os << rt_str << "(out_dim_" << idx << "_indices, out_values, "
+           << rt_field(prts[0], pnames[0], "size", 0) << ", out_nnz)";
+        break;
+    }
+    case RuntimeType::CSR: {
+        auto idx = rfmt.levels[1].index;
+        os << rt_str << "(out_dim_" << idx << "_offsets, out_dim_" << idx
+           << "_indices, out_values, "
+           << rt_field(prts[0], pnames[0], "size", 0) << ", "
+           << rt_field(prts[0], pnames[0], "size", 1) << ", out_nnz)";
+        break;
+    }
+    case RuntimeType::DCSR: {
+        auto i = rfmt.levels[0].index, j = rfmt.levels[1].index;
+        os << rt_str << "(out_dim_" << i << "_indices, out_dim_" << j
+           << "_offsets, out_dim_" << j << "_indices, out_values, "
+           << rt_field(prts[0], pnames[0], "size", 0) << ", "
+           << rt_field(prts[0], pnames[0], "size", 1) << ", out_dim_"
+           << i << "_length, out_nnz)";
+        break;
+    }
+    case RuntimeType::TCSF: {
+        auto i = rfmt.levels[0].index, j = rfmt.levels[1].index,
+             k = rfmt.levels[2].index;
+        os << rt_str << "(out_dim_" << i << "_indices, out_dim_" << j
+           << "_offsets, out_dim_" << j << "_indices, out_dim_" << k
+           << "_offsets, out_dim_" << k << "_indices, out_values, "
+           << rt_field(prts[0], pnames[0], "size", 0) << ", "
+           << rt_field(prts[0], pnames[0], "size", 1) << ", "
+           << rt_field(prts[0], pnames[0], "size", 2) << ", out_dim_"
+           << i << "_length, out_dim_" << j << "_length, out_nnz)";
+        break;
+    }
+    }
+    os << ";\n}\n";
+}
+
+// ---------------------------------------------------------------------------
+// Top-level: generate nacho_ops.{h,hpp,cpp} for all registered expressions.
+// ---------------------------------------------------------------------------
+static void emit_runtime_wrappers(const std::string &dir) {
+    std::filesystem::create_directories(dir);
+
+    std::ofstream h(dir + "/nacho_ops.h");
+    std::ofstream hpp(dir + "/nacho_ops.hpp");
+    std::ofstream cpp(dir + "/nacho_ops.cpp");
+
+    h   << "#pragma once\n\n"
+        << "// Auto-generated by nacho compiler. Do not edit.\n\n";
+
+    hpp << "#pragma once\n"
+        << "// Auto-generated by nacho compiler. Do not edit.\n"
+        << "#include \"nb_utils.hpp\"\n\n";
+
+    cpp << "// Auto-generated by nacho compiler. Do not edit.\n"
+        << "#include \"nacho_ops.h\"\n"
+        << "#include \"nacho_ops.hpp\"\n"
+        << "#include \"cuda_utils/cuda_utils.h\"\n\n";
+
+    // CINLowerer needs an ostream; discard output since we only need metadata.
+    std::ostringstream devnull;
+
+    for (const auto &[name, builder] : EXPRESSIONS) {
+        Expr expr = builder();
+        CIN cin = compile_to_cin(expr);
+        backend::CINLowerer lowerer(cin, devnull);
+
+        emit_flat_forward_decl(h, name, lowerer);
+        h << "\n";
+
+        emit_wrapper_decl(hpp, name, lowerer);
+        hpp << "\n";
+
+        emit_wrapper_impl(cpp, name, lowerer);
+        cpp << "\n";
+
+        devnull.str("");
+    }
+
+    std::cout << "Generated " << dir << "/nacho_ops.{h,hpp,cpp}\n";
+}
+
 // ---------------------------------------------------------------------------
 // Helper: emit generated CUDA code to a file with a flat-API wrapper.
 // ---------------------------------------------------------------------------
@@ -496,6 +938,12 @@ int main(int argc, char **argv) {
             return 1;
         }
         it->second();
+        return 0;
+    }
+
+    // --emit-wrappers <dir>
+    if (argc >= 3 && std::strcmp(argv[1], "--emit-wrappers") == 0) {
+        emit_runtime_wrappers(argv[2]);
         return 0;
     }
 
