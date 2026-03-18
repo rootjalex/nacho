@@ -18,10 +18,12 @@ namespace backend {
         struct TensorVisitor : Visitor {
             std::map<std::string, TensorLowerer> &operand_tensors;
             TensorLowerer &result_tensor;
+            TensorLowerer &scatter_reduced_result_tensor;
             std::vector<std::string> &loop_order;
             LoopNum &reductionLoop;
-            TensorVisitor(std::map<std::string, TensorLowerer> &operand_tensors, TensorLowerer &result_tensor, std::vector<std::string> &loop_order, LoopNum &reductionLoop)
-                : operand_tensors(operand_tensors), result_tensor(result_tensor), loop_order(loop_order), reductionLoop(reductionLoop) {}
+            TensorVisitor(std::map<std::string, TensorLowerer> &operand_tensors, TensorLowerer &result_tensor, TensorLowerer &scatter_reduced_result_tensor, 
+                std::vector<std::string> &loop_order, LoopNum &reductionLoop)
+                : operand_tensors(operand_tensors), result_tensor(result_tensor), scatter_reduced_result_tensor(scatter_reduced_result_tensor), loop_order(loop_order), reductionLoop(reductionLoop) {}
 
             void add_tensor(std::string str, TensorType type) {
                 TensorLowerer lowerer(str, type, loop_order);
@@ -35,6 +37,18 @@ namespace backend {
             void visit(const Accumulate *node) override { 
                 result_tensor = TensorLowerer(node->tensor, node->type, loop_order, true);
                 reductionLoop = result_tensor.get_loop_num(node->accumulate_index);
+                // scatter reduction
+                if(reductionLoop < result_tensor.get_loop_num_for_last_sparse_level() ){
+                    if(node->expr.as<cAdd>()) {
+                        result_tensor = TensorLowerer(node->tensor+"_temp",  node->expr.as<cAdd>()->type, loop_order, true);
+                        scatter_reduced_result_tensor = TensorLowerer(node->tensor, node->type, loop_order, true);
+                    } else if(node->expr.as<cMul>()) {
+                        result_tensor = TensorLowerer(node->tensor+"_temp",  node->expr.as<cMul>()->type, loop_order, true);
+                        scatter_reduced_result_tensor = TensorLowerer(node->tensor, node->type, loop_order, true);
+                    } else {
+                        internal_assert(false) << "Expected Accumulate to have cAdd or cMul expr, inner sums are not yet supported";
+                    }
+                }
                 node->expr.accept(this); 
             }
 
@@ -44,7 +58,7 @@ namespace backend {
             }
         };
 
-        TensorVisitor visitor(operand_tensors, result_tensor, loop_order, reductionLoop);
+        TensorVisitor visitor(operand_tensors, result_tensor, scatter_reduced_result_tensor, loop_order, reductionLoop);
         this->cin.accept(&visitor);
     }
 
@@ -159,6 +173,9 @@ namespace backend {
             // printer.print(it.second.lower_tensor_index_definition());
         }
         printer.print(result_tensor.lower_tensor_struct_definition());
+        if(reductionLoop<result_tensor.get_loop_num_for_last_sparse_level()) {
+            printer.print(scatter_reduced_result_tensor.lower_tensor_struct_definition());
+        }
 
 
         // Use BaseKernelLowerer to lower the one time struct definitions of result_per_thread_count struct and result_to_operand_pos_map struct
@@ -405,12 +422,17 @@ namespace backend {
             // included tensors are the tensors which are included in the work
             // calculation. Non-included tensors are not co-iterated and instead looked up.
             std::map<std::string, TensorLowerer> excluded_tensors;
-            for(const auto &loc : locators) {
-                const auto *index = loc.as<Index>();
-                if (!index){
-                    internal_assert(false) << "Expected Index node in locator sequence: " << loc;
+                
+            for(const auto &it : operand_tensors) {
+                if (!it.second.tensor_level_exists(loop_num)) {
+                    excluded_tensors[it.second.tensor_name] = it.second;
+                    continue;
                 }
-                for(const auto &it : operand_tensors) {
+                for(const auto &loc : locators) {
+                    const auto *index = loc.as<Index>();
+                    if (!index){
+                        internal_assert(false) << "Expected Index node in locator sequence: " << loc;
+                    }
                     if (it.second.tensor_name == index->tensor) {
                         excluded_tensors[it.second.tensor_name] = it.second;
                     }

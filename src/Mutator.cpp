@@ -50,9 +50,9 @@ cExpr Mutator::mutate(const cExpr &cexpr) {
     return cexpr.defined() ? cexpr.get()->mutate_cExpr(this) : cExpr();
 }
 
-cExpr Mutator::visit(const cAdd *node) { return mutate_binop<cExpr>(node); }
+cExpr Mutator::visit(const cAdd *node) { return mutate_binop_cexpr<cExpr>(node); }
 
-cExpr Mutator::visit(const cMul *node) { return mutate_binop<cExpr>(node); }
+cExpr Mutator::visit(const cMul *node) { return mutate_binop_cexpr<cExpr>(node); }
 
 cExpr Mutator::visit(const cTensor *node) { return node; }
 

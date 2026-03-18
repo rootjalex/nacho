@@ -386,7 +386,7 @@ TensorLowerer::lower_work_function(std::vector<std::string> partial_loop_order,
     // Multiply by the required broadcast levels
     // broadcast factor is not required for broadcast levels that come after the
     // last level in the tensor
-    for (auto i = target_loop_num + 1; i < last_level_loop_num_in_partial_loop; ++i) {
+    for (auto i = target_loop_num + 1; i <= last_level_loop_num_in_partial_loop; ++i) {
         if (!tensor_level_exists(i)) {
             work_expr = work_expr * llir::lVar::make(index_t, "bc_size_" + loop_name(i));
         }

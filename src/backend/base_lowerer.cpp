@@ -32,8 +32,9 @@ bool BaseKernelLowerer::exists_field_in_result_to_operand_pos_map(const Forall* 
     }
 
     // Optimization : if there is a single sparse tensor in the this level, and the result level is also sparse 
+    // and this is the first sparse level in the result tensor
     // then the field does not need to be added (mapping is direct 1-1 from result pos to operand pos, as result dim = sparse dim)
-    if (result_tensor.is_sparse(index)) {
+    if (result_tensor.is_sparse(index) && result_tensor.get_loop_num_for_next_sparse_level(BEFORE_FIRST_LOOP) == result_tensor.get_loop_num(index)) {
         int num_sparse_operands = 0;
         for(auto it: operand_tensors) {
             auto tensor = it.second;

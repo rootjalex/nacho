@@ -439,7 +439,7 @@ namespace backend {
 
 
         // pass broadcast sizes for all dimensions after current forall which are not present in the tensor
-        for(LoopNum j=loop_num+1;j<tensor.end_loop_num();++j){
+        for(LoopNum j=loop_num+1;j<=current_sparse_intersection;++j){
             std::string forall_j_idx = forall_list[j.get()].as<Forall>()->idx;
             if(!tensor.tensor_level_exists(forall_j_idx)) {
                 

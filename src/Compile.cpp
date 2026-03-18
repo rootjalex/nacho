@@ -39,7 +39,7 @@ struct Converter : public Visitor {
         auto a = std::move(cexpr);
         node->b.accept(this);
         auto b = std::move(cexpr);
-        cexpr = cT::make(std::move(a), std::move(b));
+        cexpr = cT::make(std::move(a), std::move(b), node->type);
     }
 
     void visit(const Add *node) { visit_binop<cAdd>(node); }
