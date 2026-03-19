@@ -68,7 +68,10 @@ namespace nacho {
     // tensor-access or manipulation code.
     struct TensorLowerer {
 
+        private: 
         TensorType tensor_type;
+
+        public:
         std::string tensor_name;
         std::vector<std::string> all_loop_indices;
         bool is_result_tensor;

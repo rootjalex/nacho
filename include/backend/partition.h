@@ -53,8 +53,6 @@ struct PartitionKernelLowerer: public BaseKernelLowerer {
     llir::lExpr get_sparse_dim_start_expr(TensorLowerer& tensor, const std::string& forall_idx);
     llir::lExpr get_sparse_dim_end_expr(TensorLowerer& tensor, const std::string& forall_idx);
 
-    std::vector<llir::Function::Argument> get_kernel_args();
-
 };
 
 

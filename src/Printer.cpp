@@ -6,8 +6,6 @@
 
 #include "llir/LLIR.h"
 
-#include <sstream>
-
 namespace nacho {
 
 std::ostream &operator<<(std::ostream &os, const Level &lvl) {
@@ -703,52 +701,6 @@ void Printer::visit(const llir::Accumulate *node) {
     os << " += ";
     print(node->value);
     os << ";\n";
-}
-
-void Printer::visit(const llir::KernelLaunch *node) {
-    print_indent();
-    os << node->kernel_name;
-    if (!node->template_args.empty()) {
-        os << "<";
-        for (size_t i = 0; i < node->template_args.size(); i++) {
-            if (i > 0)
-                os << ", ";
-            os << node->template_args[i];
-        }
-        os << ">";
-    }
-    os << "<<<";
-    print_no_parens(node->grid_dim);
-    os << ", ";
-    print_no_parens(node->block_dim);
-    if (node->shared_mem.defined() || node->stream.defined()) {
-        os << ", ";
-        if (node->shared_mem.defined()) {
-            print_no_parens(node->shared_mem);
-        } else {
-            os << "0";
-        }
-    }
-    if (node->stream.defined()) {
-        os << ", ";
-        print_no_parens(node->stream);
-    }
-    os << ">>>(";
-    for (size_t i = 0; i < node->args.size(); i++) {
-        if (i > 0)
-            os << ", ";
-        print_no_parens(node->args[i]);
-    }
-    os << ");\n";
-}
-
-void Printer::visit(const llir::RawCode *node) {
-    std::istringstream stream(node->code);
-    std::string line;
-    while (std::getline(stream, line)) {
-        print_indent();
-        os << line << "\n";
-    }
 }
 
 } // namespace nacho

@@ -1,9 +1,9 @@
 #include "Format.h"
 
-#include <functional>
 #include "Error.h"
 #include "Printer.h"
 
+#include <functional>
 #include <unordered_map>
 
 namespace nacho {

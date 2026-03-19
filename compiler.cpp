@@ -1,256 +1,385 @@
 #include "Nacho.h"
 
+// Temporary, for make_binary_search example
+#include "GeneratePartition.h"
 #include "Lattice.h"
 #include "Simplify.h"
-#include "backend/compile.h"
+#include "llir/Function.h"
+#include "llir/LLIR.h"
 
-#include <cstring>
-#include <filesystem>
-#include <fstream>
-#include <functional>
-#include <map>
-#include <sstream>
+#include "backend/compile.h"
+#include "backend/tensor.h"
 
 using namespace nacho;
 
-// ---------------------------------------------------------------------------
-// Helper: full pipeline from expression to generated CUDA code.
-// ---------------------------------------------------------------------------
-static void compile_and_lower(const std::string &name, Expr expr) {
-    std::cout << "=== " << name << " ===\n";
-    std::cout << "Expression: " << expr << "\n";
-    std::cout << "Result format: " << expr.type().format << "\n\n";
-
-    CIN cin = compile_to_cin(expr);
-    std::cout << "CIN:\n" << cin << "\n\n";
-
-    std::cout << "Generated CUDA:\n";
-    backend::CINLowerer(cin, std::cout).lower_cin();
-    std::cout << "\n";
-}
-
-// ===========================================================================
-// 1D Sparse Vector Tests
-// ===========================================================================
-
-// a ∩ b  (element-wise multiply, single phase)
-void test_sparse_vec_mul() {
-    Format s = Format::ordered({{"i", LevelFormat::Compressed}});
-    TensorType s_f32(s, dType::Float32);
-
-    Expr a = Tensor::make(s_f32, "a");
-    Expr b = Tensor::make(s_f32, "b");
-    compile_and_lower("Sparse Vector Mul: a*b", a * b);
-}
-
-// a ∪ b  (element-wise add, single phase)
-void test_sparse_vec_add() {
-    Format s = Format::ordered({{"i", LevelFormat::Compressed}});
-    TensorType s_f32(s, dType::Float32);
-
-    Expr a = Tensor::make(s_f32, "a");
-    Expr b = Tensor::make(s_f32, "b");
-    compile_and_lower("Sparse Vector Add: a+b", a + b);
-}
-
-// Runtime parity: runtime/src/sparse_vector/sparse_vector.cu
-// (A+B)*C — union then intersect, fused 3-operand expression.
-void test_sparse_vec_apb_c() {
-    Format s = Format::ordered({{"i", LevelFormat::Compressed}});
-    TensorType s_f32(s, dType::Float32);
-
-    Expr a = Tensor::make(s_f32, "a");
-    Expr b = Tensor::make(s_f32, "b");
-    Expr c = Tensor::make(s_f32, "c");
-    compile_and_lower("Sparse Vector (a+b)*c  [runtime: sparse_vector.cu]",
-                      (a + b) * c);
-}
-
-// Runtime parity: runtime/src/sparse_vector/sp_ab_c.cu
-// (A*B)+C — intersect then union, fused 3-operand expression.
-void test_sparse_vec_ab_pc() {
-    Format s = Format::ordered({{"i", LevelFormat::Compressed}});
-    TensorType s_f32(s, dType::Float32);
-
-    Expr a = Tensor::make(s_f32, "a");
-    Expr b = Tensor::make(s_f32, "b");
-    Expr c = Tensor::make(s_f32, "c");
-    compile_and_lower("Sparse Vector (a*b)+c  [runtime: sp_ab_c.cu]",
-                      (a * b) + c);
-}
-
-// ===========================================================================
-// 2D Matrix Tests (DCSR — all dimensions sparse)
-// ===========================================================================
-
-// Element-wise multiply: A ∩ B  (multi-phase: i then j)
-void test_dcsr_mul() {
-    Format dcsr = Format::ordered({
-        {"i", LevelFormat::Compressed},
-        {"j", LevelFormat::Compressed},
-    });
-    TensorType dcsr_f32(dcsr, dType::Float32);
-
-    Expr a = Tensor::make(dcsr_f32, "A");
-    Expr b = Tensor::make(dcsr_f32, "B");
-    compile_and_lower("DCSR Mul: A*B", a * b);
-}
-
-// Element-wise add: A ∪ B  (multi-phase: i then j)
-// Runtime parity: runtime/src/csr_add/csr_add.cu (DCSR variant)
-void test_dcsr_add() {
-    Format dcsr = Format::ordered({
-        {"i", LevelFormat::Compressed},
-        {"j", LevelFormat::Compressed},
-    });
-    TensorType dcsr_f32(dcsr, dType::Float32);
-
-    Expr a = Tensor::make(dcsr_f32, "A");
-    Expr b = Tensor::make(dcsr_f32, "B");
-    compile_and_lower("DCSR Add: A+B  [runtime: csr_add.cu]", a + b);
-}
-
-// Element-wise add: A ∪ B  (dense i, sparse j)
-void test_csr_add() {
+void test() {
+    std::cout << "Basic tests\n";
     Format csr = Format::ordered({
         {"i", LevelFormat::Dense},
         {"j", LevelFormat::Compressed},
     });
-    TensorType csr_f32(csr, dType::Float32);
 
-    Expr a = Tensor::make(csr_f32, "A");
-    Expr b = Tensor::make(csr_f32, "B");
-    compile_and_lower("CSR Add: A+B  [generated]", a + b);
-}
-
-// ===========================================================================
-// 3D Tensor Tests (TCSF — all dimensions sparse)
-// ===========================================================================
-
-// Element-wise add: A ∪ B over (i,j,k), all compressed.
-// This exercises non-innermost sparse row/plane completion guards.
-void test_tcsf_add() {
-    Format tcsf = Format::ordered({
+    Format dcsr = Format::ordered({
         {"i", LevelFormat::Compressed},
         {"j", LevelFormat::Compressed},
+    });
+
+    Format s = Format::ordered({
+        {"i", LevelFormat::Compressed}
+    });
+
+    Format d = Format::ordered({
+        {"i", LevelFormat::Dense}
+    });
+
+    TensorType csr_f32 = TensorType(csr, dType::Float32);
+    TensorType dcsr_f32 = TensorType(dcsr, dType::Float32);
+    TensorType s_f32 = TensorType(s, dType::Float32);
+    TensorType d_f32 = TensorType(d, dType::Float32);
+
+
+    Expr a_ij = Tensor::make(dcsr_f32, "a");
+    Expr b_ij = Tensor::make(dcsr_f32, "b");
+    Expr c_ij = Tensor::make(dcsr_f32, "c");
+    Expr d_ij = Tensor::make(csr_f32, "d");
+
+    Expr a_i = Tensor::make(s_f32, "a_vec");
+    Expr b_i = Tensor::make(s_f32, "b_vec");
+    Expr c_i = Tensor::make(s_f32, "c_vec");
+    Expr d_i = Tensor::make(d_f32, "d_vec");
+
+    Expr z_ij = a_ij + b_ij;
+    // Expr z_ij = a_ij * (b_ij+c_ij);
+
+    nacho::backend::CINLowerer(compile_to_cin(z_ij), std::cout).lower_cin();
+
+    // {
+    //     Expr z_i = a_i * c_i;
+    //     std::cout << z_i << "\n";
+    //     std::cout << compile_to_cin(z_i) << "\n";
+    //     std::cout << "Debug\n";
+    //     nacho::backend::CINLowerer(compile_to_cin(z_i), std::cout).lower_cin();
+    // }
+
+    // a_ij = Tensor::make(dcsr_f32, "a");
+    // b_ij = Tensor::make(dcsr_f32, "b");
+
+    // z_ij = a_ij * b_ij;
+     Expr z_i = a_i * b_i;
+    // std::cout << z_i << "\n";
+    // std::cout << compile_to_cin(z_i) << "\n";
+    // std::cout << "Debug\n";
+    // nacho::backend::CINLowerer(compile_to_cin(z_ij), std::cout).lower_cin();
+    // Format new_csr = Format::ordered({
+    //     {"j", LevelFormat::Dense},
+    //     {"k", LevelFormat::Compressed},
+    // });
+    // TensorType new_csr_f32 = TensorType(new_csr, dType::Float32);
+    // std::cout<<compile_to_cin(
+    //     Tensor::make(csr_f32,"A") * Tensor::make(new_csr_f32, "B")
+    // )<< "\n";
+    // nacho::backend::CINLowerer(compile_to_cin(
+    //     Tensor::make(csr_f32,"A") * Tensor::make(new_csr_f32, "B")
+    // ), std::cout).lower_cin();
+    return;
+
+    std::cout << "Debug\n";
+    z_i = sum("i", z_ij);
+    std::cout << z_i << "\n";
+    std::cout << compile_to_cin(z_i) << "\n";
+    nacho::backend::CINLowerer(compile_to_cin(z_ij), std::cout).lower_cin();
+
+    z_ij = a_ij * b_ij;
+
+    std::cout << z_ij << "\n";
+    std::cout << compile_to_cin(z_ij) << "\n";
+    nacho::backend::CINLowerer(compile_to_cin(z_ij), std::cout).lower_cin();
+
+    // z_ij = (a_ij + b_ij) * (c_ij + d_ij);
+    // std::cout << z_ij << "\n";
+    // std::cout << compile_to_cin(z_ij) << "\n";
+    // nacho::backend::CINLowerer(compile_to_cin(z_ij), std::cout).lower_cin();
+    // std::cout << "\n\n";
+
+    // Expr z = (a_i + b_i + c_i) * d_i;
+    // std::cout << z << "\n";
+    // std::cout << compile_to_cin(z) << "\n";
+    // nacho::backend::CINLowerer(compile_to_cin(z), std::cout).lower_cin();
+
+    Format sdssds = Format::ordered({
+        {"i", LevelFormat::Compressed},
+        {"j", LevelFormat::Dense},
+        {"k", LevelFormat::Compressed},
+        {"l", LevelFormat::Compressed},
+        {"m", LevelFormat::Dense},
+        {"n", LevelFormat::Compressed}
+    });
+
+    Format ssds = Format::ordered({
+        {"i", LevelFormat::Compressed},
+        {"k", LevelFormat::Compressed},
+        {"l", LevelFormat::Dense},
+        {"n", LevelFormat::Compressed}
+    });
+
+    TensorType ssds_f32 = TensorType(ssds, dType::Float32); 
+    TensorType sdssds_f32 = TensorType(sdssds, dType::Float32);
+
+    Expr A_ijklmn = Tensor::make(sdssds_f32, "A");
+    Expr B_ikln = Tensor::make(ssds_f32, "B");
+
+    Expr C_ijklmn = A_ijklmn + B_ikln;
+    std::cout << C_ijklmn << "\n";
+    std::cout << compile_to_cin(C_ijklmn) << "\n";
+    nacho::backend::CINLowerer(compile_to_cin(C_ijklmn), std::cout).lower_cin();
+    std::cout << "\n\n";
+}
+
+void test_vec() {
+    std::cout << "Vector math test\n";
+    Format dense = Format::ordered({
+        {"i", LevelFormat::Dense},
+    });
+    Format sparse = Format::ordered({
+        {"i", LevelFormat::Compressed},
+    });
+
+    TensorType dense_f32 = TensorType(dense, dType::Float32);
+    TensorType sparse_f32 = TensorType(sparse, dType::Float32);
+
+    Expr a_i = Tensor::make(sparse_f32, "a");
+    Expr b_i = Tensor::make(sparse_f32, "b");
+    Expr c_i = Tensor::make(dense_f32, "c");
+    Expr d_i = Tensor::make(dense_f32, "d");
+
+    Expr e = a_i * b_i;
+    std::cout << "Expect sparse: " << e.type().format << "\n";
+    std::cout << compile_to_cin(e) << "\n";
+
+    e = c_i * d_i;
+    std::cout << "Expect dense: " << e.type().format << "\n";
+    std::cout << compile_to_cin(e) << "\n";
+
+    e = a_i * c_i;
+    std::cout << "Expect sparse: " << e.type().format << "\n";
+    std::cout << compile_to_cin(e) << "\n";
+
+    e = a_i + b_i;
+    std::cout << "Expect sparse: " << e.type().format << "\n";
+    std::cout << compile_to_cin(e) << "\n";
+
+    e = c_i + d_i;
+    std::cout << "Expect dense: " << e.type().format << "\n";
+    std::cout << compile_to_cin(e) << "\n";
+
+    e = a_i + c_i;
+    std::cout << "Expect dense: " << e.type().format << "\n";
+    std::cout << compile_to_cin(e) << "\n";
+
+    std::cout << "\n\n";
+}
+
+void spgemm() {
+    std::cout << "SpGEMM test\n";
+    Format csr0 = Format::ordered({
+        {"i", LevelFormat::Dense},
+        {"j", LevelFormat::Compressed},
+    });
+
+    Format csr1 = Format::ordered({
+        {"j", LevelFormat::Dense},
         {"k", LevelFormat::Compressed},
     });
-    TensorType tcsf_f32(tcsf, dType::Float32);
 
-    Expr a = Tensor::make(tcsf_f32, "A");
-    Expr b = Tensor::make(tcsf_f32, "B");
-    compile_and_lower("TCSF Add: A+B  [3D generated]", a + b);
+    TensorType csr0_f32 = TensorType(csr0, dType::Float32);
+    TensorType csr1_f32 = TensorType(csr1, dType::Float32);
+
+    Expr a_ij = Tensor::make(csr0_f32, "a");
+    Expr b_jk = Tensor::make(csr1_f32, "b");
+
+    // Implicit broadcasting.
+    Expr z_ik = sum("j", a_ij * b_jk);
+
+    std::cout << z_ik << "\n";
+    std::cout << "Expect CSR: " << z_ik.type().format << "\n";
+
+    CIN cin = compile_to_cin(z_ik);
+    nacho::backend::CINLowerer(compile_to_cin(z_ik), std::cout).lower_cin();
+    std::cout << cin << "\n";
+    std::cout << "\n\n";
+
 }
 
-// ===========================================================================
-// Format Inference Tests
-// ===========================================================================
+void sss_s_s(){
+    Format sss = Format::ordered({
+        {"i", LevelFormat::Compressed},
+        {"j", LevelFormat::Compressed},
+        {"l", LevelFormat::Compressed},
+        {"m", LevelFormat::Dense},
+    });
+    Format s1 = Format::ordered({
+        {"j", LevelFormat::Compressed},
+    });
+    Format s2 = Format::ordered({
+        {"k", LevelFormat::Compressed},
+    });
+    Format s3 = Format::ordered({
+        {"o", LevelFormat::Compressed},
+    });
+    
+    TensorType sss_f32 = TensorType(sss, dType::Float32);
+    TensorType s1_f32 = TensorType(s1, dType::Float32);
+    TensorType s2_f32 = TensorType(s2, dType::Float32);
+    TensorType s3_f32 = TensorType(s3, dType::Float32);
 
-void test_format_inference() {
+    Expr a_ijlm = Tensor::make(sss_f32, "a");
+    Expr b_j = Tensor::make(s1_f32, "b");
+    Expr c_k = Tensor::make(s2_f32, "c");
+    Expr d_o = Tensor::make(s3_f32, "d");
+    Expr z_ijk = a_ijlm *  b_j * c_k * d_o;
+
+    CIN cin = compile_to_cin(z_ijk);
+    std::cout << cin << "\n";
+    std::cout << "\n\n";
+    nacho::backend::CINLowerer(compile_to_cin(z_ijk), std::cout).lower_cin();
+}
+
+void test_format_inf() {
+    std::cout << "Format inference test\n";
     Format csr = Format::ordered({
         {"i", LevelFormat::Dense},
         {"j", LevelFormat::Compressed},
     });
+
     Format dcsr = Format::ordered({
         {"i", LevelFormat::Compressed},
         {"j", LevelFormat::Compressed},
     });
-    Format sparse = Format::ordered({{"i", LevelFormat::Compressed}});
-    Format dense = Format::ordered({{"i", LevelFormat::Dense}});
 
-    TensorType csr_f32(csr, dType::Float32);
-    TensorType dcsr_f32(dcsr, dType::Float32);
-    TensorType s_f32(sparse, dType::Float32);
-    TensorType d_f32(dense, dType::Float32);
+    TensorType csr_f32 = TensorType(csr, dType::Float32);
+    TensorType dcsr_f32 = TensorType(dcsr, dType::Float32);
 
     Expr a_ij = Tensor::make(csr_f32, "a");
     Expr b_ij = Tensor::make(dcsr_f32, "b");
-    Expr a_i = Tensor::make(s_f32, "a_vec");
-    Expr b_i = Tensor::make(s_f32, "b_vec");
-    Expr c_i = Tensor::make(d_f32, "c_vec");
-    Expr d_i = Tensor::make(d_f32, "d_vec");
 
-    std::cout << "=== Format Inference ===\n";
+    std::cout << "Expect CSR: " << (a_ij + b_ij).type().format << "\n";
+    std::cout << compile_to_cin(a_ij + b_ij) << "\n";
+    std::cout << "Expect DCSR: " << (a_ij * b_ij).type().format << "\n";
+    std::cout << compile_to_cin(a_ij * b_ij) << "\n";
 
-    // Matrix format inference
-    std::cout << "CSR + DCSR  -> " << (a_ij + b_ij).type().format
-              << "  (expect Dense,Compressed)\n";
-    std::cout << "CSR * DCSR  -> " << (a_ij * b_ij).type().format
-              << "  (expect Compressed,Compressed)\n";
+    std::cout << "Expect [DC]{D}: "
+              << (bc("k", a_ij) + bc("k", b_ij)).type().format << "\n";
+    std::cout << "Expect [DC]{D}: "
+              << (bc("k", a_ij) * bc("k", b_ij)).type().format << "\n";
 
-    // Vector format inference
-    std::cout << "sparse * sparse -> " << (a_i * b_i).type().format
-              << "  (expect Compressed)\n";
-    std::cout << "sparse + sparse -> " << (a_i + b_i).type().format
-              << "  (expect Compressed)\n";
-    std::cout << "sparse * dense  -> " << (a_i * c_i).type().format
-              << "  (expect Compressed)\n";
-    std::cout << "sparse + dense  -> " << (a_i + c_i).type().format
-              << "  (expect Dense)\n";
-    std::cout << "dense  * dense  -> " << (c_i * d_i).type().format
-              << "  (expect Dense)\n";
-    std::cout << "dense  + dense  -> " << (c_i + d_i).type().format
-              << "  (expect Dense)\n";
-
-    // Broadcast format inference
-    std::cout << "bc(k, CSR) + bc(k, DCSR) -> "
-              << (bc("k", a_ij) + bc("k", b_ij)).type().format
-              << "  (expect [DC]{D})\n";
-
-    std::cout << "\n";
+    std::cout << "\n\n";
 }
 
-// ===========================================================================
-// Lattice Tests
-// ===========================================================================
-
 void test_lattice() {
-    Format sparse = Format::ordered({{"i", LevelFormat::Compressed}});
-    Format dense = Format::ordered({{"i", LevelFormat::Dense}});
+    std::cout << "Lattice test\n";
+    Format sparse = Format::ordered({
+        {"i", LevelFormat::Compressed},
+    });
 
-    TensorType sparse_f32(sparse, dType::Float32);
-    TensorType dense_f32(dense, dType::Float32);
+    Format dense = Format::ordered({
+        {"i", LevelFormat::Dense},
+    });
+
+    TensorType sparse_f32 = TensorType(sparse, dType::Float32);
+    TensorType dense_f32 = TensorType(dense, dType::Float32);
 
     Seq i_a = Index::make("a", sparse_f32, 0);
     Seq i_b = Index::make("b", sparse_f32, 0);
     Seq i_c = Index::make("c", sparse_f32, 0);
     Seq i_d = Index::make("d", dense_f32, 0);
 
-    std::cout << "=== Lattice Tests ===\n";
+    std::cout << "ALL SPARSE LATTICE TESTS\n";
+    {
+        Seq seq = Union::make(i_a, i_b);
+        Lattice lattice = Lattice::build(seq);
+        lattice.dump(std::cout);
+    }
 
-    auto dump = [](const char *label, Seq seq) {
-        std::cout << label << ": " << seq << "\n";
-        Lattice::build(seq).dump(std::cout);
-    };
+    {
+        Seq seq = Union::make(i_a, i_b);
+        seq = Union::make(seq, i_c);
+        Lattice lattice = Lattice::build(seq);
+        lattice.dump(std::cout);
+    }
 
-    // All sparse
-    dump("a ∪ b", Union::make(i_a, i_b));
-    dump("a ∪ b ∪ c", Union::make(Union::make(i_a, i_b), i_c));
-    dump("(a ∪ b) ∩ c", Intersect::make(Union::make(i_a, i_b), i_c));
-    dump("(a ∩ b) ∪ c", Union::make(Intersect::make(i_a, i_b), i_c));
-    dump("a ∩ b ∩ c", Intersect::make(Intersect::make(i_a, i_b), i_c));
+    {
+        Seq seq = Union::make(i_a, i_b);
+        seq = Intersect::make(seq, i_c);
+        Lattice lattice = Lattice::build(seq);
+        lattice.dump(std::cout);
+    }
 
-    // One dense
-    dump("a ∩ d", Intersect::make(i_a, i_d));
-    dump("a ∪ d", Union::make(i_a, i_d));
-    dump("a ∪ b ∪ d", Union::make(Union::make(i_a, i_b), i_d));
-    dump("(a ∪ b) ∩ d", Intersect::make(Union::make(i_a, i_b), i_d));
-    dump("(a ∩ d) ∪ c", Union::make(Intersect::make(i_a, i_d), i_c));
-    dump("(a ∩ d) ∩ c", Intersect::make(Intersect::make(i_a, i_d), i_c));
+    {
+        Seq seq = Intersect::make(i_a, i_b);
+        seq = Union::make(seq, i_c);
+        Lattice lattice = Lattice::build(seq);
+        lattice.dump(std::cout);
+    }
 
-    std::cout << "\n";
+    {
+        Seq seq = Intersect::make(i_a, i_b);
+        seq = Intersect::make(seq, i_c);
+        Lattice lattice = Lattice::build(seq);
+        lattice.dump(std::cout);
+    }
+
+    std::cout << "ONE DENSE LATTICE TESTS\n";
+    {
+        Seq seq = Intersect::make(i_a, i_d);
+        Lattice lattice = Lattice::build(seq);
+        lattice.dump(std::cout);
+    }
+    {
+        Seq seq = Union::make(i_a, i_d);
+        Lattice lattice = Lattice::build(seq);
+        lattice.dump(std::cout);
+    }
+    {
+        Seq seq = Union::make(i_a, i_b);
+        seq = Union::make(seq, i_d);
+        Lattice lattice = Lattice::build(seq);
+        lattice.dump(std::cout);
+    }
+
+    {
+        Seq seq = Union::make(i_a, i_b);
+        seq = Intersect::make(seq, i_d);
+        Lattice lattice = Lattice::build(seq);
+        lattice.dump(std::cout);
+    }
+
+    {
+        Seq seq = Intersect::make(i_a, i_d);
+        seq = Union::make(seq, i_c);
+        Lattice lattice = Lattice::build(seq);
+        lattice.dump(std::cout);
+    }
+
+    {
+        Seq seq = Intersect::make(i_a, i_d);
+        seq = Intersect::make(seq, i_c);
+        Lattice lattice = Lattice::build(seq);
+        lattice.dump(std::cout);
+    }
 }
 
-// ===========================================================================
-// Locator Optimization Tests
-// ===========================================================================
-
 void test_locator_optimization() {
-    Format sparse = Format::ordered({{"i", LevelFormat::Compressed}});
-    Format dense = Format::ordered({{"i", LevelFormat::Dense}});
+    std::cout << "Locator test\n";
+    Format sparse = Format::ordered({
+        {"i", LevelFormat::Compressed},
+    });
 
-    TensorType sparse_f32(sparse, dType::Float32);
-    TensorType dense_f32(dense, dType::Float32);
+    Format dense = Format::ordered({
+        {"i", LevelFormat::Dense},
+    });
+
+    TensorType sparse_f32 = TensorType(sparse, dType::Float32);
+    TensorType dense_f32 = TensorType(dense, dType::Float32);
 
     Seq i_a = Index::make("a", sparse_f32, 0);
     Seq i_b = Index::make("b", sparse_f32, 0);
@@ -258,724 +387,142 @@ void test_locator_optimization() {
     Seq i_d = Index::make("d", dense_f32, 0);
     Seq i_e = Index::make("e", dense_f32, 0);
 
-    std::cout << "=== Locator Optimization Tests ===\n";
-    std::cout << "a, b, c are sparse; d, e are dense.\n";
+    std::cout << "a, b, c are sparse, d, e are dense.\n";
 
-    auto check = [](Seq seq) {
-        auto [iters, locs, has_universe_iter] = partition_iterators_locators(seq);
-        std::cout << seq << " -> iterators: {";
-        for (size_t i = 0; i < iters.size(); ++i)
-            std::cout << (i ? ", " : "") << iters[i];
-        std::cout << "} locators: {";
-        for (size_t i = 0; i < locs.size(); ++i)
-            std::cout << (i ? ", " : "") << locs[i];
-        std::cout << "}\n";
+    auto print_list = [](std::ostream &os, const std::vector<Seq> &seqs) {
+        bool first = true;
+        os << "{";
+        for (const auto &s : seqs) {
+            if (!first) {
+                os << ", ";
+            }
+            first = false;
+            os << s;
+        }
+        os << "}";
     };
 
-    check(Union::make(i_a, i_b));
-    check(Union::make(Union::make(i_a, i_b), i_c));
-    check(Union::make(i_d, i_e));
-    check(Union::make(i_a, i_d));
-    check(Intersect::make(i_d, i_e));
-    check(Intersect::make(i_a, i_d));
-    check(Intersect::make(Union::make(i_a, i_d), i_b));
-    check(Intersect::make(Union::make(i_e, i_d), i_b));
+    auto check = [&print_list](const Seq &seq) {
+        std::cout << "\n";
+        auto [iters, locs, has_universe_iter] = partition_iterators_locators(seq);
+        std::cout << seq << " -> iterators: ";
+        print_list(std::cout, iters);
+        std::cout << " with locators: ";
+        print_list(std::cout, locs);
+        std::cout << std::endl;
+    };
 
-    std::cout << "\n";
+    Seq seq = Union::make(i_a, i_b);
+    check(seq);
+
+    seq = Union::make(seq, i_c);
+    check(seq);
+
+    seq = Union::make(i_d, i_e);
+    check(seq);
+
+    seq = Union::make(i_a, i_d);
+    check(seq);
+
+    seq = Intersect::make(i_d, i_e);
+    check(seq);
+
+    seq = Intersect::make(i_a, i_d);
+    check(seq);
+
+    seq = Union::make(i_a, i_d);
+    seq = Intersect::make(seq, i_b);
+    check(seq);
+
+    seq = Union::make(i_e, i_d);
+    seq = Intersect::make(seq, i_b);
+    check(seq);
 }
 
-// ===========================================================================
-// Expression Registry (for --emit mode)
-// ===========================================================================
+// void make_binary_search() {
+//     llir::Function func;
+//     func.generics.push_back("index_t");
 
-using ExprBuilder = std::function<Expr()>;
+//     func.attributes.push_back(llir::Function::device);
+//     func.attributes.push_back(llir::Function::inline_);
 
-// clang-format off
-const std::map<std::string, ExprBuilder> EXPRESSIONS = {
-    {"sparse_vec_mul", []() {
-        Format s = Format::ordered({{"i", LevelFormat::Compressed}});
-        TensorType s_f32(s, dType::Float32);
-        return Tensor::make(s_f32, "a") * Tensor::make(s_f32, "b");
-    }},
-    {"sparse_vec_add", []() {
-        Format s = Format::ordered({{"i", LevelFormat::Compressed}});
-        TensorType s_f32(s, dType::Float32);
-        return Tensor::make(s_f32, "a") + Tensor::make(s_f32, "b");
-    }},
-    {"sparse_vec_apb_c", []() {
-        Format s = Format::ordered({{"i", LevelFormat::Compressed}});
-        TensorType s_f32(s, dType::Float32);
-        Expr a = Tensor::make(s_f32, "a");
-        Expr b = Tensor::make(s_f32, "b");
-        Expr c = Tensor::make(s_f32, "c");
-        return (a + b) * c;
-    }},
-    {"sparse_vec_ab_pc", []() {
-        Format s = Format::ordered({{"i", LevelFormat::Compressed}});
-        TensorType s_f32(s, dType::Float32);
-        Expr a = Tensor::make(s_f32, "a");
-        Expr b = Tensor::make(s_f32, "b");
-        Expr c = Tensor::make(s_f32, "c");
-        return (a * b) + c;
-    }},
-    {"dcsr_mul", []() {
-        Format dcsr = Format::ordered({
-            {"i", LevelFormat::Compressed},
-            {"j", LevelFormat::Compressed},
-        });
-        TensorType dcsr_f32(dcsr, dType::Float32);
-        return Tensor::make(dcsr_f32, "A") * Tensor::make(dcsr_f32, "B");
-    }},
-    {"dcsr_add", []() {
-        Format dcsr = Format::ordered({
-            {"i", LevelFormat::Compressed},
-            {"j", LevelFormat::Compressed},
-        });
-        TensorType dcsr_f32(dcsr, dType::Float32);
-        return Tensor::make(dcsr_f32, "A") + Tensor::make(dcsr_f32, "B");
-    }},
-    {"csr_add", []() {
-        Format csr = Format::ordered({
-            {"i", LevelFormat::Dense},
-            {"j", LevelFormat::Compressed},
-        });
-        TensorType csr_f32(csr, dType::Float32);
-        return Tensor::make(csr_f32, "A") + Tensor::make(csr_f32, "B");
-    }},
-    {"tcsf_add", []() {
-        Format tcsf = Format::ordered({
-            {"i", LevelFormat::Compressed},
-            {"j", LevelFormat::Compressed},
-            {"k", LevelFormat::Compressed},
-        });
-        TensorType tcsf_f32(tcsf, dType::Float32);
-        return Tensor::make(tcsf_f32, "A") + Tensor::make(tcsf_f32, "B");
-    }},
-};
-// clang-format on
+//     llir::lType index_t = llir::Generic_t::make("index_t");
+//     func.ret_type = index_t;
 
-// ===========================================================================
-// Runtime Wrapper Code Generation
-// ===========================================================================
-// Generates nacho_ops.{h,hpp,cpp} that bridge the runtime's nanobind structs
-// (CVector, CSR, DCSR, TCSF) to the flat-API wrappers in the generated .cu
-// files.  The mapping from compiler struct fields to runtime struct accessors
-// is determined entirely by the tensor format.
+//     func.name = "lower_bound";
 
-enum class RuntimeType { CVector, CSR, DCSR, TCSF };
+//     llir::lType ptr_index_t = llir::Ptr_t::make(index_t);
+//     func.args.push_back(
+//         {.mutating = false, .type = ptr_index_t, .name = "crds"});
+//     func.args.push_back({.mutating = false, .type = index_t, .name = "n"});
+//     func.args.push_back({.mutating = false, .type = index_t, .name = "c"});
 
-static RuntimeType get_runtime_type(const Format &fmt) {
-    int n = (int)fmt.levels.size();
-    int s = 0;
-    for (auto &l : fmt.levels)
-        if (is_sparse_format(l.format)) s++;
-    if (n == 1 && s == 1) return RuntimeType::CVector;
-    if (n == 2 && s == 1) return RuntimeType::CSR;
-    if (n == 2 && s == 2) return RuntimeType::DCSR;
-    if (n == 3 && s == 3) return RuntimeType::TCSF;
-    std::cerr << "Unsupported format for runtime wrapper generation\n";
-    exit(1);
-}
+//     {
+//         llir::lExpr crds = llir::lVar::make(ptr_index_t, "crds");
+//         llir::lExpr n = llir::lVar::make(index_t, "n");
+//         llir::lExpr c = llir::lVar::make(index_t, "c");
 
-static std::string runtime_type_str(RuntimeType rt) {
-    switch (rt) {
-    case RuntimeType::CVector: return "CVector<int, int, float>";
-    case RuntimeType::CSR:     return "CSR<int, float>";
-    case RuntimeType::DCSR:    return "DCSR<int, float>";
-    case RuntimeType::TCSF:    return "TCSF<int, float>";
-    }
-    return "";
-}
+//         std::vector<llir::lStmt> stmts;
 
-// Map a compiler struct field kind + dimension position to a runtime struct
-// accessor expression.  `var` is the wrapper parameter name (e.g. "A").
-// `kind` is one of: size, length, indices, offsets, values, nnz.
-// `dim` is the 0-based dimension position in the format.
-static std::string rt_field(RuntimeType rt, const std::string &var,
-                            const std::string &kind, int dim = 0) {
-    if (kind == "values") return "(float *)" + var + ".data.data()";
-    if (kind == "nnz") {
-        switch (rt) {
-        case RuntimeType::CVector: return "(int)" + var + ".indices.shape(0)";
-        case RuntimeType::CSR:     return "(int)" + var + ".indices.shape(0)";
-        case RuntimeType::DCSR:    return "(int)" + var + ".col_indices.shape(0)";
-        case RuntimeType::TCSF:    return "(int)" + var + ".k_indices.shape(0)";
-        }
-    }
-    if (kind == "size") {
-        switch (rt) {
-        case RuntimeType::CVector: return var + ".size";
-        case RuntimeType::CSR:     return var + ".shape(" + std::to_string(dim) + ")";
-        case RuntimeType::DCSR:    return dim == 0 ? var + ".nrows" : var + ".ncols";
-        case RuntimeType::TCSF: {
-            const char *f[] = {"dim_i_size", "dim_j_size", "dim_k_size"};
-            return var + "." + f[dim];
-        }
-        }
-    }
-    if (kind == "length") {
-        switch (rt) {
-        case RuntimeType::CVector: return "(int)" + var + ".indices.shape(0)";
-        case RuntimeType::CSR:     return "(int)" + var + ".indices.shape(0)";
-        case RuntimeType::DCSR:
-            return "(int)" + var + (dim == 0 ? ".row_indices" : ".col_indices") + ".shape(0)";
-        case RuntimeType::TCSF: {
-            const char *f[] = {"i_indices", "j_indices", "k_indices"};
-            return "(int)" + var + "." + f[dim] + ".shape(0)";
-        }
-        }
-    }
-    if (kind == "indices") {
-        switch (rt) {
-        case RuntimeType::CVector: return "(int *)" + var + ".indices.data()";
-        case RuntimeType::CSR:     return "(int *)" + var + ".indices.data()";
-        case RuntimeType::DCSR:
-            return "(int *)" + var + (dim == 0 ? ".row_indices" : ".col_indices") + ".data()";
-        case RuntimeType::TCSF: {
-            const char *f[] = {"i_indices", "j_indices", "k_indices"};
-            return "(int *)" + var + "." + f[dim] + ".data()";
-        }
-        }
-    }
-    if (kind == "offsets") {
-        switch (rt) {
-        case RuntimeType::CVector: return "";
-        case RuntimeType::CSR:     return "(int *)" + var + ".indptr.data()";
-        case RuntimeType::DCSR:    return "(int *)" + var + ".row_offsets.data()";
-        case RuntimeType::TCSF: {
-            const char *f[] = {"", "j_offsets", "k_offsets"};
-            return "(int *)" + var + "." + f[dim] + ".data()";
-        }
-        }
-    }
-    return "";
-}
+//         // index_t low = 0;
+//         stmts.push_back(
+//             llir::Declare::make(index_t, "low", llir::lConst::make(0)));
+//         llir::lExpr low = llir::lVar::make(index_t, "low");
+//         // index_t high = n;
+//         stmts.push_back(llir::Declare::make(index_t, "high", n));
+//         llir::lExpr high = llir::lVar::make(index_t, "high");
 
-// Build flat-API argument expressions for one operand, in the same order
-// as TensorLowerer::lower_tensor_struct_definition().
-static std::vector<std::string> build_operand_args(const Format &fmt,
-                                                    const std::string &var) {
-    RuntimeType rt = get_runtime_type(fmt);
-    std::vector<std::string> args;
-    // Size fields (forward order)
-    for (int i = 0; i < (int)fmt.levels.size(); i++)
-        args.push_back(rt_field(rt, var, "size", i));
-    // Data fields: built innermost-to-outermost, then reversed
-    std::vector<std::string> data;
-    data.push_back(rt_field(rt, var, "nnz"));
-    data.push_back(rt_field(rt, var, "values"));
-    for (int i = (int)fmt.levels.size() - 1; i >= 0; i--) {
-        if (is_sparse_format(fmt.levels[i].format)) {
-            data.push_back(rt_field(rt, var, "indices", i));
-            data.push_back(rt_field(rt, var, "length", i));
-            if (i != 0)
-                data.push_back(rt_field(rt, var, "offsets", i));
-        }
-    }
-    for (auto it = data.rbegin(); it != data.rend(); ++it)
-        args.push_back(*it);
-    return args;
-}
+//         std::vector<llir::lStmt> while_body;
 
-// Find the innermost sparse level index in a format.
-static int find_innermost_sparse(const Format &fmt) {
-    for (int i = (int)fmt.levels.size() - 1; i >= 0; i--)
-        if (is_sparse_format(fmt.levels[i].format)) return i;
-    return -1;
-}
+//         while_body.push_back(
+//             // index_t mid = low + (high - low) / 2;
+//             llir::Declare::make(index_t, "mid",
+//                                 low + (high - low) / llir::lConst::make(2)));
+//         llir::lExpr mid = llir::lVar::make(index_t, "mid");
 
-// Uppercase the first character of a string (for wrapper param names).
-static std::string to_upper_first(const std::string &s) {
-    std::string r = s;
-    r[0] = (char)toupper(r[0]);
-    return r;
-}
+//         while_body.push_back(
+//             // if (a->indices[mid] <= crd) {
+//             //   low = mid + 1;
+//             // } else {
+//             //   high = mid
+//             // }
+//             llir::IfElse::make(
+//                 crds[mid] <= c,
+//                 llir::Store::make("low", mid + llir::lConst::make(1)),
+//                 llir::Store::make("high", mid)));
 
-// ---------------------------------------------------------------------------
-// .h  — flat API forward declarations
-// ---------------------------------------------------------------------------
-static void emit_flat_forward_decl(std::ostream &os, const std::string &op,
-                                    const backend::CINLowerer &lowerer) {
-    const auto &rfmt = lowerer.result_tensor.tensor_type.format;
-    std::vector<std::string> params;
+//         // while (low < high) { ... }
+//         llir::lStmt while_loop = llir::While::make(
+//             low < high, llir::Sequence::make(std::move(while_body)));
 
-    // Operand struct fields (same order as lower_tensor_struct_definition)
-    for (const auto &[name, tensor] : lowerer.operand_tensors) {
-        const auto &fmt = tensor.tensor_type.format;
-        for (int i = 0; i < (int)fmt.levels.size(); i++)
-            params.push_back("index_t " + name + "_dim_" + fmt.levels[i].index + "_size");
-        std::vector<std::string> dp;
-        dp.push_back("index_t " + name + "_nnz");
-        dp.push_back("value_t *" + name + "_values");
-        for (int i = (int)fmt.levels.size() - 1; i >= 0; i--) {
-            auto idx = fmt.levels[i].index;
-            if (is_sparse_format(fmt.levels[i].format)) {
-                dp.push_back("index_t *" + name + "_dim_" + idx + "_indices");
-                dp.push_back("index_t " + name + "_dim_" + idx + "_length");
-                if (i != 0)
-                    dp.push_back("index_t *" + name + "_dim_" + idx + "_offsets");
-            }
-        }
-        for (auto it = dp.rbegin(); it != dp.rend(); ++it)
-            params.push_back(*it);
-    }
-    // Result size fields
-    for (auto &lvl : rfmt.levels)
-        params.push_back("index_t result_dim_" + lvl.index + "_size");
-    // Output references
-    params.push_back("index_t &out_nnz");
-    int innermost = find_innermost_sparse(rfmt);
-    for (int i = 0; i < (int)rfmt.levels.size(); i++)
-        if (is_sparse_format(rfmt.levels[i].format) && i != innermost)
-            params.push_back("index_t &out_dim_" + rfmt.levels[i].index + "_length");
-    for (int i = (int)rfmt.levels.size() - 1; i >= 0; i--) {
-        auto idx = rfmt.levels[i].index;
-        if (is_sparse_format(rfmt.levels[i].format)) {
-            params.push_back("index_t *&out_dim_" + idx + "_indices");
-            if (i != 0)
-                params.push_back("index_t *&out_dim_" + idx + "_offsets");
-        }
-    }
-    params.push_back("value_t *&out_values");
+//         stmts.push_back(std::move(while_loop));
 
-    // Emit
-    os << "template <typename index_t, typename value_t>\n";
-    os << "void " << op << "(";
-    std::string pad(op.size() + 6, ' ');
-    for (size_t i = 0; i < params.size(); i++) {
-        if (i > 0) os << ",\n" << pad;
-        os << params[i];
-    }
-    os << ");\n";
-}
+//         // return low;
+//         stmts.push_back(llir::Return::make(low));
 
-// ---------------------------------------------------------------------------
-// .hpp — wrapper function declarations
-// ---------------------------------------------------------------------------
-static void emit_wrapper_decl(std::ostream &os, const std::string &op,
-                               const backend::CINLowerer &lowerer) {
-    std::string rt_str = runtime_type_str(
-        get_runtime_type(lowerer.result_tensor.tensor_type.format));
-    std::string sig = rt_str + " nacho_" + op + "_nb(";
-    std::string pad(sig.size(), ' ');
+//         func.body = llir::Sequence::make(std::move(stmts));
+//     }
 
-    os << sig;
-    bool first = true;
-    for (const auto &[name, tensor] : lowerer.operand_tensors) {
-        if (!first) os << ",\n" << pad;
-        first = false;
-        os << runtime_type_str(get_runtime_type(tensor.tensor_type.format))
-           << " " << to_upper_first(name);
-    }
-    os << ");\n";
-}
+//     func.print(std::cout);
+// }
 
-// ---------------------------------------------------------------------------
-// .cpp — wrapper function implementations
-// ---------------------------------------------------------------------------
-static void emit_wrapper_impl(std::ostream &os, const std::string &op,
-                               const backend::CINLowerer &lowerer) {
-    const auto &rfmt = lowerer.result_tensor.tensor_type.format;
-    RuntimeType result_rt = get_runtime_type(rfmt);
-    int innermost = find_innermost_sparse(rfmt);
+// void make_binary_partition() {
+//     auto funcs = generate_nary_1d_partition({"a", "b"});
+//     assert(funcs.size() == 1);
+//     funcs[0].print(std::cout);
+// }
 
-    // Collect wrapper param names and runtime types for each operand
-    std::vector<std::string> pnames;
-    std::vector<RuntimeType> prts;
-    for (const auto &[name, tensor] : lowerer.operand_tensors) {
-        pnames.push_back(to_upper_first(name));
-        prts.push_back(get_runtime_type(tensor.tensor_type.format));
-    }
-
-    // --- Function signature ---
-    std::string rt_str = runtime_type_str(result_rt);
-    std::string sig = rt_str + " nacho_" + op + "_nb(";
-    std::string pad(sig.size(), ' ');
-    os << sig;
-    for (int idx = 0; idx < (int)pnames.size(); idx++) {
-        if (idx > 0) os << ",\n" << pad;
-        os << runtime_type_str(prts[idx]) << " " << pnames[idx];
-    }
-    os << ") {\n";
-
-    // --- Declare output variables ---
-    os << "    int out_nnz;\n";
-    for (int i = 0; i < (int)rfmt.levels.size(); i++)
-        if (is_sparse_format(rfmt.levels[i].format) && i != innermost)
-            os << "    int out_dim_" << rfmt.levels[i].index << "_length;\n";
-    for (int i = (int)rfmt.levels.size() - 1; i >= 0; i--)
-        if (is_sparse_format(rfmt.levels[i].format)) {
-            os << "    int *out_dim_" << rfmt.levels[i].index << "_indices;\n";
-            if (i != 0)
-                os << "    int *out_dim_" << rfmt.levels[i].index << "_offsets;\n";
-        }
-    os << "    float *out_values;\n\n";
-
-    // --- Build flat-API call arguments ---
-    std::vector<std::string> call_args;
-    {
-        int idx = 0;
-        for (const auto &[name, tensor] : lowerer.operand_tensors) {
-            auto a = build_operand_args(tensor.tensor_type.format, pnames[idx]);
-            call_args.insert(call_args.end(), a.begin(), a.end());
-            idx++;
-        }
-    }
-    // Result sizes from first operand
-    for (int i = 0; i < (int)rfmt.levels.size(); i++)
-        call_args.push_back(rt_field(prts[0], pnames[0], "size", i));
-    // Output refs
-    call_args.push_back("out_nnz");
-    for (int i = 0; i < (int)rfmt.levels.size(); i++)
-        if (is_sparse_format(rfmt.levels[i].format) && i != innermost)
-            call_args.push_back("out_dim_" + rfmt.levels[i].index + "_length");
-    for (int i = (int)rfmt.levels.size() - 1; i >= 0; i--)
-        if (is_sparse_format(rfmt.levels[i].format)) {
-            call_args.push_back("out_dim_" + rfmt.levels[i].index + "_indices");
-            if (i != 0)
-                call_args.push_back("out_dim_" + rfmt.levels[i].index + "_offsets");
-        }
-    call_args.push_back("out_values");
-
-    // --- Emit flat-API call ---
-    os << "    " << op << "<int, float>(\n";
-    for (size_t i = 0; i < call_args.size(); i++) {
-        os << "        " << call_args[i];
-        if (i + 1 < call_args.size()) os << ",";
-        os << "\n";
-    }
-    os << "    );\n\n";
-
-    // --- Empty-result handling ---
-    os << "    if (out_nnz == 0) {\n";
-    switch (result_rt) {
-    case RuntimeType::CVector: {
-        auto idx = rfmt.levels[0].index;
-        os << "        CHECK_CUDA(cudaMalloc((void **)&out_dim_" << idx
-           << "_indices, sizeof(int)));\n";
-        os << "        CHECK_CUDA(cudaMalloc((void **)&out_values, sizeof(float)));\n";
-        break;
-    }
-    case RuntimeType::CSR: {
-        auto idx = rfmt.levels[1].index;
-        std::string nrows = rt_field(prts[0], pnames[0], "size", 0);
-        os << "        CHECK_CUDA(cudaMalloc((void **)&out_dim_" << idx
-           << "_offsets, sizeof(int) * (" << nrows << " + 1)));\n";
-        os << "        CHECK_CUDA(cudaMemset(out_dim_" << idx
-           << "_offsets, 0, sizeof(int) * (" << nrows << " + 1)));\n";
-        os << "        CHECK_CUDA(cudaMalloc((void **)&out_dim_" << idx
-           << "_indices, sizeof(int)));\n";
-        os << "        CHECK_CUDA(cudaMalloc((void **)&out_values, sizeof(float)));\n";
-        break;
-    }
-    case RuntimeType::DCSR: {
-        auto i = rfmt.levels[0].index, j = rfmt.levels[1].index;
-        os << "        CHECK_CUDA(cudaMalloc((void **)&out_dim_" << i
-           << "_indices, sizeof(int)));\n";
-        os << "        CHECK_CUDA(cudaMalloc((void **)&out_dim_" << j
-           << "_offsets, sizeof(int)));\n";
-        os << "        CHECK_CUDA(cudaMemset(out_dim_" << j
-           << "_offsets, 0, sizeof(int)));\n";
-        os << "        CHECK_CUDA(cudaMalloc((void **)&out_dim_" << j
-           << "_indices, sizeof(int)));\n";
-        os << "        CHECK_CUDA(cudaMalloc((void **)&out_values, sizeof(float)));\n";
-        os << "        out_dim_" << i << "_length = 0;\n";
-        break;
-    }
-    case RuntimeType::TCSF: {
-        auto i = rfmt.levels[0].index, j = rfmt.levels[1].index,
-             k = rfmt.levels[2].index;
-        os << "        CHECK_CUDA(cudaMalloc((void **)&out_dim_" << i
-           << "_indices, sizeof(int)));\n";
-        os << "        CHECK_CUDA(cudaMalloc((void **)&out_dim_" << j
-           << "_offsets, sizeof(int)));\n";
-        os << "        CHECK_CUDA(cudaMemset(out_dim_" << j
-           << "_offsets, 0, sizeof(int)));\n";
-        os << "        CHECK_CUDA(cudaMalloc((void **)&out_dim_" << j
-           << "_indices, sizeof(int)));\n";
-        os << "        CHECK_CUDA(cudaMalloc((void **)&out_dim_" << k
-           << "_offsets, sizeof(int)));\n";
-        os << "        CHECK_CUDA(cudaMemset(out_dim_" << k
-           << "_offsets, 0, sizeof(int)));\n";
-        os << "        CHECK_CUDA(cudaMalloc((void **)&out_dim_" << k
-           << "_indices, sizeof(int)));\n";
-        os << "        CHECK_CUDA(cudaMalloc((void **)&out_values, sizeof(float)));\n";
-        os << "        out_dim_" << i << "_length = 0;\n";
-        os << "        out_dim_" << j << "_length = 0;\n";
-        break;
-    }
-    }
-    os << "    }\n\n";
-
-    // --- Return result ---
-    // Build constructor call matching the pointer-based ctors in nb_utils.hpp
-    os << "    return ";
-    switch (result_rt) {
-    case RuntimeType::CVector: {
-        auto idx = rfmt.levels[0].index;
-        os << rt_str << "(out_dim_" << idx << "_indices, out_values, "
-           << rt_field(prts[0], pnames[0], "size", 0) << ", out_nnz)";
-        break;
-    }
-    case RuntimeType::CSR: {
-        auto idx = rfmt.levels[1].index;
-        os << rt_str << "(out_dim_" << idx << "_offsets, out_dim_" << idx
-           << "_indices, out_values, "
-           << rt_field(prts[0], pnames[0], "size", 0) << ", "
-           << rt_field(prts[0], pnames[0], "size", 1) << ", out_nnz)";
-        break;
-    }
-    case RuntimeType::DCSR: {
-        auto i = rfmt.levels[0].index, j = rfmt.levels[1].index;
-        os << rt_str << "(out_dim_" << i << "_indices, out_dim_" << j
-           << "_offsets, out_dim_" << j << "_indices, out_values, "
-           << rt_field(prts[0], pnames[0], "size", 0) << ", "
-           << rt_field(prts[0], pnames[0], "size", 1) << ", out_dim_"
-           << i << "_length, out_nnz)";
-        break;
-    }
-    case RuntimeType::TCSF: {
-        auto i = rfmt.levels[0].index, j = rfmt.levels[1].index,
-             k = rfmt.levels[2].index;
-        os << rt_str << "(out_dim_" << i << "_indices, out_dim_" << j
-           << "_offsets, out_dim_" << j << "_indices, out_dim_" << k
-           << "_offsets, out_dim_" << k << "_indices, out_values, "
-           << rt_field(prts[0], pnames[0], "size", 0) << ", "
-           << rt_field(prts[0], pnames[0], "size", 1) << ", "
-           << rt_field(prts[0], pnames[0], "size", 2) << ", out_dim_"
-           << i << "_length, out_dim_" << j << "_length, out_nnz)";
-        break;
-    }
-    }
-    os << ";\n}\n";
-}
-
-// ---------------------------------------------------------------------------
-// Top-level: generate nacho_ops.{h,hpp,cpp} for all registered expressions.
-// ---------------------------------------------------------------------------
-static void emit_runtime_wrappers(const std::string &dir) {
-    std::filesystem::create_directories(dir);
-
-    std::ofstream h(dir + "/nacho_ops.h");
-    std::ofstream hpp(dir + "/nacho_ops.hpp");
-    std::ofstream cpp(dir + "/nacho_ops.cpp");
-
-    h   << "#pragma once\n\n"
-        << "// Auto-generated by nacho compiler. Do not edit.\n\n";
-
-    hpp << "#pragma once\n"
-        << "// Auto-generated by nacho compiler. Do not edit.\n"
-        << "#include \"nb_utils.hpp\"\n\n";
-
-    cpp << "// Auto-generated by nacho compiler. Do not edit.\n"
-        << "#include \"nacho_ops.h\"\n"
-        << "#include \"nacho_ops.hpp\"\n"
-        << "#include \"cuda_utils/cuda_utils.h\"\n\n";
-
-    // CINLowerer needs an ostream; discard output since we only need metadata.
-    std::ostringstream devnull;
-
-    for (const auto &[name, builder] : EXPRESSIONS) {
-        Expr expr = builder();
-        CIN cin = compile_to_cin(expr);
-        backend::CINLowerer lowerer(cin, devnull);
-
-        emit_flat_forward_decl(h, name, lowerer);
-        h << "\n";
-
-        emit_wrapper_decl(hpp, name, lowerer);
-        hpp << "\n";
-
-        emit_wrapper_impl(cpp, name, lowerer);
-        cpp << "\n";
-
-        devnull.str("");
-    }
-
-    std::cout << "Generated " << dir << "/nacho_ops.{h,hpp,cpp}\n";
-}
-
-// ---------------------------------------------------------------------------
-// Helper: emit generated CUDA code to a file with a flat-API wrapper.
-// ---------------------------------------------------------------------------
-static void emit_to_file(const std::string &dir, const std::string &op_name,
-                         Expr expr) {
-    std::filesystem::create_directories(dir);
-    std::string filepath = dir + "/" + op_name + ".cu";
-
-    std::ofstream ofs(filepath);
-    if (!ofs) {
-        std::cerr << "Failed to open " << filepath << " for writing\n";
-        exit(1);
-    }
-
-    ofs << "#pragma once\n\n";
-    ofs << "#include <cuda_runtime.h>\n";
-    ofs << "#include <cub/cub.cuh>\n\n";
-
-    // Wrap internal symbols in a unique namespace to avoid collisions
-    // when multiple generated .cu files are compiled into the same library.
-    ofs << "namespace " << op_name << "_ns {\n\n";
-
-    CIN cin = compile_to_cin(expr);
-    backend::CINLowerer lowerer(cin, ofs);
-    lowerer.lower_cin();
-    ofs << "\n";
-
-    ofs << "} // namespace " << op_name << "_ns\n\n";
-    ofs << "using namespace " << op_name << "_ns;\n\n";
-
-    // Flat wrapper at global scope (uses internal types via using namespace)
-    lowerer.lower_flat_wrapper(op_name);
-    ofs << "\n";
-
-    // Emit explicit template instantiation for <int, float>.
-    // Build the type list by iterating operand/result tensor formats.
-    ofs << "// Explicit template instantiation\n";
-    ofs << "template void " << op_name << "<int, float>(";
-    bool first_arg = true;
-    // Operand args (all struct fields)
-    for (const auto &[name, tensor] : lowerer.operand_tensors) {
-        llir::lType struct_type = tensor.lower_tensor_struct_definition();
-        const auto *st = struct_type.as<llir::Struct_t>();
-        for (const auto &[field_name, field_type] : st->fields) {
-            if (!first_arg) ofs << ", ";
-            first_arg = false;
-            if (field_type.is<llir::Ptr_t>()) {
-                const auto *pt = field_type.as<llir::Ptr_t>();
-                if (pt->type.is<llir::Generic_t>()) {
-                    const auto *gt = pt->type.as<llir::Generic_t>();
-                    ofs << (gt->name == "value_t" ? "float" : "int") << "*";
-                }
-            } else {
-                ofs << "int";
-            }
-        }
-    }
-    // Result size args
-    for (size_t i = 0; i < lowerer.result_tensor.tensor_type.format.levels.size(); i++) {
-        if (!first_arg) ofs << ", ";
-        first_arg = false;
-        ofs << "int";
-    }
-    // Output refs: nnz
-    ofs << ", int&";
-    // Output refs: length for non-innermost sparse dims
-    {
-        int innermost_sparse = -1;
-        for (int i = (int)lowerer.result_tensor.tensor_type.format.levels.size() - 1; i >= 0; i--) {
-            auto idx = lowerer.result_tensor.tensor_type.format.levels[i].index;
-            if (is_sparse_format(lowerer.result_tensor.tensor_type.format.lvlfmt_of(idx))) {
-                innermost_sparse = i;
-                break;
-            }
-        }
-        for (int i = 0; i < (int)lowerer.result_tensor.tensor_type.format.levels.size(); i++) {
-            auto idx = lowerer.result_tensor.tensor_type.format.levels[i].index;
-            if (is_sparse_format(lowerer.result_tensor.tensor_type.format.lvlfmt_of(idx)) && i != innermost_sparse) {
-                ofs << ", int&";
-            }
-        }
-    }
-    // Output refs: indices (and offsets for non-outermost)
-    for (int i = (int)lowerer.result_tensor.tensor_type.format.levels.size() - 1; i >= 0; i--) {
-        auto idx = lowerer.result_tensor.tensor_type.format.levels[i].index;
-        if (is_sparse_format(lowerer.result_tensor.tensor_type.format.lvlfmt_of(idx))) {
-            ofs << ", int*&";
-            if (i != 0) ofs << ", int*&";
-        }
-    }
-    // Output ref: values
-    ofs << ", float*&";
-    ofs << ");\n";
-
-    ofs.close();
-    std::cout << "Generated " << filepath << "\n";
-}
-
-// ===========================================================================
-// Test Registry
-// ===========================================================================
-
-using TestFunc = void (*)();
-
-// clang-format off
-const std::map<std::string, TestFunc> TESTS = {
-    {"sparse_vec_mul",    test_sparse_vec_mul},
-    {"sparse_vec_add",    test_sparse_vec_add},
-    {"sparse_vec_apb_c",  test_sparse_vec_apb_c},
-    {"sparse_vec_ab_pc",  test_sparse_vec_ab_pc},
-    {"dcsr_mul",          test_dcsr_mul},
-    {"dcsr_add",          test_dcsr_add},
-    {"csr_add",           test_csr_add},
-    {"tcsf_add",          test_tcsf_add},
-    {"format_inference",  test_format_inference},
-    {"lattice",           test_lattice},
-    {"locator",           test_locator_optimization},
-};
-// clang-format on
-
+// TODO: write a parser.
 int main(int argc, char **argv) {
-    // Usage: compiler --test <name>        Run a single test
-    //        compiler --list               List available tests
-    //        compiler --emit <dir> --name <op_name>   Generate .cu file
-    //        compiler                      Run all tests
-    if (argc >= 2 && std::strcmp(argv[1], "--list") == 0) {
-        std::cout << "Tests:\n";
-        for (const auto &[name, _] : TESTS)
-            std::cout << "  " << name << "\n";
-        std::cout << "Expressions (for --emit):\n";
-        for (const auto &[name, _] : EXPRESSIONS)
-            std::cout << "  " << name << "\n";
-        return 0;
-    }
-
-    if (argc >= 3 && std::strcmp(argv[1], "--test") == 0) {
-        auto it = TESTS.find(argv[2]);
-        if (it == TESTS.end()) {
-            std::cerr << "Unknown test: " << argv[2] << "\n";
-            std::cerr << "Run with --list to see available tests.\n";
-            return 1;
-        }
-        it->second();
-        return 0;
-    }
-
-    // --emit-wrappers <dir>
-    if (argc >= 3 && std::strcmp(argv[1], "--emit-wrappers") == 0) {
-        emit_runtime_wrappers(argv[2]);
-        return 0;
-    }
-
-    // --emit <dir> --name <op_name>
-    if (argc >= 2 && std::strcmp(argv[1], "--emit") == 0) {
-        std::string dir, name;
-        // Parse remaining args
-        for (int i = 2; i < argc; i++) {
-            if (std::strcmp(argv[i], "--name") == 0 && i + 1 < argc) {
-                name = argv[++i];
-            } else if (dir.empty()) {
-                dir = argv[i];
-            }
-        }
-        if (dir.empty() || name.empty()) {
-            std::cerr << "Usage: compiler --emit <dir> --name <op_name>\n";
-            std::cerr << "Run with --list to see available expressions.\n";
-            return 1;
-        }
-        auto it = EXPRESSIONS.find(name);
-        if (it == EXPRESSIONS.end()) {
-            std::cerr << "Unknown expression: " << name << "\n";
-            std::cerr << "Run with --list to see available expressions.\n";
-            return 1;
-        }
-        emit_to_file(dir, name, it->second());
-        return 0;
-    }
-
-    // No args: run everything.
-    for (const auto &[name, func] : TESTS)
-        func();
+    test();
+    // test_format_inf();
+    // test_vec();
+    // spgemm();
+    // sss_s_s();
+    // make_binary_search();
+    // make_binary_partition();
+    // test_lattice();
+    // test_locator_optimization();
 
     return 0;
 }

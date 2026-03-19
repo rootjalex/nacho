@@ -127,14 +127,6 @@ set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -fsanitize=undefined -fno-om
 set(CMAKE_LINKER_FLAGS_DEBUG "${CMAKE_LINKER_FLAGS_DEBUG} -fsanitize=undefined -fno-omit-frame-pointer")
 
 ##
-# Runtime (CUDA)
-
-option(nacho_BUILD_RUNTIME "Build CUDA runtime (requires CUDA toolkit)" OFF)
-if (nacho_BUILD_RUNTIME)
-    add_subdirectory(runtime)
-endif()
-
-##
 # nacho compiler
 
 add_executable(nacho_compiler compiler.cpp)
@@ -153,25 +145,13 @@ target_link_libraries(nacho_compiler PRIVATE nacho::library)
 
 if (nacho_BUILD_TESTING)
     set(NACHO_TESTS
-        sparse_vec_mul
-        sparse_vec_add
-        sparse_vec_apb_c
-        sparse_vec_ab_pc
-        dcsr_mul
-        dcsr_add
-        csr_add
-        tcsf_add
-        format_inference
-        lattice
-        locator
+        sparse_vec_mul sparse_vec_add sparse_vec_apb_c sparse_vec_ab_pc
+        dcsr_mul dcsr_add csr_add tcsf_add
+        format_inference lattice locator
     )
-
-    foreach(test_name IN LISTS NACHO_TESTS)
-        add_test(
-            NAME ${test_name}
-            COMMAND nacho_compiler --test ${test_name}
-        )
-    endforeach()
+    foreach (t IN LISTS NACHO_TESTS)
+        add_test(NAME ${t} COMMAND nacho_compiler --test ${t})
+    endforeach ()
 endif ()
 
 ##

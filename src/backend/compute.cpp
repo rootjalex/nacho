@@ -1,9 +1,10 @@
 #include "backend/compute.h"
-#include <functional>
 #include "IRFwdDecl.h"
 #include "Simplify.h"
 #include "llir/Function.h"
 #include "llir/LLIR.h"
+
+#include <functional>
 
 namespace nacho {
 namespace backend {
@@ -402,7 +403,7 @@ llir::lStmt ComputeKernelLowerer::lower_assign_statement(
         void visit(const cTensor *node) override {
             auto get_iter_vars_operands = [&](TensorLowerer &tlower, TensorLevelNum end_level) {
                 std::map<TensorLevelNum, llir::lExpr> iter_vars;
-                for (TensorLevelNum level = BEFORE_FIRST_LEVEL+1; level <= end_level; ++level) {
+                for (TensorLevelNum level = BEFORE_FIRST_LEVEL+1; level < end_level; ++level) {
                     std::string iter_name = tlower.get_iter_name(level);
                     iter_vars[level] = llir::lVar::make(
                         llir::Generic_t::make("index_t"),
@@ -899,8 +900,6 @@ llir::lStmt ComputeKernelLowerer::lower_loop(
                         llir::lVar::make(index_t, "offset_" + nextForall->idx));
                 }
 
-                offset_write_cond = offset_write_cond || (llir::lVar::make(index_t, "thread_id") == llir::lVar::make(index_t, "max_thread_id"));
-
                 if(store_stmt.defined() && stmt.defined()) {
                     stmt = llir::IfElse::make(offset_write_cond, llir::Sequence::make({std::move(store_stmt),std::move(stmt)}), nullptr);
                 } else if(store_stmt.defined()) {
@@ -1096,18 +1095,15 @@ llir::lStmt ComputeKernelLowerer::lower_loop(
 
             // Add locators.
             value = llir::lVar::make(index_t, forall->idx);
-            std::set<std::string> declared_locator_iters;
-            for (const auto &loc : ls) {
-                const Index *idx = loc.as<Index>();
-                internal_assert(idx && !idx->is_sparse) << loc;
+            if(!has_universe_iter && !ls.empty() && !has_dense_iter) {
+                const Index *idx = ls[0].as<Index>();
+                internal_assert(idx && !idx->is_sparse) << ls[0];
                 TensorLowerer tlower = get_tensor(idx->tensor);
                 // This is necesary for reads
                 // later. Hopefully, copy propagation is good on this generated
                 // code.
-                std::string name = tlower.get_iter_name(TensorLevelNum(idx->level));
-                if (declared_locator_iters.insert(name).second) {
-                    stmts.push_back(llir::Declare::make(index_t, name, value));
-                }
+                stmts.push_back(llir::Declare::make(
+                    index_t, tlower.get_iter_name(TensorLevelNum(idx->level)), value));
             }
             return stmts;
         };
@@ -1263,119 +1259,6 @@ llir::lStmt ComputeKernelLowerer::lower_loop(
         return llir::Sequence::make(std::move(stmts));
     }
     return llir::lStmt();
-}
-
-std::vector<llir::Function::Argument> ComputeKernelLowerer::get_precompute_kernel_args() {
-    std::vector<llir::Function::Argument> args;
-
-    for (auto tensor : operand_tensors) {
-        args.emplace_back(llir::Function::Argument{
-            .mutating = false,
-            .type = llir::Generic_t::make(tensor.second.get_struct_name() +
-                                          "<index_t, value_t>"),
-            .name = tensor.second.tensor_name});
-    }
-
-    args.emplace_back(llir::Function::Argument{
-        .mutating = false,
-        .type =
-            llir::Generic_t::make(get_partition_struct_name() + "<index_t>"),
-        .name = "partitions"});
-
-    args.emplace_back(llir::Function::Argument{
-        .mutating = true,
-        .type = llir::Generic_t::make(get_counts_struct_name() + "<index_t>"),
-        .name = "count_offsets"});
-
-    args.emplace_back(llir::Function::Argument{
-        .mutating = false, .type = index_t, .name = "per_thread_work"});
-
-    if(previous_sparse_intersection != BEFORE_FIRST_LOOP)
-        args.emplace_back(llir::Function::Argument{
-            .mutating = false,
-            .type = llir::Generic_t::make(result_tensor.get_struct_name() +
-                                        "<index_t, value_t>"),
-            .name = result_tensor.tensor_name});
-
-    bool need_operand_pos_map_arg = false;
-    for(LoopNum i = BEFORE_FIRST_LOOP + 1; i <= previous_sparse_intersection; ++i) {
-        for(auto it: operand_tensors) {
-            if(exists_field_in_result_to_operand_pos_map(forall_list[i.get()].as<Forall>(), it.second)){
-                need_operand_pos_map_arg = true;
-                break;
-            }
-        }
-    }
-
-    if(need_operand_pos_map_arg) {
-        args.emplace_back(llir::Function::Argument{
-            .mutating = true,
-            .type = llir::Generic_t::make(get_result_to_operand_pos_map_struct_name() + "<index_t>"),
-            .name = get_result_to_operand_pos_map_var_name()
-        });
-    }
-
-    return args;
-}
-
-std::vector<llir::Function::Argument> ComputeKernelLowerer::get_compute_kernel_args() {
-    std::vector<llir::Function::Argument> args;
-
-    for (auto tensor : operand_tensors) {
-        args.emplace_back(llir::Function::Argument{
-            .mutating = false,
-            .type = llir::Generic_t::make(tensor.second.get_struct_name() +
-                                          "<index_t, value_t>"),
-            .name = tensor.second.tensor_name});
-    }
-
-    args.emplace_back(llir::Function::Argument{
-        .mutating = false,
-        .type =
-            llir::Generic_t::make(get_partition_struct_name() + "<index_t>"),
-        .name = "partitions"});
-
-    args.emplace_back(llir::Function::Argument{
-        .mutating = false,
-        .type = llir::Generic_t::make(get_counts_struct_name() + "<index_t>"),
-        .name = "count_offsets"});
-
-    args.emplace_back(llir::Function::Argument{
-        .mutating = false, .type = index_t, .name = "per_thread_work"});
-
-    args.emplace_back(llir::Function::Argument{
-        .mutating = true,
-        .type = llir::Generic_t::make(result_tensor.get_struct_name() +
-                                      "<index_t, value_t>"),
-        .name = result_tensor.tensor_name});
-
-    if(next_sparse_intersection != LoopNum((int)forall_list.size())) {
-        args.emplace_back(llir::Function::Argument{
-            .mutating = true,
-            .type = llir::Ptr_t::make(index_t),
-            .name = "T_work_offsets"});
-    }
-
-    bool need_operand_pos_map_arg = false;
-    LoopNum level = next_sparse_intersection == LoopNum((int)forall_list.size()) ? previous_sparse_intersection : current_sparse_intersection;
-    for(LoopNum i = BEFORE_FIRST_LOOP + 1; i <= level; ++i) {
-        for(auto it: operand_tensors) {
-            if(exists_field_in_result_to_operand_pos_map(forall_list[i.get()].as<Forall>(), it.second)){
-                need_operand_pos_map_arg = true;
-                break;
-            }
-        }
-    }
-
-    if(need_operand_pos_map_arg) {
-        args.emplace_back(llir::Function::Argument{
-            .mutating = true,
-            .type = llir::Generic_t::make(get_result_to_operand_pos_map_struct_name() + "<index_t>"),
-            .name = get_result_to_operand_pos_map_var_name()
-        });
-    }
-
-    return args;
 }
 
 } // namespace backend

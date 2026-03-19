@@ -78,9 +78,6 @@ void Printer::visit(const llir::Function *node) {
             os << "const ";
         }
         arg.type.accept(this);
-        if (arg.by_reference) {
-            os << "&";
-        }
         if (!arg.mutating && arg.type.is<llir::Ptr_t>()) {
             os << " __restrict__";
         }
