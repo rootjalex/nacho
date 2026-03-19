@@ -262,7 +262,7 @@ void test_locator_optimization() {
     std::cout << "a, b, c are sparse; d, e are dense.\n";
 
     auto check = [](Seq seq) {
-        auto [iters, locs] = partition_iterators_locators(seq);
+        auto [iters, locs, has_universe_iter] = partition_iterators_locators(seq);
         std::cout << seq << " -> iterators: {";
         for (size_t i = 0; i < iters.size(); ++i)
             std::cout << (i ? ", " : "") << iters[i];

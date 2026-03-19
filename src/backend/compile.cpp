@@ -468,8 +468,6 @@ namespace backend {
 
             std::vector<Seq> locators = get_dense_locators(forall->seq);
 
-            std::map<std::string, TensorLowerer> included_tensors;
-
             // included tensors are the tensors which are included in the work
             // calculation. Non-included tensors are not co-iterated and instead looked up.
             std::map<std::string, TensorLowerer> excluded_tensors;
