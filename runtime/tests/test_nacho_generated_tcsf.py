@@ -6,6 +6,11 @@ import torch
 
 from nacho_runtime import TCSF, nacho_tcsf_add
 
+# Run each test in a forked subprocess so that CUDA crashes
+# (illegal memory access, etc.) cannot corrupt GPU state for
+# other test files.
+pytestmark = pytest.mark.forked
+
 
 def make_tcsf(i_indices, j_offsets, j_indices, k_offsets, k_indices, values, shape):
     """Create a TCSF object from Python lists."""
