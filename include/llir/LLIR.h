@@ -48,7 +48,9 @@ enum class lStmtEnum {
     BaseExpr,
     Break,
     For,
-    Accumulate
+    Accumulate,
+    KernelLaunch,
+    RawCode
 };
 
 using IRlTypeNode = IRNode<lType, lTypeEnum>;
@@ -447,6 +449,32 @@ struct Accumulate : lStmtNode<Accumulate> {
     static lStmt make(lExpr var, lExpr value);
 
     static const lStmtEnum node_type = lStmtEnum::Accumulate;
+};
+
+struct KernelLaunch : lStmtNode<KernelLaunch> {
+    std::string kernel_name;
+    std::vector<std::string> template_args;
+    lExpr grid_dim;
+    lExpr block_dim;
+    lExpr shared_mem;
+    lExpr stream;
+    std::vector<lExpr> args;
+
+    static lStmt make(std::string kernel_name,
+                      std::vector<std::string> template_args, lExpr grid_dim,
+                      lExpr block_dim, std::vector<lExpr> args,
+                      lExpr shared_mem = lExpr(),
+                      lExpr stream = lExpr());
+
+    static const lStmtEnum node_type = lStmtEnum::KernelLaunch;
+};
+
+struct RawCode : lStmtNode<RawCode> {
+    std::string code;
+
+    static lStmt make(std::string code);
+
+    static const lStmtEnum node_type = lStmtEnum::RawCode;
 };
 
 } // namespace llir

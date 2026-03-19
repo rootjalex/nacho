@@ -686,7 +686,7 @@ namespace backend {
                         is_last_loop? mid_var : mid_var - 1
                     )};
 
-        for(int i=0;i<tensors_with_curr_dim_sparse.size();i++) {
+        for(int i=0;i<(int)tensors_with_curr_dim_sparse.size();i++) {
             TensorLowerer tensor = tensors_with_curr_dim_sparse[i];
             llir::lExpr start_position_var = llir::lVar::make(index_t, tensor.get_start_name(forall_idx));
             llir::lExpr end_position_var = llir::lVar::make(index_t, tensor.get_end_name(forall_idx));
@@ -1098,6 +1098,61 @@ namespace backend {
         }
 
         return llir::Sequence::make(std::move(stmts));
+    }
+
+    std::vector<llir::Function::Argument> PartitionKernelLowerer::get_kernel_args() {
+        std::vector<llir::Function::Argument> args;
+
+        for(auto it: operand_tensors) {
+            args.emplace_back(llir::Function::Argument{
+                .mutating = false, .type = llir::Generic_t::make(it.second.get_struct_name()+"<index_t, value_t>"), .name = it.second.tensor_name
+            });
+        }
+
+        args.emplace_back(llir::Function::Argument{
+            .mutating = false, .type = llir::Generic_t::make(result_tensor.get_struct_name()+"<index_t, value_t>"), .name = result_tensor.tensor_name
+        });
+
+        args.emplace_back(llir::Function::Argument{
+            .mutating = true, .type = llir::Generic_t::make(get_partition_struct_name()+"<index_t>"), .name = "partitions"
+        });
+
+        args.emplace_back(llir::Function::Argument{
+            .mutating = false, .type = index_t, .name = "per_thread_work"
+        });
+
+        args.emplace_back(
+            llir::Function::Argument{
+                .mutating = false, .type = index_t, .name = "total_work"
+            }
+        );
+
+        if(previous_sparse_intersection != BEFORE_FIRST_LOOP)
+            args.emplace_back(
+                llir::Function::Argument{
+                    .mutating = false, .type = llir::Ptr_t::make(index_t), .name = "T_work_offsets"
+                }
+            );
+
+        bool need_operand_pos_map_arg = false;
+        for(LoopNum i = BEFORE_FIRST_LOOP + 1; i <= previous_sparse_intersection; ++i) {
+            for(auto it: operand_tensors) {
+                if(exists_field_in_result_to_operand_pos_map(forall_list[i.get()].as<Forall>(), it.second)){
+                    need_operand_pos_map_arg = true;
+                    break;
+                }
+            }
+        }
+
+        if(need_operand_pos_map_arg) {
+            args.emplace_back(llir::Function::Argument{
+                .mutating = false,
+                .type = llir::Generic_t::make(get_result_to_operand_pos_map_struct_name() + "<index_t>"),
+                .name = get_result_to_operand_pos_map_var_name()
+            });
+        }
+
+        return args;
     }
 
 } // namespace backend

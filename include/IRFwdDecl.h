@@ -69,6 +69,8 @@ struct Function;
 struct BaseExpr;
 struct Break;
 struct Accumulate;
+struct KernelLaunch;
+struct RawCode;
 
 } // namespace llir
 

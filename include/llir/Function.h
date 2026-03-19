@@ -27,6 +27,7 @@ struct Function : lStmtNode<Function> {
 
     struct Argument {
         bool mutating;
+        bool by_reference = false;
         lType type;
         std::string name;
     };

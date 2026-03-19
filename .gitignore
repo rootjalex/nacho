@@ -36,6 +36,7 @@ build-dbg
 cmake-build-*
 .idea
 .vscode
+.claude/
 
 # Assembly files
 *.asm
@@ -45,3 +46,21 @@ cmake-build-*
 # MacOS debug symbol files
 *.dSYM/
 .DS_Store
+
+# Runtime/profiling artifacts
+*.nsys-rep
+*.sqlite
+*.ncu-rep
+*.npz
+benchmark_results/
+
+# Runtime generated CUDA kernels (build-time codegen output)
+runtime/src/nacho_generated/*.cu
+
+# Python
+__pycache__/
+*.egg-info/
+*.pyd
+dist/
+venv/
+_skbuild/

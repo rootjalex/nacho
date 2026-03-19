@@ -41,6 +41,9 @@ namespace backend {
         llir::lStmt lower_assign_statement(CIN assign, bool is_precompute);
 
         void add_partition_assignments(std::vector<llir::lStmt> &stmts);
+
+        std::vector<llir::Function::Argument> get_precompute_kernel_args();
+        std::vector<llir::Function::Argument> get_compute_kernel_args();
     };
 
 } // namespace backend

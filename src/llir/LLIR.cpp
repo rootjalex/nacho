@@ -382,5 +382,36 @@ lStmt Accumulate::make(lExpr var, lExpr value) {
     return node;
 }
 
+lStmt KernelLaunch::make(std::string kernel_name,
+                         std::vector<std::string> template_args,
+                         lExpr grid_dim, lExpr block_dim,
+                         std::vector<lExpr> args,
+                         lExpr shared_mem,
+                         lExpr stream) {
+    internal_assert(!kernel_name.empty())
+        << "Cannot make KernelLaunch with empty kernel name.";
+    internal_assert(grid_dim.defined())
+        << "Cannot make KernelLaunch with undefined grid_dim.";
+    internal_assert(block_dim.defined())
+        << "Cannot make KernelLaunch with undefined block_dim.";
+    KernelLaunch *node = new KernelLaunch;
+    node->kernel_name = std::move(kernel_name);
+    node->template_args = std::move(template_args);
+    node->grid_dim = std::move(grid_dim);
+    node->block_dim = std::move(block_dim);
+    node->shared_mem = std::move(shared_mem);
+    node->stream = std::move(stream);
+    node->args = std::move(args);
+    return node;
+}
+
+lStmt RawCode::make(std::string code) {
+    internal_assert(!code.empty())
+        << "Cannot make RawCode with empty code.";
+    RawCode *node = new RawCode;
+    node->code = std::move(code);
+    return node;
+}
+
 } // namespace llir
 } // namespace nacho
