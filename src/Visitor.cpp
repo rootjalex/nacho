@@ -220,6 +220,33 @@ void Visitor::visit(const llir::KernelLaunch *node) {
     }
 }
 
-void Visitor::visit(const llir::RawCode *node) { (void)node; }
+void Visitor::visit(const llir::lSizeOf *node) { (void)node; }
+
+void Visitor::visit(const llir::Comment *node) { (void)node; }
+
+void Visitor::visit(const llir::DeviceAlloc *node) {
+    node->target.accept(this);
+    node->size_bytes.accept(this);
+    node->stream.accept(this);
+}
+
+void Visitor::visit(const llir::DeviceFree *node) {
+    node->ptr.accept(this);
+    node->stream.accept(this);
+}
+
+void Visitor::visit(const llir::DeviceTransfer *node) {
+    node->dst.accept(this);
+    node->src.accept(this);
+    node->size_bytes.accept(this);
+    node->stream.accept(this);
+}
+
+void Visitor::visit(const llir::PrefixSum *node) {
+    node->input.accept(this);
+    node->output.accept(this);
+    node->count.accept(this);
+    node->stream.accept(this);
+}
 
 } // namespace nacho

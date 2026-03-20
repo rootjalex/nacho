@@ -75,6 +75,7 @@ struct Printer : public Visitor {
     virtual void visit(const llir::lFunctionCall *) override;
     virtual void visit(const llir::lIncrement *) override;
     virtual void visit(const llir::lAddress *) override;
+    virtual void visit(const llir::lSizeOf *) override;
 
     virtual void print(const llir::lStmt &);
     virtual void visit(const llir::Declare *) override;
@@ -89,7 +90,11 @@ struct Printer : public Visitor {
     virtual void visit(const llir::For *) override;
     virtual void visit(const llir::Accumulate *) override;
     virtual void visit(const llir::KernelLaunch *) override;
-    virtual void visit(const llir::RawCode *) override;
+    virtual void visit(const llir::Comment *) override;
+    virtual void visit(const llir::DeviceAlloc *) override;
+    virtual void visit(const llir::DeviceFree *) override;
+    virtual void visit(const llir::DeviceTransfer *) override;
+    virtual void visit(const llir::PrefixSum *) override;
 
     void indent() { indent_count++; }
     void dedent() { indent_count--; }

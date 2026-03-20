@@ -56,6 +56,7 @@ struct lVar;
 struct lFunctionCall;
 struct lIncrement;
 struct lAddress;
+struct lSizeOf;
 
 struct lStmt;
 struct Declare;
@@ -70,7 +71,11 @@ struct BaseExpr;
 struct Break;
 struct Accumulate;
 struct KernelLaunch;
-struct RawCode;
+struct Comment;
+struct DeviceAlloc;
+struct DeviceFree;
+struct DeviceTransfer;
+struct PrefixSum;
 
 } // namespace llir
 

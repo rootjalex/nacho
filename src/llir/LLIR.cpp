@@ -405,11 +405,89 @@ lStmt KernelLaunch::make(std::string kernel_name,
     return node;
 }
 
-lStmt RawCode::make(std::string code) {
-    internal_assert(!code.empty())
-        << "Cannot make RawCode with empty code.";
-    RawCode *node = new RawCode;
-    node->code = std::move(code);
+lExpr lSizeOf::make(lType size_type) {
+    internal_assert(size_type.defined()) << "Cannot make lSizeOf with undefined type.";
+    lSizeOf *node = new lSizeOf;
+    node->size_type = std::move(size_type);
+    return node;
+}
+
+lStmt Comment::make(std::string text) {
+    Comment *node = new Comment;
+    node->text = std::move(text);
+    return node;
+}
+
+lStmt DeviceAlloc::make(lExpr target, lExpr size_bytes, lExpr stream) {
+    internal_assert(target.defined()) << "Cannot make DeviceAlloc with undefined target.";
+    internal_assert(size_bytes.defined()) << "Cannot make DeviceAlloc with undefined size_bytes.";
+    internal_assert(stream.defined()) << "Cannot make DeviceAlloc with undefined stream.";
+    DeviceAlloc *node = new DeviceAlloc;
+    node->target = std::move(target);
+    node->size_bytes = std::move(size_bytes);
+    node->stream = std::move(stream);
+    return node;
+}
+
+lStmt DeviceFree::make(lExpr ptr, lExpr stream) {
+    internal_assert(ptr.defined()) << "Cannot make DeviceFree with undefined ptr.";
+    internal_assert(stream.defined()) << "Cannot make DeviceFree with undefined stream.";
+    DeviceFree *node = new DeviceFree;
+    node->ptr = std::move(ptr);
+    node->stream = std::move(stream);
+    return node;
+}
+
+lStmt DeviceTransfer::make_memcpy(Direction direction, lExpr dst, lExpr src,
+                                   lExpr size_bytes, lExpr stream,
+                                   bool synchronize) {
+    internal_assert(dst.defined()) << "Cannot make DeviceTransfer with undefined dst.";
+    internal_assert(src.defined()) << "Cannot make DeviceTransfer with undefined src.";
+    internal_assert(size_bytes.defined()) << "Cannot make DeviceTransfer with undefined size_bytes.";
+    internal_assert(stream.defined()) << "Cannot make DeviceTransfer with undefined stream.";
+    DeviceTransfer *node = new DeviceTransfer;
+    node->kind = Memcpy;
+    node->direction = direction;
+    node->dst = std::move(dst);
+    node->src = std::move(src);
+    node->size_bytes = std::move(size_bytes);
+    node->stream = std::move(stream);
+    node->synchronize = synchronize;
+    return node;
+}
+
+lStmt DeviceTransfer::make_memset(lExpr dst, lExpr value, lExpr size_bytes,
+                                   lExpr stream) {
+    internal_assert(dst.defined()) << "Cannot make DeviceTransfer with undefined dst.";
+    internal_assert(value.defined()) << "Cannot make DeviceTransfer with undefined value.";
+    internal_assert(size_bytes.defined()) << "Cannot make DeviceTransfer with undefined size_bytes.";
+    internal_assert(stream.defined()) << "Cannot make DeviceTransfer with undefined stream.";
+    DeviceTransfer *node = new DeviceTransfer;
+    node->kind = Memset;
+    node->direction = D2D; // unused for memset
+    node->dst = std::move(dst);
+    node->src = std::move(value);
+    node->size_bytes = std::move(size_bytes);
+    node->stream = std::move(stream);
+    node->synchronize = false;
+    return node;
+}
+
+lStmt PrefixSum::make(lExpr input, lExpr output, lExpr count, lExpr stream,
+                       std::string temp_var_name, std::string temp_bytes_name) {
+    internal_assert(input.defined()) << "Cannot make PrefixSum with undefined input.";
+    internal_assert(output.defined()) << "Cannot make PrefixSum with undefined output.";
+    internal_assert(count.defined()) << "Cannot make PrefixSum with undefined count.";
+    internal_assert(stream.defined()) << "Cannot make PrefixSum with undefined stream.";
+    internal_assert(!temp_var_name.empty()) << "Cannot make PrefixSum with empty temp_var_name.";
+    internal_assert(!temp_bytes_name.empty()) << "Cannot make PrefixSum with empty temp_bytes_name.";
+    PrefixSum *node = new PrefixSum;
+    node->input = std::move(input);
+    node->output = std::move(output);
+    node->count = std::move(count);
+    node->stream = std::move(stream);
+    node->temp_var_name = std::move(temp_var_name);
+    node->temp_bytes_name = std::move(temp_bytes_name);
     return node;
 }
 

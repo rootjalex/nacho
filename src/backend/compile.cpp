@@ -506,6 +506,7 @@ namespace backend {
         std::vector<llir::Function::Argument> func_args;
         llir::lType ret_type = llir::Generic_t::make("void");
         std::string name = result_tensor.tensor_name + "_compute";
+        llir::lType value_t_type = llir::Generic_t::make("value_t");
 
         // Function arguments: const operand tensors + mutable result tensor
         for (const auto &it : operand_tensors) {
@@ -531,14 +532,22 @@ namespace backend {
             index_t, "num_threads",
             llir::lVar::make(index_t, "num_blocks") *
                 llir::lVar::make(index_t, "threads_per_block")));
-        body_stmts.emplace_back(llir::RawCode::make(
-            "const cudaStream_t stream = cudaStreamPerThread;"));
+        body_stmts.emplace_back(llir::Declare::make(
+            llir::Generic_t::make("const cudaStream_t"), "stream",
+            llir::lVar::make(llir::Generic_t::make("cudaStream_t"), "cudaStreamPerThread")));
 
         llir::lExpr num_blocks_var = llir::lVar::make(index_t, "num_blocks");
         llir::lExpr threads_per_block_var = llir::lVar::make(index_t, "threads_per_block");
         llir::lExpr num_threads_var = llir::lVar::make(index_t, "num_threads");
         llir::lExpr stream_var = llir::lVar::make(
             llir::Generic_t::make("cudaStream_t"), "stream");
+
+        // Helper to build result tensor field access
+        auto result_var = [&]() {
+            return llir::lVar::make(
+                llir::Generic_t::make(result_tensor.get_struct_name() + "<index_t, value_t>"),
+                result_tensor.tensor_name);
+        };
 
         // For each phase, generate the host-side orchestration
         int num_phases = (int)phase_struct_infos.size();
@@ -547,90 +556,97 @@ namespace backend {
         for (int phase = 0; phase < num_phases; phase++) {
             const auto &phase_info = phase_struct_infos[phase];
             const llir::Struct_t *partition_struct = phase_info.partition_struct.as<llir::Struct_t>();
-            std::vector<std::string> delayed_result_field_updates;
+            std::vector<llir::lStmt> delayed_result_field_updates;
 
-            body_stmts.emplace_back(llir::RawCode::make(
-                "// ========== Phase " + std::to_string(phase) + " =========="));
+            body_stmts.emplace_back(llir::Comment::make(
+                "========== Phase " + std::to_string(phase) + " =========="));
 
             // 1. Compute total_work and per_thread_work
+            std::string total_work_name = "total_work_" + std::to_string(phase);
             if (phase_info.previous_sparse_intersection == -1) {
                 // Phase 0: total_work = sum of operand nnz (length of innermost sparse dim)
-                // Use the included tensors' work computation
-                std::string total_work_expr;
-                bool first = true;
+                llir::lExpr total_work_init;
                 for (const auto &it : operand_tensors) {
-                    // Find the work contribution - use the length of the sparse dim at current_sparse_intersection
                     auto forall = get_forall_list()[phase_info.current_sparse_intersection].as<Forall>();
                     std::string idx = forall->idx;
                     if (it.second.tensor_type.format.level_exists(idx) &&
                         is_sparse_format(it.second.tensor_type.format.lvlfmt_of(idx))) {
-                        if (!first) total_work_expr += " + ";
-                        total_work_expr += it.second.tensor_name + "." +
-                                          it.second.get_length_field_name(idx);
-                        first = false;
+                        llir::lExpr field = llir::lFieldAccess::make(
+                            llir::lVar::make(llir::Generic_t::make(it.second.get_struct_name() + "<index_t, value_t>"),
+                                             it.second.tensor_name),
+                            it.second.get_length_field_name(idx));
+                        if (total_work_init.defined()) {
+                            total_work_init = total_work_init + field;
+                        } else {
+                            total_work_init = field;
+                        }
                     }
                 }
-                // If result tensor has a dense dim at the current_sparse_intersection level,
-                // we may need size from operand's nnz or similar
-                if (first) {
+                if (!total_work_init.defined()) {
                     // Fallback: sum all operand nnz-like fields
                     for (const auto &it : operand_tensors) {
                         auto &fmt = it.second.tensor_type.format;
                         if (!fmt.levels.empty()) {
                             int last = fmt.levels.size() - 1;
                             if (is_sparse_format(fmt.levels[last].format)) {
-                                if (!first) total_work_expr += " + ";
-                                total_work_expr += it.second.tensor_name + "." +
-                                                  it.second.get_length_field_name(fmt.levels[last].index);
-                                first = false;
+                                llir::lExpr field = llir::lFieldAccess::make(
+                                    llir::lVar::make(llir::Generic_t::make(it.second.get_struct_name() + "<index_t, value_t>"),
+                                                     it.second.tensor_name),
+                                    it.second.get_length_field_name(fmt.levels[last].index));
+                                if (total_work_init.defined()) {
+                                    total_work_init = total_work_init + field;
+                                } else {
+                                    total_work_init = field;
+                                }
                             }
                         }
                     }
                 }
-                if (total_work_expr.empty()) {
-                    total_work_expr = "0";
+                if (!total_work_init.defined()) {
+                    total_work_init = llir::lConst::make((int64_t)0);
                 }
-                body_stmts.emplace_back(llir::RawCode::make(
-                    "index_t total_work_" + std::to_string(phase) + " = " + total_work_expr + ";"));
+                body_stmts.emplace_back(llir::Declare::make(
+                    index_t, total_work_name, total_work_init));
             } else {
                 // Phase N>0: total_work comes from prefix sum result of previous phase.
-                // Read from the last valid entry (indexed by previous phase's output nnz).
-                body_stmts.emplace_back(llir::RawCode::make(
-                    "index_t total_work_" + std::to_string(phase) + ";"));
-                body_stmts.emplace_back(llir::RawCode::make(
-                    "cudaMemcpyAsync(&total_work_" + std::to_string(phase) +
-                    ", &T_work_offsets_prefix[" + prev_phase_outermost_nnz +
-                    "], sizeof(index_t), cudaMemcpyDeviceToHost, stream);"));
-                body_stmts.emplace_back(llir::RawCode::make(
-                    "cudaStreamSynchronize(stream);"));
+                body_stmts.emplace_back(llir::Declare::make(index_t, total_work_name));
+                llir::lExpr tw_var = llir::lVar::make(index_t, total_work_name);
+                llir::lExpr prev_nnz_var = llir::lVar::make(index_t, prev_phase_outermost_nnz);
+                llir::lExpr tw_prefix_var = llir::lVar::make(llir::Ptr_t::make(index_t), "T_work_offsets_prefix");
+                body_stmts.emplace_back(llir::DeviceTransfer::make_memcpy(
+                    llir::DeviceTransfer::D2H,
+                    llir::lAddress::make(tw_var),
+                    llir::lAddress::make(tw_prefix_var[prev_nnz_var]),
+                    llir::lSizeOf::make(index_t),
+                    stream_var, true));
             }
 
-            std::string total_work_name = "total_work_" + std::to_string(phase);
             std::string ptw_name = "per_thread_work_" + std::to_string(phase);
-            body_stmts.emplace_back(llir::RawCode::make(
-                "index_t " + ptw_name + " = " + total_work_name + " / num_threads + 1;"));
+            body_stmts.emplace_back(llir::Declare::make(
+                index_t, ptw_name,
+                llir::lVar::make(index_t, total_work_name) / num_threads_var + 1));
 
             // 2. Allocate partition struct fields
             std::string partition_var = "partitions_" + std::to_string(phase);
-            body_stmts.emplace_back(llir::RawCode::make(
-                partition_struct->name + "<index_t> " + partition_var + ";"));
+            body_stmts.emplace_back(llir::Declare::make(
+                llir::Generic_t::make(partition_struct->name + "<index_t>"), partition_var));
+            llir::lExpr partition_var_expr = llir::lVar::make(
+                llir::Generic_t::make(partition_struct->name + "<index_t>"), partition_var);
             for (const auto &field : partition_struct->fields) {
-                body_stmts.emplace_back(llir::RawCode::make(
-                    "cudaMallocAsync((void**)&" + partition_var + "." + field.first +
-                    ", num_threads * sizeof(index_t), stream);"));
+                body_stmts.emplace_back(llir::DeviceAlloc::make(
+                    llir::lFieldAccess::make(partition_var_expr, field.first),
+                    num_threads_var * llir::lSizeOf::make(index_t),
+                    stream_var));
             }
 
             // 3. Launch partition kernel
             {
                 std::vector<llir::lExpr> launch_args;
-                // Build launch args matching the kernel signature
                 for (const auto &ki : kernel_infos) {
                     if (ki.kind == KernelInfo::Partition && ki.phase == phase) {
                         for (const auto &arg : ki.args) {
                             if (arg.name == "partitions") {
-                                launch_args.push_back(llir::lVar::make(
-                                    llir::Generic_t::make(partition_struct->name + "<index_t>"),
-                                    partition_var));
+                                launch_args.push_back(partition_var_expr);
                             } else if (arg.name == "per_thread_work") {
                                 launch_args.push_back(llir::lVar::make(index_t, ptw_name));
                             } else if (arg.name == "total_work") {
@@ -657,12 +673,15 @@ namespace backend {
                 const llir::Struct_t *counts_struct = phase_info.counts_struct.as<llir::Struct_t>();
 
                 // 4. Allocate count struct fields
-                body_stmts.emplace_back(llir::RawCode::make(
-                    counts_struct->name + "<index_t> " + counts_var + ";"));
+                body_stmts.emplace_back(llir::Declare::make(
+                    llir::Generic_t::make(counts_struct->name + "<index_t>"), counts_var));
+                llir::lExpr counts_var_expr = llir::lVar::make(
+                    llir::Generic_t::make(counts_struct->name + "<index_t>"), counts_var);
                 for (const auto &field : counts_struct->fields) {
-                    body_stmts.emplace_back(llir::RawCode::make(
-                        "cudaMallocAsync((void**)&" + counts_var + "." + field.first +
-                        ", num_threads * sizeof(index_t), stream);"));
+                    body_stmts.emplace_back(llir::DeviceAlloc::make(
+                        llir::lFieldAccess::make(counts_var_expr, field.first),
+                        num_threads_var * llir::lSizeOf::make(index_t),
+                        stream_var));
                 }
 
                 // 5. Launch precompute kernel
@@ -671,13 +690,9 @@ namespace backend {
                         std::vector<llir::lExpr> launch_args;
                         for (const auto &arg : ki.args) {
                             if (arg.name == "partitions") {
-                                launch_args.push_back(llir::lVar::make(
-                                    llir::Generic_t::make(partition_struct->name + "<index_t>"),
-                                    partition_var));
+                                launch_args.push_back(partition_var_expr);
                             } else if (arg.name == "count_offsets") {
-                                launch_args.push_back(llir::lVar::make(
-                                    llir::Generic_t::make(counts_struct->name + "<index_t>"),
-                                    counts_var));
+                                launch_args.push_back(counts_var_expr);
                             } else if (arg.name == "per_thread_work") {
                                 launch_args.push_back(llir::lVar::make(index_t, ptw_name));
                             } else {
@@ -698,43 +713,38 @@ namespace backend {
                 // 6. CUB prefix sum (two-pass pattern) for each count field
                 for (const auto &field : counts_struct->fields) {
                     std::string prefix_var = counts_var + "_" + field.first + "_prefix";
-                    body_stmts.emplace_back(llir::RawCode::make(
-                        "index_t* " + prefix_var + ";"));
-                    body_stmts.emplace_back(llir::RawCode::make(
-                        "cudaMallocAsync((void**)&" + prefix_var +
-                        ", (num_threads + 1) * sizeof(index_t), stream);"));
-                    body_stmts.emplace_back(llir::RawCode::make(
-                        "cudaMemsetAsync(" + prefix_var + ", 0, (num_threads + 1) * sizeof(index_t), stream);"));
+                    llir::lExpr prefix_var_expr = llir::lVar::make(llir::Ptr_t::make(index_t), prefix_var);
+                    body_stmts.emplace_back(llir::Declare::make(
+                        llir::Ptr_t::make(index_t), prefix_var));
+                    body_stmts.emplace_back(llir::DeviceAlloc::make(
+                        llir::lVar::make(llir::Ptr_t::make(index_t), prefix_var),
+                        (num_threads_var + 1) * llir::lSizeOf::make(index_t),
+                        stream_var));
+                    body_stmts.emplace_back(llir::DeviceTransfer::make_memset(
+                        prefix_var_expr,
+                        llir::lConst::make((int64_t)0),
+                        (num_threads_var + 1) * llir::lSizeOf::make(index_t),
+                        stream_var));
 
-                    // CUB two-pass
-                    std::string temp_var = "d_temp_storage_" + std::to_string(phase) + "_" + field.first;
-                    std::string temp_bytes = "temp_storage_bytes_" + std::to_string(phase) + "_" + field.first;
-                    body_stmts.emplace_back(llir::RawCode::make(
-                        "void* " + temp_var + " = nullptr;"));
-                    body_stmts.emplace_back(llir::RawCode::make(
-                        "size_t " + temp_bytes + " = 0;"));
-                    body_stmts.emplace_back(llir::RawCode::make(
-                        "cub::DeviceScan::InclusiveSum(" + temp_var + ", " + temp_bytes +
-                        ", " + counts_var + "." + field.first +
-                        ", " + prefix_var + " + 1, num_threads, stream);"));
-                    body_stmts.emplace_back(llir::RawCode::make(
-                        "cudaMallocAsync(&" + temp_var + ", " + temp_bytes + ", stream);"));
-                    body_stmts.emplace_back(llir::RawCode::make(
-                        "cub::DeviceScan::InclusiveSum(" + temp_var + ", " + temp_bytes +
-                        ", " + counts_var + "." + field.first +
-                        ", " + prefix_var + " + 1, num_threads, stream);"));
-                    body_stmts.emplace_back(llir::RawCode::make(
-                        "cudaFreeAsync(" + temp_var + ", stream);"));
+                    // CUB two-pass via PrefixSum node
+                    body_stmts.emplace_back(llir::PrefixSum::make(
+                        llir::lFieldAccess::make(counts_var_expr, field.first),
+                        prefix_var_expr,
+                        num_threads_var,
+                        stream_var,
+                        "d_temp_storage_" + std::to_string(phase) + "_" + field.first,
+                        "temp_storage_bytes_" + std::to_string(phase) + "_" + field.first));
 
                     // Replace the count field with the prefix-summed version
-                    body_stmts.emplace_back(llir::RawCode::make(
-                        "cudaFreeAsync(" + counts_var + "." + field.first + ", stream);"));
-                    body_stmts.emplace_back(llir::RawCode::make(
-                        counts_var + "." + field.first + " = " + prefix_var + ";"));
+                    body_stmts.emplace_back(llir::DeviceFree::make(
+                        llir::lFieldAccess::make(counts_var_expr, field.first),
+                        stream_var));
+                    body_stmts.emplace_back(llir::Store::make(
+                        llir::lFieldAccess::make(counts_var_expr, field.first),
+                        prefix_var_expr));
                 }
 
                 // 7. Read nnz from device
-                // For each sparse dimension in the result, read the total count
                 bool has_nnz_read = false;
                 for (int lvl = 0; lvl <= phase_info.current_sparse_intersection; lvl++) {
                     auto idx = result_tensor.tensor_type.format.levels[lvl].index;
@@ -742,36 +752,37 @@ namespace backend {
                         std::string nnz_name = "nnz_" + idx + "_" + std::to_string(phase);
                         std::string field_name = "dim_" + idx + "_count";
                         std::string prefix_var = counts_var + "_" + field_name + "_prefix";
-                        body_stmts.emplace_back(llir::RawCode::make(
-                            "index_t " + nnz_name + ";"));
-                        body_stmts.emplace_back(llir::RawCode::make(
-                            "cudaMemcpyAsync(&" + nnz_name + ", " + prefix_var +
-                            " + num_threads, sizeof(index_t), cudaMemcpyDeviceToHost, stream);"));
+                        body_stmts.emplace_back(llir::Declare::make(index_t, nnz_name));
+                        llir::lExpr nnz_var = llir::lVar::make(index_t, nnz_name);
+                        llir::lExpr prefix_var_expr = llir::lVar::make(llir::Ptr_t::make(index_t), prefix_var);
+                        body_stmts.emplace_back(llir::DeviceTransfer::make_memcpy(
+                            llir::DeviceTransfer::D2H,
+                            llir::lAddress::make(nnz_var),
+                            prefix_var_expr + num_threads_var,
+                            llir::lSizeOf::make(index_t),
+                            stream_var, false));
                         has_nnz_read = true;
                     }
                 }
                 if (has_nnz_read) {
-                    body_stmts.emplace_back(llir::RawCode::make(
-                        "cudaStreamSynchronize(stream);"));
+                    body_stmts.emplace_back(llir::BaseExpr::make(
+                        llir::lFunctionCall::make("cudaStreamSynchronize", {stream_var})));
                 }
 
                 // 8. Allocate output tensor arrays based on nnz
-                // Allocate indices and values arrays for sparse dimensions
-                // Skip levels already allocated in previous phases
                 int alloc_start = prev_phase_max_sparse + 1;
                 for (int lvl = alloc_start; lvl <= phase_info.current_sparse_intersection; lvl++) {
                     auto idx = result_tensor.tensor_type.format.levels[lvl].index;
                     if (is_sparse_format(result_tensor.tensor_type.format.lvlfmt_of(idx))) {
                         std::string nnz_name = "nnz_" + idx + "_" + std::to_string(phase);
-                        body_stmts.emplace_back(llir::RawCode::make(
-                            "cudaMallocAsync((void**)&" + result_tensor.tensor_name + "." +
-                            result_tensor.get_indices_field_name(idx) +
-                            ", " + nnz_name + " * sizeof(index_t), stream);"));
+                        body_stmts.emplace_back(llir::DeviceAlloc::make(
+                            llir::lFieldAccess::make(result_var(), result_tensor.get_indices_field_name(idx)),
+                            llir::lVar::make(index_t, nnz_name) * llir::lSizeOf::make(index_t),
+                            stream_var));
                     }
                 }
                 // Allocate values if this is the last phase
                 if (phase == num_phases - 1) {
-                    // Find the innermost sparse dimension's nnz for values allocation
                     std::string values_nnz;
                     for (int lvl = phase_info.current_sparse_intersection; lvl >= 0; lvl--) {
                         auto idx = result_tensor.tensor_type.format.levels[lvl].index;
@@ -781,58 +792,57 @@ namespace backend {
                         }
                     }
                     if (!values_nnz.empty()) {
-                        body_stmts.emplace_back(llir::RawCode::make(
-                            "cudaMallocAsync((void**)&" + result_tensor.tensor_name + ".values" +
-                            ", " + values_nnz + " * sizeof(value_t), stream);"));
+                        body_stmts.emplace_back(llir::DeviceAlloc::make(
+                            llir::lFieldAccess::make(result_var(), "values"),
+                            llir::lVar::make(index_t, values_nnz) * llir::lSizeOf::make(value_t_type),
+                            stream_var));
                     }
                 }
 
                 // Allocate offsets arrays for non-outermost sparse dimensions
-                // (outermost sparse dim has no offsets field in the struct)
                 for (int lvl = 1; lvl <= phase_info.current_sparse_intersection; lvl++) {
                     auto idx = result_tensor.tensor_type.format.levels[lvl].index;
                     if (is_sparse_format(result_tensor.tensor_type.format.lvlfmt_of(idx))) {
-                        // Offsets size depends on the parent dimension
-                        std::string offsets_size;
                         auto parent_idx = result_tensor.tensor_type.format.levels[lvl - 1].index;
+                        llir::lExpr offsets_size;
                         if (is_sparse_format(result_tensor.tensor_type.format.lvlfmt_of(parent_idx))) {
-                            offsets_size = "nnz_" + parent_idx + "_" + std::to_string(phase) + " + 1";
+                            offsets_size = llir::lVar::make(index_t,
+                                "nnz_" + parent_idx + "_" + std::to_string(phase)) + 1;
                         } else {
-                            offsets_size = result_tensor.tensor_name + "." +
-                                          result_tensor.get_size_field_name(parent_idx) + " + 1";
+                            offsets_size = llir::lFieldAccess::make(result_var(),
+                                result_tensor.get_size_field_name(parent_idx)) + 1;
                         }
-                        body_stmts.emplace_back(llir::RawCode::make(
-                            "cudaMallocAsync((void**)&" + result_tensor.tensor_name + "." +
-                            result_tensor.get_offsets_field_name(idx) +
-                            ", (" + offsets_size + ") * sizeof(index_t), stream);"));
-                        body_stmts.emplace_back(llir::RawCode::make(
-                            "cudaMemsetAsync(" + result_tensor.tensor_name + "." +
-                            result_tensor.get_offsets_field_name(idx) +
-                            ", 0, (" + offsets_size + ") * sizeof(index_t), stream);"));
+                        llir::lExpr offsets_field = llir::lFieldAccess::make(result_var(),
+                            result_tensor.get_offsets_field_name(idx));
+                        body_stmts.emplace_back(llir::DeviceAlloc::make(
+                            offsets_field,
+                            offsets_size * llir::lSizeOf::make(index_t),
+                            stream_var));
+                        body_stmts.emplace_back(llir::DeviceTransfer::make_memset(
+                            llir::lFieldAccess::make(result_var(), result_tensor.get_offsets_field_name(idx)),
+                            llir::lConst::make((int64_t)0),
+                            offsets_size * llir::lSizeOf::make(index_t),
+                            stream_var));
                     }
                 }
 
                 // Defer result length/nnz updates until after compute launch.
-                // Compute kernels in later phases may still need previous phase
-                // length fields while traversing intermediate buffers.
                 for (int lvl = 0; lvl <= phase_info.current_sparse_intersection; lvl++) {
                     auto idx = result_tensor.tensor_type.format.levels[lvl].index;
                     if (is_sparse_format(result_tensor.tensor_type.format.lvlfmt_of(idx))) {
                         std::string nnz_name = "nnz_" + idx + "_" + std::to_string(phase);
-                        delayed_result_field_updates.push_back(
-                            result_tensor.tensor_name + "." +
-                            result_tensor.get_length_field_name(idx) +
-                            " = " + nnz_name + ";");
+                        delayed_result_field_updates.push_back(llir::Store::make(
+                            llir::lFieldAccess::make(result_var(), result_tensor.get_length_field_name(idx)),
+                            llir::lVar::make(index_t, nnz_name)));
                     }
                 }
                 if (phase == num_phases - 1) {
-                    // Set nnz to innermost sparse dim's count
                     for (int lvl = phase_info.current_sparse_intersection; lvl >= 0; lvl--) {
                         auto idx = result_tensor.tensor_type.format.levels[lvl].index;
                         if (is_sparse_format(result_tensor.tensor_type.format.lvlfmt_of(idx))) {
-                            delayed_result_field_updates.push_back(
-                                result_tensor.tensor_name + ".nnz = nnz_" +
-                                idx + "_" + std::to_string(phase) + ";");
+                            delayed_result_field_updates.push_back(llir::Store::make(
+                                llir::lFieldAccess::make(result_var(), "nnz"),
+                                llir::lVar::make(index_t, "nnz_" + idx + "_" + std::to_string(phase))));
                             break;
                         }
                     }
@@ -840,8 +850,6 @@ namespace backend {
             }
 
             // For multi-phase expressions, compute the output nnz variable name
-            // for the outermost sparse dim of this phase. This is used for
-            // pos_map allocation and T_work_offsets sizing.
             bool is_last_phase = (phase == num_phases - 1);
             std::string phase_outermost_nnz;
             if (!is_last_phase) {
@@ -855,34 +863,43 @@ namespace backend {
             }
 
             // Early return if this phase produced zero output elements
-            // and there are more phases to come (prevents out-of-bounds reads).
             if (!is_last_phase && !phase_outermost_nnz.empty()) {
-                // Emit: if (nnz == 0) { set remaining fields to 0, free intermediates, return; }
-                std::string guard;
-                guard += "if (" + phase_outermost_nnz + " == 0) {\n";
+                llir::lExpr nnz_var = llir::lVar::make(index_t, phase_outermost_nnz);
+                std::vector<llir::lStmt> guard_stmts;
                 // Set remaining output fields to zero
                 for (int lvl = phase_info.current_sparse_intersection + 1;
                      lvl < (int)result_tensor.tensor_type.format.levels.size(); lvl++) {
                     auto idx = result_tensor.tensor_type.format.levels[lvl].index;
                     if (is_sparse_format(result_tensor.tensor_type.format.lvlfmt_of(idx))) {
-                        guard += "  " + result_tensor.tensor_name + "." +
-                                 result_tensor.get_length_field_name(idx) + " = 0;\n";
+                        guard_stmts.push_back(llir::Store::make(
+                            llir::lFieldAccess::make(result_var(), result_tensor.get_length_field_name(idx)),
+                            llir::lConst::make((int64_t)0)));
                     }
                 }
-                guard += "  " + result_tensor.tensor_name + ".nnz = 0;\n";
+                guard_stmts.push_back(llir::Store::make(
+                    llir::lFieldAccess::make(result_var(), "nnz"),
+                    llir::lConst::make((int64_t)0)));
                 // Free partition and count structs
                 for (const auto &field : partition_struct->fields) {
-                    guard += "  cudaFreeAsync(" + partition_var + "." + field.first + ", stream);\n";
+                    guard_stmts.push_back(llir::DeviceFree::make(
+                        llir::lFieldAccess::make(partition_var_expr, field.first),
+                        stream_var));
                 }
                 if (phase_info.has_precompute) {
                     const llir::Struct_t *counts_struct = phase_info.counts_struct.as<llir::Struct_t>();
+                    llir::lExpr counts_var_expr = llir::lVar::make(
+                        llir::Generic_t::make(counts_struct->name + "<index_t>"), counts_var);
                     for (const auto &field : counts_struct->fields) {
-                        guard += "  cudaFreeAsync(" + counts_var + "." + field.first + ", stream);\n";
+                        guard_stmts.push_back(llir::DeviceFree::make(
+                            llir::lFieldAccess::make(counts_var_expr, field.first),
+                            stream_var));
                     }
                 }
-                guard += "  return;\n";
-                guard += "}";
-                body_stmts.emplace_back(llir::RawCode::make(guard));
+                guard_stmts.push_back(llir::Return::make());
+                body_stmts.emplace_back(llir::IfElse::make(
+                    nnz_var == llir::lConst::make((int64_t)0),
+                    llir::Sequence::make(std::move(guard_stmts)),
+                    llir::lStmt()));
             }
 
             // Allocate result_to_operand_pos_map if this is not the last phase.
@@ -894,32 +911,36 @@ namespace backend {
                 std::string pos_map_struct = base_lowerer.get_result_to_operand_pos_map_struct_name();
                 std::string pos_map_var = base_lowerer.get_result_to_operand_pos_map_var_name();
 
-                body_stmts.emplace_back(llir::RawCode::make(
-                    pos_map_struct + "<index_t> " + pos_map_var + ";"));
+                body_stmts.emplace_back(llir::Declare::make(
+                    llir::Generic_t::make(pos_map_struct + "<index_t>"), pos_map_var));
+                llir::lExpr pos_map_var_expr = llir::lVar::make(
+                    llir::Generic_t::make(pos_map_struct + "<index_t>"), pos_map_var);
+                llir::lExpr nnz_var = llir::lVar::make(index_t, phase_outermost_nnz);
                 for (int lvl = 0; lvl <= phase_info.current_sparse_intersection; lvl++) {
                     if (lvl >= (int)forall_list.size() - 1) continue;
                     const Forall *forall = forall_list[lvl].as<Forall>();
                     std::string forall_idx = forall->idx;
-                    for (auto &[name, tensor] : operand_tensors) {
+                    for (auto &[tname, tensor] : operand_tensors) {
                         if (base_lowerer.exists_field_in_result_to_operand_pos_map(forall, tensor)) {
                             std::string field = tensor.get_iterator_suffix(forall_idx);
-                            body_stmts.emplace_back(llir::RawCode::make(
-                                "cudaMallocAsync((void**)&" + pos_map_var + "." + field +
-                                ", " + phase_outermost_nnz + " * sizeof(index_t), stream);"));
+                            body_stmts.emplace_back(llir::DeviceAlloc::make(
+                                llir::lFieldAccess::make(pos_map_var_expr, field),
+                                nnz_var * llir::lSizeOf::make(index_t),
+                                stream_var));
                         }
                     }
                 }
             }
 
             // Allocate T_work_offsets if this is not the last phase.
-            // Size is the output nnz of the outermost sparse dim (not total_work),
-            // since the compute kernel only writes one entry per output element.
             if (!is_last_phase) {
-                body_stmts.emplace_back(llir::RawCode::make(
-                    "index_t* T_work_offsets;"));
-                body_stmts.emplace_back(llir::RawCode::make(
-                    "cudaMallocAsync((void**)&T_work_offsets, " + phase_outermost_nnz +
-                    " * sizeof(index_t), stream);"));
+                llir::lExpr nnz_var = llir::lVar::make(index_t, phase_outermost_nnz);
+                body_stmts.emplace_back(llir::Declare::make(
+                    llir::Ptr_t::make(index_t), "T_work_offsets"));
+                body_stmts.emplace_back(llir::DeviceAlloc::make(
+                    llir::lVar::make(llir::Ptr_t::make(index_t), "T_work_offsets"),
+                    nnz_var * llir::lSizeOf::make(index_t),
+                    stream_var));
             }
 
             // 9. Launch compute kernel
@@ -928,13 +949,12 @@ namespace backend {
                     std::vector<llir::lExpr> launch_args;
                     for (const auto &arg : ki.args) {
                         if (arg.name == "partitions") {
-                            launch_args.push_back(llir::lVar::make(
-                                llir::Generic_t::make(partition_struct->name + "<index_t>"),
-                                partition_var));
+                            launch_args.push_back(partition_var_expr);
                         } else if (arg.name == "count_offsets") {
-                            launch_args.push_back(llir::lVar::make(
+                            llir::lExpr counts_var_expr = llir::lVar::make(
                                 llir::Generic_t::make("result_per_thread_count<index_t>"),
-                                counts_var));
+                                counts_var);
+                            launch_args.push_back(counts_var_expr);
                         } else if (arg.name == "per_thread_work") {
                             launch_args.push_back(llir::lVar::make(index_t, ptw_name));
                         } else {
@@ -953,57 +973,53 @@ namespace backend {
             }
 
             // Prefix sum T_work_offsets if not the last phase.
-            // Use the output nnz (not total_work) since only nnz entries are valid.
             if (!is_last_phase) {
-                std::string tw_size = phase_outermost_nnz;
-                std::string temp_var = "d_temp_tw_" + std::to_string(phase);
-                std::string temp_bytes = "temp_bytes_tw_" + std::to_string(phase);
-                body_stmts.emplace_back(llir::RawCode::make(
-                    "index_t* T_work_offsets_prefix;"));
-                body_stmts.emplace_back(llir::RawCode::make(
-                    "cudaMallocAsync((void**)&T_work_offsets_prefix, (" +
-                    tw_size + " + 1) * sizeof(index_t), stream);"));
-                body_stmts.emplace_back(llir::RawCode::make(
-                    "cudaMemsetAsync(T_work_offsets_prefix, 0, (" +
-                    tw_size + " + 1) * sizeof(index_t), stream);"));
-                body_stmts.emplace_back(llir::RawCode::make(
-                    "void* " + temp_var + " = nullptr;"));
-                body_stmts.emplace_back(llir::RawCode::make(
-                    "size_t " + temp_bytes + " = 0;"));
-                body_stmts.emplace_back(llir::RawCode::make(
-                    "cub::DeviceScan::InclusiveSum(" + temp_var + ", " + temp_bytes +
-                    ", T_work_offsets, T_work_offsets_prefix + 1, " + tw_size + ", stream);"));
-                body_stmts.emplace_back(llir::RawCode::make(
-                    "cudaMallocAsync(&" + temp_var + ", " + temp_bytes + ", stream);"));
-                body_stmts.emplace_back(llir::RawCode::make(
-                    "cub::DeviceScan::InclusiveSum(" + temp_var + ", " + temp_bytes +
-                    ", T_work_offsets, T_work_offsets_prefix + 1, " + tw_size + ", stream);"));
-                body_stmts.emplace_back(llir::RawCode::make(
-                    "cudaFreeAsync(" + temp_var + ", stream);"));
-                body_stmts.emplace_back(llir::RawCode::make(
-                    "cudaFreeAsync(T_work_offsets, stream);"));
+                llir::lExpr tw_size_var = llir::lVar::make(index_t, phase_outermost_nnz);
+                body_stmts.emplace_back(llir::Declare::make(
+                    llir::Ptr_t::make(index_t), "T_work_offsets_prefix"));
+                llir::lExpr tw_prefix_var = llir::lVar::make(llir::Ptr_t::make(index_t), "T_work_offsets_prefix");
+                llir::lExpr tw_var = llir::lVar::make(llir::Ptr_t::make(index_t), "T_work_offsets");
+                body_stmts.emplace_back(llir::DeviceAlloc::make(
+                    tw_prefix_var,
+                    (tw_size_var + 1) * llir::lSizeOf::make(index_t),
+                    stream_var));
+                body_stmts.emplace_back(llir::DeviceTransfer::make_memset(
+                    llir::lVar::make(llir::Ptr_t::make(index_t), "T_work_offsets_prefix"),
+                    llir::lConst::make((int64_t)0),
+                    (tw_size_var + 1) * llir::lSizeOf::make(index_t),
+                    stream_var));
+                body_stmts.emplace_back(llir::PrefixSum::make(
+                    tw_var,
+                    tw_prefix_var,
+                    tw_size_var,
+                    stream_var,
+                    "d_temp_tw_" + std::to_string(phase),
+                    "temp_bytes_tw_" + std::to_string(phase)));
+                body_stmts.emplace_back(llir::DeviceFree::make(tw_var, stream_var));
                 // Reassign so next phase's kernels use the prefix sum result
-                body_stmts.emplace_back(llir::RawCode::make(
-                    "T_work_offsets = T_work_offsets_prefix;"));
+                body_stmts.emplace_back(llir::Store::make(tw_var, tw_prefix_var));
             }
 
             for (const auto &stmt : delayed_result_field_updates) {
-                body_stmts.emplace_back(llir::RawCode::make(stmt));
+                body_stmts.emplace_back(stmt);
             }
 
             // 10. Free partition struct intermediates
             for (const auto &field : partition_struct->fields) {
-                body_stmts.emplace_back(llir::RawCode::make(
-                    "cudaFreeAsync(" + partition_var + "." + field.first + ", stream);"));
+                body_stmts.emplace_back(llir::DeviceFree::make(
+                    llir::lFieldAccess::make(partition_var_expr, field.first),
+                    stream_var));
             }
 
             // Free count struct intermediates (if precompute exists and this is the last phase)
-            // Count structs are consumed by compute kernel, so free after compute
             if (phase_info.has_precompute && is_last_phase) {
                 const llir::Struct_t *counts_struct = phase_info.counts_struct.as<llir::Struct_t>();
+                llir::lExpr counts_var_expr = llir::lVar::make(
+                    llir::Generic_t::make(counts_struct->name + "<index_t>"), counts_var);
                 for (const auto &field : counts_struct->fields) {
-                    body_stmts.emplace_back(llir::RawCode::make(
-                        "cudaFreeAsync(" + counts_var + "." + field.first + ", stream);"));
+                    body_stmts.emplace_back(llir::DeviceFree::make(
+                        llir::lFieldAccess::make(counts_var_expr, field.first),
+                        stream_var));
                 }
             }
 
@@ -1029,8 +1045,6 @@ namespace backend {
         std::vector<llir::Function::Argument> args;
 
         // For each operand: add all struct fields as flat args
-        // All operand args are marked mutating to avoid const qualifiers,
-        // since the operand structs store non-const pointers internally.
         for (const auto &[name, tensor] : operand_tensors) {
             llir::lType struct_type = tensor.lower_tensor_struct_definition();
             const auto *st = struct_type.as<llir::Struct_t>();
@@ -1062,9 +1076,7 @@ namespace backend {
         });
 
         // Output references: length for non-innermost sparse dims
-        // (innermost sparse dim length == nnz, already covered by out_nnz)
         {
-            // Find innermost sparse level
             int innermost_sparse = -1;
             for (int i = (int)result_tensor.tensor_type.format.levels.size() - 1; i >= 0; i--) {
                 auto idx = result_tensor.tensor_type.format.levels[i].index;
@@ -1120,42 +1132,50 @@ namespace backend {
 
         // Create and populate operand structs
         for (const auto &[name, tensor] : operand_tensors) {
-            body_stmts.push_back(llir::RawCode::make(
-                tensor.get_struct_name() + "<index_t, value_t> " + name + ";"));
-            llir::lType struct_type = tensor.lower_tensor_struct_definition();
-            const auto *st = struct_type.as<llir::Struct_t>();
+            llir::lType struct_type_def = tensor.lower_tensor_struct_definition();
+            const auto *st = struct_type_def.as<llir::Struct_t>();
+            llir::lType operand_struct_type = llir::Generic_t::make(
+                tensor.get_struct_name() + "<index_t, value_t>");
+            body_stmts.push_back(llir::Declare::make(operand_struct_type, name));
+            llir::lExpr operand_var = llir::lVar::make(operand_struct_type, name);
             for (const auto &[field_name, field_type] : st->fields) {
-                body_stmts.push_back(llir::RawCode::make(
-                    name + "." + field_name + " = " + name + "_" + field_name + ";"));
+                body_stmts.push_back(llir::Store::make(
+                    llir::lFieldAccess::make(operand_var, field_name),
+                    llir::lVar::make(field_type, name + "_" + field_name)));
             }
         }
 
         // Create result struct and populate size fields
-        body_stmts.push_back(llir::RawCode::make(
-            result_tensor.get_struct_name() + "<index_t, value_t> " +
-            result_tensor.tensor_name + ";"));
+        llir::lType result_struct_type = llir::Generic_t::make(
+            result_tensor.get_struct_name() + "<index_t, value_t>");
+        body_stmts.push_back(llir::Declare::make(
+            result_struct_type, result_tensor.tensor_name));
+        llir::lExpr result_var_expr = llir::lVar::make(result_struct_type, result_tensor.tensor_name);
         for (size_t i = 0; i < result_tensor.tensor_type.format.levels.size(); i++) {
             auto idx = result_tensor.tensor_type.format.levels[i].index;
             std::string size_field = result_tensor.get_size_field_name(idx);
-            body_stmts.push_back(llir::RawCode::make(
-                result_tensor.tensor_name + "." + size_field +
-                " = result_" + size_field + ";"));
+            body_stmts.push_back(llir::Store::make(
+                llir::lFieldAccess::make(result_var_expr, size_field),
+                llir::lVar::make(index_t, "result_" + size_field)));
         }
 
         // Call the compute function
-        std::string call = result_tensor.tensor_name + "_compute<index_t, value_t>(";
-        bool first = true;
-        for (const auto &[name, tensor] : operand_tensors) {
-            if (!first) call += ", ";
-            call += name;
-            first = false;
+        {
+            std::vector<llir::lExpr> call_args;
+            for (const auto &[name, tensor] : operand_tensors) {
+                call_args.push_back(llir::lVar::make(
+                    llir::Generic_t::make(tensor.get_struct_name() + "<index_t, value_t>"), name));
+            }
+            call_args.push_back(result_var_expr);
+            body_stmts.push_back(llir::BaseExpr::make(
+                llir::lFunctionCall::make(
+                    result_tensor.tensor_name + "_compute<index_t, value_t>", std::move(call_args))));
         }
-        call += ", " + result_tensor.tensor_name + ");";
-        body_stmts.push_back(llir::RawCode::make(call));
 
         // Extract outputs
-        body_stmts.push_back(llir::RawCode::make(
-            "out_nnz = " + result_tensor.tensor_name + ".nnz;"));
+        body_stmts.push_back(llir::Store::make(
+            llir::lVar::make(index_t, "out_nnz"),
+            llir::lFieldAccess::make(result_var_expr, "nnz")));
         // Extract length for non-innermost sparse dims
         {
             int innermost_sparse = -1;
@@ -1169,30 +1189,28 @@ namespace backend {
             for (int i = 0; i < (int)result_tensor.tensor_type.format.levels.size(); i++) {
                 auto idx = result_tensor.tensor_type.format.levels[i].index;
                 if (is_sparse_format(result_tensor.tensor_type.format.lvlfmt_of(idx)) && i != innermost_sparse) {
-                    body_stmts.push_back(llir::RawCode::make(
-                        "out_" + result_tensor.get_length_field_name(idx) + " = " +
-                        result_tensor.tensor_name + "." +
-                        result_tensor.get_length_field_name(idx) + ";"));
+                    body_stmts.push_back(llir::Store::make(
+                        llir::lVar::make(index_t, "out_" + result_tensor.get_length_field_name(idx)),
+                        llir::lFieldAccess::make(result_var_expr, result_tensor.get_length_field_name(idx))));
                 }
             }
         }
         for (int i = (int)result_tensor.tensor_type.format.levels.size() - 1; i >= 0; i--) {
             auto idx = result_tensor.tensor_type.format.levels[i].index;
             if (is_sparse_format(result_tensor.tensor_type.format.lvlfmt_of(idx))) {
-                body_stmts.push_back(llir::RawCode::make(
-                    "out_" + result_tensor.get_indices_field_name(idx) + " = " +
-                    result_tensor.tensor_name + "." +
-                    result_tensor.get_indices_field_name(idx) + ";"));
+                body_stmts.push_back(llir::Store::make(
+                    llir::lVar::make(llir::Ptr_t::make(index_t), "out_" + result_tensor.get_indices_field_name(idx)),
+                    llir::lFieldAccess::make(result_var_expr, result_tensor.get_indices_field_name(idx))));
                 if (i != 0) {
-                    body_stmts.push_back(llir::RawCode::make(
-                        "out_" + result_tensor.get_offsets_field_name(idx) + " = " +
-                        result_tensor.tensor_name + "." +
-                        result_tensor.get_offsets_field_name(idx) + ";"));
+                    body_stmts.push_back(llir::Store::make(
+                        llir::lVar::make(llir::Ptr_t::make(index_t), "out_" + result_tensor.get_offsets_field_name(idx)),
+                        llir::lFieldAccess::make(result_var_expr, result_tensor.get_offsets_field_name(idx))));
                 }
             }
         }
-        body_stmts.push_back(llir::RawCode::make(
-            "out_values = " + result_tensor.tensor_name + ".values;"));
+        body_stmts.push_back(llir::Store::make(
+            llir::lVar::make(llir::Ptr_t::make(value_t), "out_values"),
+            llir::lFieldAccess::make(result_var_expr, "values")));
 
         llir::lStmt body = llir::Sequence::make(std::move(body_stmts));
         printer.print(llir::Function::make(std::move(generics), std::move(attributes),

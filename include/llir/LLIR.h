@@ -34,6 +34,7 @@ enum class lExprEnum {
     lFunctionCall,
     lIncrement,
     lAddress,
+    lSizeOf,
 };
 
 // Statements
@@ -50,7 +51,11 @@ enum class lStmtEnum {
     For,
     Accumulate,
     KernelLaunch,
-    RawCode
+    Comment,
+    DeviceAlloc,
+    DeviceFree,
+    DeviceTransfer,
+    PrefixSum,
 };
 
 using IRlTypeNode = IRNode<lType, lTypeEnum>;
@@ -355,6 +360,14 @@ struct lAddress : lExprNode<lAddress> {
     static const lExprEnum node_type = lExprEnum::lAddress;
 };
 
+struct lSizeOf : lExprNode<lSizeOf> {
+    lType size_type;
+
+    static lExpr make(lType size_type);
+
+    static const lExprEnum node_type = lExprEnum::lSizeOf;
+};
+
 struct Declare : lStmtNode<Declare> {
     lType type;
     std::string name;
@@ -469,12 +482,65 @@ struct KernelLaunch : lStmtNode<KernelLaunch> {
     static const lStmtEnum node_type = lStmtEnum::KernelLaunch;
 };
 
-struct RawCode : lStmtNode<RawCode> {
-    std::string code;
+struct Comment : lStmtNode<Comment> {
+    std::string text;
 
-    static lStmt make(std::string code);
+    static lStmt make(std::string text);
 
-    static const lStmtEnum node_type = lStmtEnum::RawCode;
+    static const lStmtEnum node_type = lStmtEnum::Comment;
+};
+
+struct DeviceAlloc : lStmtNode<DeviceAlloc> {
+    lExpr target;
+    lExpr size_bytes;
+    lExpr stream;
+
+    static lStmt make(lExpr target, lExpr size_bytes, lExpr stream);
+
+    static const lStmtEnum node_type = lStmtEnum::DeviceAlloc;
+};
+
+struct DeviceFree : lStmtNode<DeviceFree> {
+    lExpr ptr;
+    lExpr stream;
+
+    static lStmt make(lExpr ptr, lExpr stream);
+
+    static const lStmtEnum node_type = lStmtEnum::DeviceFree;
+};
+
+struct DeviceTransfer : lStmtNode<DeviceTransfer> {
+    enum Kind { Memcpy, Memset };
+    enum Direction { D2H, H2D, D2D };
+    Kind kind;
+    Direction direction;
+    lExpr dst;
+    lExpr src;
+    lExpr size_bytes;
+    lExpr stream;
+    bool synchronize;
+
+    static lStmt make_memcpy(Direction direction, lExpr dst, lExpr src,
+                             lExpr size_bytes, lExpr stream,
+                             bool synchronize = false);
+    static lStmt make_memset(lExpr dst, lExpr value, lExpr size_bytes,
+                             lExpr stream);
+
+    static const lStmtEnum node_type = lStmtEnum::DeviceTransfer;
+};
+
+struct PrefixSum : lStmtNode<PrefixSum> {
+    lExpr input;
+    lExpr output;
+    lExpr count;
+    lExpr stream;
+    std::string temp_var_name;
+    std::string temp_bytes_name;
+
+    static lStmt make(lExpr input, lExpr output, lExpr count, lExpr stream,
+                      std::string temp_var_name, std::string temp_bytes_name);
+
+    static const lStmtEnum node_type = lStmtEnum::PrefixSum;
 };
 
 } // namespace llir

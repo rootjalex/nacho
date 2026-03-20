@@ -6,7 +6,6 @@
 
 #include "llir/LLIR.h"
 
-#include <sstream>
 
 namespace nacho {
 
@@ -422,6 +421,7 @@ bool is_infix_op(const llir::lBinOp::Op op) {
     }
 }
 
+
 std::string get_op_string(const llir::lOp::Op op) {
     switch (op) {
     case llir::lOp::Not: {
@@ -742,13 +742,123 @@ void Printer::visit(const llir::KernelLaunch *node) {
     os << ");\n";
 }
 
-void Printer::visit(const llir::RawCode *node) {
-    std::istringstream stream(node->code);
-    std::string line;
-    while (std::getline(stream, line)) {
-        print_indent();
-        os << line << "\n";
+void Printer::visit(const llir::lSizeOf *node) {
+    os << "sizeof(";
+    print(node->size_type);
+    os << ")";
+}
+
+void Printer::visit(const llir::Comment *node) {
+    print_indent();
+    os << "// " << node->text << "\n";
+}
+
+void Printer::visit(const llir::DeviceAlloc *node) {
+    print_indent();
+    os << "cudaMallocAsync((void**)&";
+    print_no_parens(node->target);
+    os << ", ";
+    print_no_parens(node->size_bytes);
+    os << ", ";
+    print_no_parens(node->stream);
+    os << ");\n";
+}
+
+void Printer::visit(const llir::DeviceFree *node) {
+    print_indent();
+    os << "cudaFreeAsync(";
+    print_no_parens(node->ptr);
+    os << ", ";
+    print_no_parens(node->stream);
+    os << ");\n";
+}
+
+void Printer::visit(const llir::DeviceTransfer *node) {
+    print_indent();
+    if (node->kind == llir::DeviceTransfer::Memcpy) {
+        os << "cudaMemcpyAsync(";
+        print_no_parens(node->dst);
+        os << ", ";
+        print_no_parens(node->src);
+        os << ", ";
+        print_no_parens(node->size_bytes);
+        os << ", ";
+        switch (node->direction) {
+        case llir::DeviceTransfer::D2H:
+            os << "cudaMemcpyDeviceToHost";
+            break;
+        case llir::DeviceTransfer::H2D:
+            os << "cudaMemcpyHostToDevice";
+            break;
+        case llir::DeviceTransfer::D2D:
+            os << "cudaMemcpyDeviceToDevice";
+            break;
+        }
+        os << ", ";
+        print_no_parens(node->stream);
+        os << ");\n";
+        if (node->synchronize) {
+            print_indent();
+            os << "cudaStreamSynchronize(";
+            print_no_parens(node->stream);
+            os << ");\n";
+        }
+    } else {
+        os << "cudaMemsetAsync(";
+        print_no_parens(node->dst);
+        os << ", ";
+        print_no_parens(node->src);
+        os << ", ";
+        print_no_parens(node->size_bytes);
+        os << ", ";
+        print_no_parens(node->stream);
+        os << ");\n";
     }
+}
+
+void Printer::visit(const llir::PrefixSum *node) {
+    // CUB two-pass inclusive sum pattern
+    std::string temp_var = node->temp_var_name;
+    std::string temp_bytes = node->temp_bytes_name;
+
+    // void* d_temp_storage = nullptr;
+    print_indent();
+    os << "void* " << temp_var << " = nullptr;\n";
+    // size_t temp_storage_bytes = 0;
+    print_indent();
+    os << "size_t " << temp_bytes << " = 0;\n";
+    // Sizing pass
+    print_indent();
+    os << "cub::DeviceScan::InclusiveSum(" << temp_var << ", " << temp_bytes << ", ";
+    print_no_parens(node->input);
+    os << ", ";
+    print_no_parens(node->output);
+    os << " + 1, ";
+    print_no_parens(node->count);
+    os << ", ";
+    print_no_parens(node->stream);
+    os << ");\n";
+    // Alloc
+    print_indent();
+    os << "cudaMallocAsync(&" << temp_var << ", " << temp_bytes << ", ";
+    print_no_parens(node->stream);
+    os << ");\n";
+    // Compute pass
+    print_indent();
+    os << "cub::DeviceScan::InclusiveSum(" << temp_var << ", " << temp_bytes << ", ";
+    print_no_parens(node->input);
+    os << ", ";
+    print_no_parens(node->output);
+    os << " + 1, ";
+    print_no_parens(node->count);
+    os << ", ";
+    print_no_parens(node->stream);
+    os << ");\n";
+    // Free temp
+    print_indent();
+    os << "cudaFreeAsync(" << temp_var << ", ";
+    print_no_parens(node->stream);
+    os << ");\n";
 }
 
 } // namespace nacho
