@@ -13,7 +13,7 @@
 namespace nacho {
 namespace backend {
 
-    CINLowerer::CINLowerer(CIN cin, std::ostream &os) : cin(std::move(cin)), printer(os), reductionLoop(BEFORE_FIRST_LOOP) {
+    CINLowerer::CINLowerer(CIN cin, Printer &printer) : cin(std::move(cin)), printer(printer), reductionLoop(BEFORE_FIRST_LOOP) {
         loop_order = get_loop_order();
         struct TensorVisitor : Visitor {
             std::map<std::string, TensorLowerer> &operand_tensors;

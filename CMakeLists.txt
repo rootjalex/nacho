@@ -67,6 +67,7 @@ target_sources(
     src/Lattice.cpp
     src/Mutator.cpp
     src/Printer.cpp
+    src/CPUPrinter.cpp
     src/Seq.cpp
     src/Simplify.cpp
     src/Visitor.cpp
@@ -99,6 +100,8 @@ target_sources(
     include/Mutator.h
     include/Nacho.h
     include/Printer.h
+    include/CPUPrinter.h
+    include/cpu_runtime.h
     include/RefCount.h
     include/Scope.h
     include/Seq.h
@@ -152,6 +155,32 @@ if (nacho_BUILD_TESTING)
     foreach (t IN LISTS NACHO_TESTS)
         add_test(NAME ${t} COMMAND nacho_compiler --test ${t})
     endforeach ()
+
+    # CPU codegen tests: generate CPU code, compile, and run
+    set(NACHO_CPU_EXPRESSIONS
+        sparse_vec_mul sparse_vec_add sparse_vec_apb_c sparse_vec_ab_pc
+        csr_add
+    )
+
+    set(NACHO_CPU_GEN_DIR "${CMAKE_BINARY_DIR}/cpu_gen")
+    file(MAKE_DIRECTORY "${NACHO_CPU_GEN_DIR}")
+
+    foreach(expr IN LISTS NACHO_CPU_EXPRESSIONS)
+        add_custom_command(
+            OUTPUT "${NACHO_CPU_GEN_DIR}/${expr}.cpp"
+            COMMAND nacho_compiler --emit "${NACHO_CPU_GEN_DIR}" --name ${expr} --target cpu
+            DEPENDS nacho_compiler
+            COMMENT "Generating CPU code for ${expr}"
+        )
+        list(APPEND NACHO_CPU_GEN_SRC "${NACHO_CPU_GEN_DIR}/${expr}.cpp")
+    endforeach()
+
+    add_executable(cpu_codegen_test tests/cpu_codegen_test.cpp ${NACHO_CPU_GEN_SRC})
+    target_include_directories(cpu_codegen_test PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/include"
+        "${NACHO_CPU_GEN_DIR}"
+    )
+    add_test(NAME cpu_codegen COMMAND cpu_codegen_test)
 endif ()
 
 ##

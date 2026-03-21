@@ -1,5 +1,6 @@
 #include "Nacho.h"
 
+#include "CPUPrinter.h"
 #include "Lattice.h"
 #include "Simplify.h"
 #include "backend/compile.h"
@@ -16,7 +17,8 @@ using namespace nacho;
 // ---------------------------------------------------------------------------
 // Helper: full pipeline from expression to generated CUDA code.
 // ---------------------------------------------------------------------------
-static void compile_and_lower(const std::string &name, Expr expr) {
+static void compile_and_lower(const std::string &name, Expr expr,
+                               const std::string &target = "gpu") {
     std::cout << "=== " << name << " ===\n";
     std::cout << "Expression: " << expr << "\n";
     std::cout << "Result format: " << expr.type().format << "\n\n";
@@ -24,8 +26,15 @@ static void compile_and_lower(const std::string &name, Expr expr) {
     CIN cin = compile_to_cin(expr);
     std::cout << "CIN:\n" << cin << "\n\n";
 
-    std::cout << "Generated CUDA:\n";
-    backend::CINLowerer(cin, std::cout).lower_cin();
+    if (target == "cpu") {
+        std::cout << "Generated CPU C++:\n";
+        CPUPrinter printer(std::cout);
+        backend::CINLowerer(cin, printer).lower_cin();
+    } else {
+        std::cout << "Generated CUDA:\n";
+        Printer printer(std::cout);
+        backend::CINLowerer(cin, printer).lower_cin();
+    }
     std::cout << "\n";
 }
 
@@ -772,13 +781,14 @@ static void emit_runtime_wrappers(const std::string &dir) {
         << "#include \"nacho_ops.hpp\"\n"
         << "#include \"cuda_utils/cuda_utils.h\"\n\n";
 
-    // CINLowerer needs an ostream; discard output since we only need metadata.
+    // CINLowerer needs a Printer; discard output since we only need metadata.
     std::ostringstream devnull;
+    Printer devnull_printer(devnull);
 
     for (const auto &[name, builder] : EXPRESSIONS) {
         Expr expr = builder();
         CIN cin = compile_to_cin(expr);
-        backend::CINLowerer lowerer(cin, devnull);
+        backend::CINLowerer lowerer(cin, devnull_printer);
 
         emit_flat_forward_decl(h, name, lowerer);
         h << "\n";
@@ -818,7 +828,8 @@ static void emit_to_file(const std::string &dir, const std::string &op_name,
     ofs << "namespace " << op_name << "_ns {\n\n";
 
     CIN cin = compile_to_cin(expr);
-    backend::CINLowerer lowerer(cin, ofs);
+    Printer printer(ofs);
+    backend::CINLowerer lowerer(cin, printer);
     lowerer.lower_cin();
     ofs << "\n";
 
@@ -893,6 +904,96 @@ static void emit_to_file(const std::string &dir, const std::string &op_name,
     std::cout << "Generated " << filepath << "\n";
 }
 
+// ---------------------------------------------------------------------------
+// Helper: emit generated CPU code to a file with a flat-API wrapper.
+// ---------------------------------------------------------------------------
+static void emit_to_file_cpu(const std::string &dir, const std::string &op_name,
+                              Expr expr) {
+    std::filesystem::create_directories(dir);
+    std::string filepath = dir + "/" + op_name + ".cpp";
+
+    std::ofstream ofs(filepath);
+    if (!ofs) {
+        std::cerr << "Failed to open " << filepath << " for writing\n";
+        exit(1);
+    }
+
+    ofs << "#pragma once\n\n";
+    ofs << "#include \"cpu_runtime.h\"\n\n";
+
+    // Wrap internal symbols in a unique namespace to avoid collisions
+    ofs << "namespace " << op_name << "_ns {\n\n";
+
+    CIN cin = compile_to_cin(expr);
+    CPUPrinter printer(ofs);
+    backend::CINLowerer lowerer(cin, printer);
+    lowerer.lower_cin();
+    ofs << "\n";
+
+    ofs << "} // namespace " << op_name << "_ns\n\n";
+    ofs << "using namespace " << op_name << "_ns;\n\n";
+
+    // Flat wrapper at global scope
+    lowerer.lower_flat_wrapper(op_name);
+    ofs << "\n";
+
+    // Emit explicit template instantiation for <int, float>.
+    ofs << "// Explicit template instantiation\n";
+    ofs << "template void " << op_name << "<int, float>(";
+    bool first_arg = true;
+    for (const auto &[name, tensor] : lowerer.operand_tensors) {
+        llir::lType struct_type = tensor.lower_tensor_struct_definition();
+        const auto *st = struct_type.as<llir::Struct_t>();
+        for (const auto &[field_name, field_type] : st->fields) {
+            if (!first_arg) ofs << ", ";
+            first_arg = false;
+            if (field_type.is<llir::Ptr_t>()) {
+                const auto *pt = field_type.as<llir::Ptr_t>();
+                if (pt->type.is<llir::Generic_t>()) {
+                    const auto *gt = pt->type.as<llir::Generic_t>();
+                    ofs << (gt->name == "value_t" ? "float" : "int") << "*";
+                }
+            } else {
+                ofs << "int";
+            }
+        }
+    }
+    for (size_t i = 0; i < lowerer.result_tensor.tensor_type.format.levels.size(); i++) {
+        if (!first_arg) ofs << ", ";
+        first_arg = false;
+        ofs << "int";
+    }
+    ofs << ", int&";
+    {
+        int innermost_sparse = -1;
+        for (int i = (int)lowerer.result_tensor.tensor_type.format.levels.size() - 1; i >= 0; i--) {
+            auto idx = lowerer.result_tensor.tensor_type.format.levels[i].index;
+            if (is_sparse_format(lowerer.result_tensor.tensor_type.format.lvlfmt_of(idx))) {
+                innermost_sparse = i;
+                break;
+            }
+        }
+        for (int i = 0; i < (int)lowerer.result_tensor.tensor_type.format.levels.size(); i++) {
+            auto idx = lowerer.result_tensor.tensor_type.format.levels[i].index;
+            if (is_sparse_format(lowerer.result_tensor.tensor_type.format.lvlfmt_of(idx)) && i != innermost_sparse) {
+                ofs << ", int&";
+            }
+        }
+    }
+    for (int i = (int)lowerer.result_tensor.tensor_type.format.levels.size() - 1; i >= 0; i--) {
+        auto idx = lowerer.result_tensor.tensor_type.format.levels[i].index;
+        if (is_sparse_format(lowerer.result_tensor.tensor_type.format.lvlfmt_of(idx))) {
+            ofs << ", int*&";
+            if (i != 0) ofs << ", int*&";
+        }
+    }
+    ofs << ", float*&";
+    ofs << ");\n";
+
+    ofs.close();
+    std::cout << "Generated " << filepath << "\n";
+}
+
 // ===========================================================================
 // Test Registry
 // ===========================================================================
@@ -947,19 +1048,21 @@ int main(int argc, char **argv) {
         return 0;
     }
 
-    // --emit <dir> --name <op_name>
+    // --emit <dir> --name <op_name> [--target cpu|gpu]
     if (argc >= 2 && std::strcmp(argv[1], "--emit") == 0) {
-        std::string dir, name;
+        std::string dir, name, target = "gpu";
         // Parse remaining args
         for (int i = 2; i < argc; i++) {
             if (std::strcmp(argv[i], "--name") == 0 && i + 1 < argc) {
                 name = argv[++i];
+            } else if (std::strcmp(argv[i], "--target") == 0 && i + 1 < argc) {
+                target = argv[++i];
             } else if (dir.empty()) {
                 dir = argv[i];
             }
         }
         if (dir.empty() || name.empty()) {
-            std::cerr << "Usage: compiler --emit <dir> --name <op_name>\n";
+            std::cerr << "Usage: compiler --emit <dir> --name <op_name> [--target cpu|gpu]\n";
             std::cerr << "Run with --list to see available expressions.\n";
             return 1;
         }
@@ -969,7 +1072,11 @@ int main(int argc, char **argv) {
             std::cerr << "Run with --list to see available expressions.\n";
             return 1;
         }
-        emit_to_file(dir, name, it->second());
+        if (target == "cpu") {
+            emit_to_file_cpu(dir, name, it->second());
+        } else {
+            emit_to_file(dir, name, it->second());
+        }
         return 0;
     }
 

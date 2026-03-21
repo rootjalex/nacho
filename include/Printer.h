@@ -99,7 +99,7 @@ struct Printer : public Visitor {
     void indent() { indent_count++; }
     void dedent() { indent_count--; }
 
-  private:
+  protected:
     /** The stream on which we're outputting */
     std::ostream &os;
 

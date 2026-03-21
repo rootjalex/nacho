@@ -27,14 +27,14 @@ namespace backend {
             llir::lType index_t  = llir::Generic_t::make("index_t");
 
             CIN cin;
-            Printer printer;
+            Printer &printer;
             std::vector<std::string> loop_order;
             TensorLowerer result_tensor;
             TensorLowerer scatter_reduced_result_tensor;
             std::map<std::string, TensorLowerer> operand_tensors;
             // TODO: For multiple sums (inner-sum) this would be a vector of all reduction loops
             LoopNum reductionLoop;
-            CINLowerer(CIN cin, std::ostream &os);
+            CINLowerer(CIN cin, Printer &printer);
 
             std::vector<std::string> get_loop_order();
             std::vector<CIN> get_forall_list();
