@@ -249,4 +249,26 @@ void Visitor::visit(const llir::PrefixSum *node) {
     node->stream.accept(this);
 }
 
+void Visitor::visit(const llir::CubScratchQuery *node) {
+    node->count.accept(this);
+    node->stream.accept(this);
+}
+
+void Visitor::visit(const llir::SlabAlloc *node) {
+    node->num_index_elements.accept(this);
+    node->stream.accept(this);
+    for (const auto &a : node->assignments) {
+        a.first.accept(this);
+        a.second.accept(this);
+    }
+}
+
+void Visitor::visit(const llir::InPlacePrefixSum *node) {
+    node->data.accept(this);
+    node->count.accept(this);
+    node->stream.accept(this);
+    node->temp_storage.accept(this);
+    node->temp_bytes.accept(this);
+}
+
 } // namespace nacho

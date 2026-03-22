@@ -14,6 +14,9 @@ struct CPUPrinter : public Printer {
     void visit(const llir::DeviceTransfer *) override;
     void visit(const llir::PrefixSum *) override;
     void visit(const llir::KernelLaunch *) override;
+    void visit(const llir::CubScratchQuery *) override;
+    void visit(const llir::SlabAlloc *) override;
+    void visit(const llir::InPlacePrefixSum *) override;
 };
 
 } // namespace nacho

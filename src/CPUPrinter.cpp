@@ -197,4 +197,64 @@ void CPUPrinter::visit(const llir::KernelLaunch *node) {
     os << "}\n";
 }
 
+void CPUPrinter::visit(const llir::CubScratchQuery *node) {
+    (void)node;
+    // No CUB on CPU — no-op
+}
+
+void CPUPrinter::visit(const llir::SlabAlloc *node) {
+    print_indent();
+    // On CPU, no CUB scratch needed — just allocate index_t slots
+    os << "void* " << node->slab_var << " = malloc((";
+    print_no_parens(node->num_index_elements);
+    os << ") * sizeof(index_t));\n";
+    print_indent();
+    os << "index_t* " << node->base_var << " = (index_t*)" << node->slab_var << ";\n";
+    for (const auto &a : node->assignments) {
+        print_indent();
+        print_no_parens(a.first);
+        os << " = " << node->base_var;
+        bool is_zero = false;
+        if (auto *c = a.second.as<llir::lConst>()) {
+            if (auto *val = std::get_if<int64_t>(&c->value)) {
+                is_zero = (*val == 0);
+            }
+        }
+        if (!is_zero) {
+            os << " + ";
+            print_no_parens(a.second);
+        }
+        os << ";\n";
+    }
+}
+
+void CPUPrinter::visit(const llir::InPlacePrefixSum *node) {
+    // Sequential in-place exclusive scan
+    print_indent();
+    os << "{\n";
+    indent();
+    print_indent();
+    os << "index_t _running = 0;\n";
+    print_indent();
+    os << "for (int _ps_i = 0; _ps_i < ";
+    print_no_parens(node->count);
+    os << "; _ps_i++) {\n";
+    indent();
+    print_indent();
+    os << "index_t _cur = ";
+    print_no_parens(node->data);
+    os << "[_ps_i];\n";
+    print_indent();
+    print_no_parens(node->data);
+    os << "[_ps_i] = _running;\n";
+    print_indent();
+    os << "_running += _cur;\n";
+    dedent();
+    print_indent();
+    os << "}\n";
+    dedent();
+    print_indent();
+    os << "}\n";
+}
+
 } // namespace nacho

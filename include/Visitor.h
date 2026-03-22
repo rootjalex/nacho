@@ -69,6 +69,9 @@ struct Visitor {
     virtual void visit(const llir::DeviceFree *node);
     virtual void visit(const llir::DeviceTransfer *node);
     virtual void visit(const llir::PrefixSum *node);
+    virtual void visit(const llir::CubScratchQuery *node);
+    virtual void visit(const llir::SlabAlloc *node);
+    virtual void visit(const llir::InPlacePrefixSum *node);
 };
 
 #define RESTRICT_VISITOR(IRNODE)                                               \

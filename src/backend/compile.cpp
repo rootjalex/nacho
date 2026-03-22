@@ -626,20 +626,97 @@ namespace backend {
                 index_t, ptw_name,
                 llir::lVar::make(index_t, total_work_name) / num_threads_var + 1));
 
-            // 2. Allocate partition struct fields
+            // 2. Declare partition and count struct variables
             std::string partition_var = "partitions_" + std::to_string(phase);
             body_stmts.emplace_back(llir::Declare::make(
                 llir::Generic_t::make(partition_struct->name + "<index_t>"), partition_var));
             llir::lExpr partition_var_expr = llir::lVar::make(
                 llir::Generic_t::make(partition_struct->name + "<index_t>"), partition_var);
-            for (const auto &field : partition_struct->fields) {
-                body_stmts.emplace_back(llir::DeviceAlloc::make(
-                    llir::lFieldAccess::make(partition_var_expr, field.first),
-                    num_threads_var * llir::lSizeOf::make(index_t),
+
+            std::string counts_var = "count_offsets_" + std::to_string(phase);
+            const llir::Struct_t *counts_struct = nullptr;
+            llir::lExpr counts_var_expr;
+            int num_count_fields = 0;
+            if (phase_info.has_precompute) {
+                counts_struct = phase_info.counts_struct.as<llir::Struct_t>();
+                body_stmts.emplace_back(llir::Declare::make(
+                    llir::Generic_t::make(counts_struct->name + "<index_t>"), counts_var));
+                counts_var_expr = llir::lVar::make(
+                    llir::Generic_t::make(counts_struct->name + "<index_t>"), counts_var);
+                num_count_fields = (int)counts_struct->fields.size();
+            }
+
+            // 3. Slab allocation (single cudaMallocAsync for all per-thread temporaries)
+            std::string slab_name = "slab_" + std::to_string(phase);
+            std::string slab_base_name = "slab_base_" + std::to_string(phase);
+            std::string cub_bytes_name = "cub_bytes_" + std::to_string(phase);
+            std::string cub_scratch_name = "cub_scratch_" + std::to_string(phase);
+            int num_partition_fields = (int)partition_struct->fields.size();
+
+            // CubScratchQuery (only if has_precompute)
+            if (phase_info.has_precompute) {
+                body_stmts.emplace_back(llir::CubScratchQuery::make(
+                    cub_bytes_name, num_threads_var + 1, stream_var));
+            }
+
+            // Build slab assignments: partition fields then count fields
+            std::vector<std::pair<llir::lExpr, llir::lExpr>> slab_assignments;
+            for (int i = 0; i < num_partition_fields; i++) {
+                llir::lExpr target = llir::lFieldAccess::make(
+                    partition_var_expr, partition_struct->fields[i].first);
+                llir::lExpr offset;
+                if (i == 0) offset = llir::lConst::make((int64_t)0);
+                else if (i == 1) offset = num_threads_var;
+                else offset = num_threads_var * i;
+                slab_assignments.push_back({target, offset});
+            }
+            for (int i = 0; i < num_count_fields; i++) {
+                llir::lExpr target = llir::lFieldAccess::make(
+                    counts_var_expr, counts_struct->fields[i].first);
+                llir::lExpr base = (num_partition_fields == 1)
+                    ? num_threads_var
+                    : num_threads_var * num_partition_fields;
+                llir::lExpr offset;
+                if (i == 0) offset = base;
+                else if (i == 1) offset = base + (num_threads_var + 1);
+                else offset = base + (num_threads_var + 1) * i;
+                slab_assignments.push_back({target, offset});
+            }
+
+            // Compute total index_t elements in the slab
+            llir::lExpr total_elements;
+            {
+                llir::lExpr part_total = (num_partition_fields == 1)
+                    ? num_threads_var
+                    : num_threads_var * num_partition_fields;
+                if (num_count_fields == 0) {
+                    total_elements = part_total;
+                } else {
+                    llir::lExpr count_total = (num_count_fields == 1)
+                        ? (num_threads_var + 1)
+                        : (num_threads_var + 1) * num_count_fields;
+                    total_elements = part_total + count_total;
+                }
+            }
+
+            body_stmts.emplace_back(llir::SlabAlloc::make(
+                slab_name, slab_base_name, total_elements,
+                phase_info.has_precompute ? cub_bytes_name : "",
+                stream_var, std::move(slab_assignments),
+                phase_info.has_precompute ? cub_scratch_name : ""));
+
+            // Memset sentinel slot (count[N] = 0) for each count field
+            for (int i = 0; i < num_count_fields; i++) {
+                llir::lExpr count_field = llir::lFieldAccess::make(
+                    counts_var_expr, counts_struct->fields[i].first);
+                body_stmts.emplace_back(llir::DeviceTransfer::make_memset(
+                    count_field + num_threads_var,
+                    llir::lConst::make((int64_t)0),
+                    llir::lSizeOf::make(index_t),
                     stream_var));
             }
 
-            // 3. Launch partition kernel
+            // 4. Launch partition kernel
             {
                 std::vector<llir::lExpr> launch_args;
                 for (const auto &ki : kernel_infos) {
@@ -667,23 +744,8 @@ namespace backend {
                 }
             }
 
-            // 4-6. Precompute + prefix sum (if has_precompute)
-            std::string counts_var = "count_offsets_" + std::to_string(phase);
+            // 5-7. Precompute + in-place prefix sum + nnz read (if has_precompute)
             if (phase_info.has_precompute) {
-                const llir::Struct_t *counts_struct = phase_info.counts_struct.as<llir::Struct_t>();
-
-                // 4. Allocate count struct fields
-                body_stmts.emplace_back(llir::Declare::make(
-                    llir::Generic_t::make(counts_struct->name + "<index_t>"), counts_var));
-                llir::lExpr counts_var_expr = llir::lVar::make(
-                    llir::Generic_t::make(counts_struct->name + "<index_t>"), counts_var);
-                for (const auto &field : counts_struct->fields) {
-                    body_stmts.emplace_back(llir::DeviceAlloc::make(
-                        llir::lFieldAccess::make(counts_var_expr, field.first),
-                        num_threads_var * llir::lSizeOf::make(index_t),
-                        stream_var));
-                }
-
                 // 5. Launch precompute kernel
                 for (const auto &ki : kernel_infos) {
                     if (ki.kind == KernelInfo::Precompute && ki.phase == phase) {
@@ -710,55 +772,30 @@ namespace backend {
                     }
                 }
 
-                // 6. CUB prefix sum (two-pass pattern) for each count field
+                // 6. In-place ExclusiveSum over N+1 elements for each count field
                 for (const auto &field : counts_struct->fields) {
-                    std::string prefix_var = counts_var + "_" + field.first + "_prefix";
-                    llir::lExpr prefix_var_expr = llir::lVar::make(llir::Ptr_t::make(index_t), prefix_var);
-                    body_stmts.emplace_back(llir::Declare::make(
-                        llir::Ptr_t::make(index_t), prefix_var));
-                    body_stmts.emplace_back(llir::DeviceAlloc::make(
-                        llir::lVar::make(llir::Ptr_t::make(index_t), prefix_var),
-                        (num_threads_var + 1) * llir::lSizeOf::make(index_t),
-                        stream_var));
-                    body_stmts.emplace_back(llir::DeviceTransfer::make_memset(
-                        prefix_var_expr,
-                        llir::lConst::make((int64_t)0),
-                        (num_threads_var + 1) * llir::lSizeOf::make(index_t),
-                        stream_var));
-
-                    // CUB two-pass via PrefixSum node
-                    body_stmts.emplace_back(llir::PrefixSum::make(
+                    body_stmts.emplace_back(llir::InPlacePrefixSum::make(
                         llir::lFieldAccess::make(counts_var_expr, field.first),
-                        prefix_var_expr,
-                        num_threads_var,
+                        num_threads_var + 1,
                         stream_var,
-                        "d_temp_storage_" + std::to_string(phase) + "_" + field.first,
-                        "temp_storage_bytes_" + std::to_string(phase) + "_" + field.first));
-
-                    // Replace the count field with the prefix-summed version
-                    body_stmts.emplace_back(llir::DeviceFree::make(
-                        llir::lFieldAccess::make(counts_var_expr, field.first),
-                        stream_var));
-                    body_stmts.emplace_back(llir::Store::make(
-                        llir::lFieldAccess::make(counts_var_expr, field.first),
-                        prefix_var_expr));
+                        llir::lVar::make(llir::Generic_t::make("void*"), cub_scratch_name),
+                        llir::lVar::make(llir::Generic_t::make("size_t"), cub_bytes_name)));
                 }
 
-                // 7. Read nnz from device
+                // 7. Read nnz from count[N] (total after ExclusiveSum)
                 bool has_nnz_read = false;
                 for (int lvl = 0; lvl <= phase_info.current_sparse_intersection; lvl++) {
                     auto idx = result_tensor.tensor_type.format.levels[lvl].index;
                     if (is_sparse_format(result_tensor.tensor_type.format.lvlfmt_of(idx))) {
                         std::string nnz_name = "nnz_" + idx + "_" + std::to_string(phase);
                         std::string field_name = "dim_" + idx + "_count";
-                        std::string prefix_var = counts_var + "_" + field_name + "_prefix";
                         body_stmts.emplace_back(llir::Declare::make(index_t, nnz_name));
                         llir::lExpr nnz_var = llir::lVar::make(index_t, nnz_name);
-                        llir::lExpr prefix_var_expr = llir::lVar::make(llir::Ptr_t::make(index_t), prefix_var);
+                        llir::lExpr count_field = llir::lFieldAccess::make(counts_var_expr, field_name);
                         body_stmts.emplace_back(llir::DeviceTransfer::make_memcpy(
                             llir::DeviceTransfer::D2H,
                             llir::lAddress::make(nnz_var),
-                            prefix_var_expr + num_threads_var,
+                            count_field + num_threads_var,
                             llir::lSizeOf::make(index_t),
                             stream_var, false));
                         has_nnz_read = true;
@@ -879,22 +916,10 @@ namespace backend {
                 guard_stmts.push_back(llir::Store::make(
                     llir::lFieldAccess::make(result_var(), "nnz"),
                     llir::lConst::make((int64_t)0)));
-                // Free partition and count structs
-                for (const auto &field : partition_struct->fields) {
-                    guard_stmts.push_back(llir::DeviceFree::make(
-                        llir::lFieldAccess::make(partition_var_expr, field.first),
-                        stream_var));
-                }
-                if (phase_info.has_precompute) {
-                    const llir::Struct_t *counts_struct = phase_info.counts_struct.as<llir::Struct_t>();
-                    llir::lExpr counts_var_expr = llir::lVar::make(
-                        llir::Generic_t::make(counts_struct->name + "<index_t>"), counts_var);
-                    for (const auto &field : counts_struct->fields) {
-                        guard_stmts.push_back(llir::DeviceFree::make(
-                            llir::lFieldAccess::make(counts_var_expr, field.first),
-                            stream_var));
-                    }
-                }
+                // Free slab instead of per-field frees
+                guard_stmts.push_back(llir::DeviceFree::make(
+                    llir::lVar::make(llir::Generic_t::make("void*"), slab_name),
+                    stream_var));
                 guard_stmts.push_back(llir::Return::make());
                 body_stmts.emplace_back(llir::IfElse::make(
                     nnz_var == llir::lConst::make((int64_t)0),
@@ -951,10 +976,10 @@ namespace backend {
                         if (arg.name == "partitions") {
                             launch_args.push_back(partition_var_expr);
                         } else if (arg.name == "count_offsets") {
-                            llir::lExpr counts_var_expr = llir::lVar::make(
+                            llir::lExpr cv = llir::lVar::make(
                                 llir::Generic_t::make("result_per_thread_count<index_t>"),
                                 counts_var);
-                            launch_args.push_back(counts_var_expr);
+                            launch_args.push_back(cv);
                         } else if (arg.name == "per_thread_work") {
                             launch_args.push_back(llir::lVar::make(index_t, ptw_name));
                         } else {
@@ -972,7 +997,7 @@ namespace backend {
                 }
             }
 
-            // Prefix sum T_work_offsets if not the last phase.
+            // Prefix sum T_work_offsets if not the last phase (unchanged — data-dependent size).
             if (!is_last_phase) {
                 llir::lExpr tw_size_var = llir::lVar::make(index_t, phase_outermost_nnz);
                 body_stmts.emplace_back(llir::Declare::make(
@@ -1004,24 +1029,10 @@ namespace backend {
                 body_stmts.emplace_back(stmt);
             }
 
-            // 10. Free partition struct intermediates
-            for (const auto &field : partition_struct->fields) {
-                body_stmts.emplace_back(llir::DeviceFree::make(
-                    llir::lFieldAccess::make(partition_var_expr, field.first),
-                    stream_var));
-            }
-
-            // Free count struct intermediates (if precompute exists and this is the last phase)
-            if (phase_info.has_precompute && is_last_phase) {
-                const llir::Struct_t *counts_struct = phase_info.counts_struct.as<llir::Struct_t>();
-                llir::lExpr counts_var_expr = llir::lVar::make(
-                    llir::Generic_t::make(counts_struct->name + "<index_t>"), counts_var);
-                for (const auto &field : counts_struct->fields) {
-                    body_stmts.emplace_back(llir::DeviceFree::make(
-                        llir::lFieldAccess::make(counts_var_expr, field.first),
-                        stream_var));
-                }
-            }
+            // 10. Free slab (single free replaces N per-field frees)
+            body_stmts.emplace_back(llir::DeviceFree::make(
+                llir::lVar::make(llir::Generic_t::make("void*"), slab_name),
+                stream_var));
 
             // Track outermost nnz for next phase's T_work_offsets indexing
             if (!phase_outermost_nnz.empty()) {

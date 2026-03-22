@@ -56,6 +56,9 @@ enum class lStmtEnum {
     DeviceFree,
     DeviceTransfer,
     PrefixSum,
+    CubScratchQuery,
+    SlabAlloc,
+    InPlacePrefixSum,
 };
 
 using IRlTypeNode = IRNode<lType, lTypeEnum>;
@@ -541,6 +544,47 @@ struct PrefixSum : lStmtNode<PrefixSum> {
                       std::string temp_var_name, std::string temp_bytes_name);
 
     static const lStmtEnum node_type = lStmtEnum::PrefixSum;
+};
+
+struct CubScratchQuery : lStmtNode<CubScratchQuery> {
+    std::string bytes_var_name;
+    lExpr count;
+    lExpr stream;
+
+    static lStmt make(std::string bytes_var_name, lExpr count, lExpr stream);
+
+    static const lStmtEnum node_type = lStmtEnum::CubScratchQuery;
+};
+
+struct SlabAlloc : lStmtNode<SlabAlloc> {
+    std::string slab_var;
+    std::string base_var;
+    lExpr num_index_elements;
+    std::string extra_bytes_var;
+    lExpr stream;
+    std::vector<std::pair<lExpr, lExpr>> assignments;
+    std::string cub_scratch_var;
+
+    static lStmt make(std::string slab_var, std::string base_var,
+                      lExpr num_index_elements, std::string extra_bytes_var,
+                      lExpr stream,
+                      std::vector<std::pair<lExpr, lExpr>> assignments,
+                      std::string cub_scratch_var);
+
+    static const lStmtEnum node_type = lStmtEnum::SlabAlloc;
+};
+
+struct InPlacePrefixSum : lStmtNode<InPlacePrefixSum> {
+    lExpr data;
+    lExpr count;
+    lExpr stream;
+    lExpr temp_storage;
+    lExpr temp_bytes;
+
+    static lStmt make(lExpr data, lExpr count, lExpr stream,
+                      lExpr temp_storage, lExpr temp_bytes);
+
+    static const lStmtEnum node_type = lStmtEnum::InPlacePrefixSum;
 };
 
 } // namespace llir

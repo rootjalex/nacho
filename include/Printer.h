@@ -95,6 +95,9 @@ struct Printer : public Visitor {
     virtual void visit(const llir::DeviceFree *) override;
     virtual void visit(const llir::DeviceTransfer *) override;
     virtual void visit(const llir::PrefixSum *) override;
+    virtual void visit(const llir::CubScratchQuery *) override;
+    virtual void visit(const llir::SlabAlloc *) override;
+    virtual void visit(const llir::InPlacePrefixSum *) override;
 
     void indent() { indent_count++; }
     void dedent() { indent_count--; }

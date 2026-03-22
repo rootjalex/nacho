@@ -861,4 +861,72 @@ void Printer::visit(const llir::PrefixSum *node) {
     os << ");\n";
 }
 
+void Printer::visit(const llir::CubScratchQuery *node) {
+    print_indent();
+    os << "size_t " << node->bytes_var_name << " = 0;\n";
+    print_indent();
+    os << "cub::DeviceScan::ExclusiveSum(nullptr, " << node->bytes_var_name
+       << ", (index_t*)nullptr, (index_t*)nullptr, ";
+    print_no_parens(node->count);
+    os << ", ";
+    print_no_parens(node->stream);
+    os << ");\n";
+}
+
+void Printer::visit(const llir::SlabAlloc *node) {
+    print_indent();
+    os << "void* " << node->slab_var << " = nullptr;\n";
+    print_indent();
+    os << "cudaMallocAsync(&" << node->slab_var << ", (";
+    print_no_parens(node->num_index_elements);
+    os << ") * sizeof(index_t)";
+    if (!node->extra_bytes_var.empty()) {
+        os << " + " << node->extra_bytes_var;
+    }
+    os << ", ";
+    print_no_parens(node->stream);
+    os << ");\n";
+    print_indent();
+    os << "index_t* " << node->base_var << " = (index_t*)" << node->slab_var << ";\n";
+    for (const auto &a : node->assignments) {
+        print_indent();
+        print_no_parens(a.first);
+        os << " = " << node->base_var;
+        bool is_zero = false;
+        if (auto *c = a.second.as<llir::lConst>()) {
+            if (auto *val = std::get_if<int64_t>(&c->value)) {
+                is_zero = (*val == 0);
+            }
+        }
+        if (!is_zero) {
+            os << " + ";
+            print_no_parens(a.second);
+        }
+        os << ";\n";
+    }
+    if (!node->cub_scratch_var.empty()) {
+        print_indent();
+        os << "void* " << node->cub_scratch_var << " = " << node->base_var << " + ";
+        print_no_parens(node->num_index_elements);
+        os << ";\n";
+    }
+}
+
+void Printer::visit(const llir::InPlacePrefixSum *node) {
+    print_indent();
+    os << "cub::DeviceScan::ExclusiveSum(";
+    print_no_parens(node->temp_storage);
+    os << ", ";
+    print_no_parens(node->temp_bytes);
+    os << ", ";
+    print_no_parens(node->data);
+    os << ", ";
+    print_no_parens(node->data);
+    os << ", ";
+    print_no_parens(node->count);
+    os << ", ";
+    print_no_parens(node->stream);
+    os << ");\n";
+}
+
 } // namespace nacho

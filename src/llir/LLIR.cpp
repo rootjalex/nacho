@@ -491,5 +491,52 @@ lStmt PrefixSum::make(lExpr input, lExpr output, lExpr count, lExpr stream,
     return node;
 }
 
+lStmt CubScratchQuery::make(std::string bytes_var_name, lExpr count, lExpr stream) {
+    internal_assert(!bytes_var_name.empty()) << "Cannot make CubScratchQuery with empty bytes_var_name.";
+    internal_assert(count.defined()) << "Cannot make CubScratchQuery with undefined count.";
+    internal_assert(stream.defined()) << "Cannot make CubScratchQuery with undefined stream.";
+    CubScratchQuery *node = new CubScratchQuery;
+    node->bytes_var_name = std::move(bytes_var_name);
+    node->count = std::move(count);
+    node->stream = std::move(stream);
+    return node;
+}
+
+lStmt SlabAlloc::make(std::string slab_var, std::string base_var,
+                      lExpr num_index_elements, std::string extra_bytes_var,
+                      lExpr stream,
+                      std::vector<std::pair<lExpr, lExpr>> assignments,
+                      std::string cub_scratch_var) {
+    internal_assert(!slab_var.empty()) << "Cannot make SlabAlloc with empty slab_var.";
+    internal_assert(!base_var.empty()) << "Cannot make SlabAlloc with empty base_var.";
+    internal_assert(num_index_elements.defined()) << "Cannot make SlabAlloc with undefined num_index_elements.";
+    internal_assert(stream.defined()) << "Cannot make SlabAlloc with undefined stream.";
+    SlabAlloc *node = new SlabAlloc;
+    node->slab_var = std::move(slab_var);
+    node->base_var = std::move(base_var);
+    node->num_index_elements = std::move(num_index_elements);
+    node->extra_bytes_var = std::move(extra_bytes_var);
+    node->stream = std::move(stream);
+    node->assignments = std::move(assignments);
+    node->cub_scratch_var = std::move(cub_scratch_var);
+    return node;
+}
+
+lStmt InPlacePrefixSum::make(lExpr data, lExpr count, lExpr stream,
+                              lExpr temp_storage, lExpr temp_bytes) {
+    internal_assert(data.defined()) << "Cannot make InPlacePrefixSum with undefined data.";
+    internal_assert(count.defined()) << "Cannot make InPlacePrefixSum with undefined count.";
+    internal_assert(stream.defined()) << "Cannot make InPlacePrefixSum with undefined stream.";
+    internal_assert(temp_storage.defined()) << "Cannot make InPlacePrefixSum with undefined temp_storage.";
+    internal_assert(temp_bytes.defined()) << "Cannot make InPlacePrefixSum with undefined temp_bytes.";
+    InPlacePrefixSum *node = new InPlacePrefixSum;
+    node->data = std::move(data);
+    node->count = std::move(count);
+    node->stream = std::move(stream);
+    node->temp_storage = std::move(temp_storage);
+    node->temp_bytes = std::move(temp_bytes);
+    return node;
+}
+
 } // namespace llir
 } // namespace nacho

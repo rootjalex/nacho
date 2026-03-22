@@ -76,6 +76,9 @@ struct DeviceAlloc;
 struct DeviceFree;
 struct DeviceTransfer;
 struct PrefixSum;
+struct CubScratchQuery;
+struct SlabAlloc;
+struct InPlacePrefixSum;
 
 } // namespace llir
 
