@@ -90,6 +90,8 @@ void Visitor::visit(const llir::Tuple_t *node) {
     }
 }
 
+void Visitor::visit(const llir::Bool_t *node) { (void)node; }
+
 void Visitor::visit(const llir::Struct_t *node) {
     for (const auto &field : node->fields) {
         field.second.accept(this);

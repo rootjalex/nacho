@@ -146,19 +146,20 @@ llir::lExpr BaseKernelLowerer::get_partition_initializer_expr_for_boundary_cases
                         : ( is_last_thread ? result_tensor.get_size_field(forall_j_idx) - 1 :llir::lConst::make((int64_t)0));
             }
         }
-        init_value_expr =  tensor.get_offsets_field(forall_idx)[
-            tensor.get_level_indexing_expression(
+        init_value_expr = tensor.get_level_indexing_expression(
                 tensor.loop_num_to_tensor_level(forall_loop_num),
                 false,
                 pos_vars_for_offset_expression 
-            ) ] - (forall_loop_num == current_sparse_intersection? 1 : 0);
+            );
+        init_value_expr =  (tensor.is_compressed(forall_idx) ? tensor.get_offsets_field(forall_idx)[init_value_expr] : init_value_expr)
+                            - (forall_loop_num == current_sparse_intersection? 1 : 0);
         if(is_last_thread) {
-            init_value_expr =  tensor.get_offsets_field(forall_idx)[
-                tensor.get_level_indexing_expression(
+            init_value_expr = tensor.get_level_indexing_expression(
                     tensor.loop_num_to_tensor_level(forall_loop_num),
                     true,
                     pos_vars_for_offset_expression 
-                )] - 1;
+                );
+            init_value_expr =  (tensor.is_compressed(forall_idx) ? tensor.get_offsets_field(forall_idx)[init_value_expr] : init_value_expr) - 1;
         }
         if(check_expr.defined()) {
             init_value_expr = llir::lSelect::make(

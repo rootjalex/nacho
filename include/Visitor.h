@@ -39,6 +39,7 @@ struct Visitor {
     virtual void visit(const llir::Ptr_t *);
     virtual void visit(const llir::Tuple_t *);
     virtual void visit(const llir::Struct_t *);
+    virtual void visit(const llir::Bool_t *);
     virtual void visit(const llir::lOp *);
     virtual void visit(const llir::lBinOp *);
     virtual void visit(const llir::lConst *);
