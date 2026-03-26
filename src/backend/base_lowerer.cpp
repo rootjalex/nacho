@@ -82,7 +82,7 @@ llir::lExpr BaseKernelLowerer::get_partition_initializer_expr_for_boundary_cases
 
     if(forall_loop_num <= previous_sparse_intersection) {
         if(is_last_thread) {
-            return tensor.tensor_level_exists(forall_idx) && tensor.is_sparse(forall_idx) ? tensor.get_length_field(forall_idx) - 1 : tensor.get_size_field(forall_idx) - 1;
+            return tensor.tensor_level_exists(forall_idx) && tensor.is_sparse(forall_idx) ? tensor.get_length_field(forall_idx) : tensor.get_size_field(forall_idx);
         } else {
             return llir::lConst::make((int64_t)0);
         }
@@ -94,10 +94,13 @@ llir::lExpr BaseKernelLowerer::get_partition_initializer_expr_for_boundary_cases
     // forall_level > previous_sparse_intersection
 
     
-    llir::lExpr init_value_expr = llir::lConst::make((int64_t)0) - (forall_loop_num == current_sparse_intersection? 1 : 0);
+    llir::lExpr init_value_expr = llir::lConst::make((int64_t)0);
     if(is_last_thread) {
-        init_value_expr = tensor.get_length_field(forall_idx)-1;
+        init_value_expr = tensor.get_length_field(forall_idx);
     }
+
+    init_value_expr = init_value_expr - (forall_loop_num == current_sparse_intersection? 1 : 0);
+
     // For some cases initializers need to be the form
     // partitions.a_j_p[thread_id] = a.dim_j_offsets[Z.i_map_a[0]]-1;
     // when the data in sparse level of the tensor is being skipped due to previous sparse intersections
@@ -159,13 +162,14 @@ llir::lExpr BaseKernelLowerer::get_partition_initializer_expr_for_boundary_cases
                     true,
                     pos_vars_for_offset_expression 
                 );
-            init_value_expr =  (tensor.is_compressed(forall_idx) ? tensor.get_offsets_field(forall_idx)[init_value_expr] : init_value_expr) - 1;
+            init_value_expr =  (tensor.is_compressed(forall_idx) ? tensor.get_offsets_field(forall_idx)[init_value_expr] : init_value_expr) 
+                                 - (forall_loop_num == current_sparse_intersection? 1 : 0);
         }
         if(check_expr.defined()) {
             init_value_expr = llir::lSelect::make(
                 check_expr,
                 init_value_expr,
-                is_last_thread? llir::lConst::make((int64_t)0) : tensor.get_length_field(forall_idx) -1
+                is_last_thread? llir::lConst::make((int64_t)0) : tensor.get_length_field(forall_idx)
             );
         }
     } 

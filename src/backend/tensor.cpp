@@ -110,6 +110,13 @@ llir::lExpr TensorLowerer::get_bound(TensorLevelNum tensor_level,
     }
 
     // this level is sparse
+    if(tensor_level==BEFORE_FIRST_LEVEL+1) {
+        if(upper_bound) {
+            return get_length_field(tensor_level) - 1;
+        } else {
+            return llir::lConst::make(0);
+        }
+    }
 
     llir::lExpr offset = get_level_indexing_expression(tensor_level, upper_bound, pos_vars);
     if (is_compressed(tensor_level)) {
@@ -352,7 +359,7 @@ TensorLowerer::lower_work_function(std::vector<std::string> partial_loop_order,
             pos_vars[prev_sparse_level] = end_var;
             end_expr = get_level_indexing_expression(
                     min(next_sparse_level, last_tensor_level_in_partial_loop+1),
-                    true, pos_vars
+                    false, pos_vars
                 );
 
             stmts.emplace_back(llir::Store::make(
