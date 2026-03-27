@@ -154,7 +154,8 @@ namespace backend {
             if(result_tensor.tensor_level_exists(forall_idx)){
                 block_stmts.emplace_back(llir::Store::make(
                     get_partition_struct_current_thread_field(result_tensor.get_iterator_suffix(forall_idx)),
-                    llir::lConst::make((int64_t)0)));
+                    get_partition_initializer_expr_for_boundary_cases(i, result_tensor, false)
+                ));
             }
         }
 
@@ -162,6 +163,7 @@ namespace backend {
             const Forall* forall = forall_list[i.get()].as<Forall>();
             std::string forall_idx = forall->idx;
             bool has_dense = false;
+            TensorLowerer tensor_with_dense_dim;
             for(auto it: operand_tensors) {
                 auto tensor = it.second;
                 // Check if the tensor has this forall index in its format levels
@@ -169,6 +171,7 @@ namespace backend {
                     if(!tensor.is_sparse(forall_idx)) {
                         if(included_tensors.find(it.first) != included_tensors.end()) {
                             has_dense = true;
+                            tensor_with_dense_dim = tensor;
                         }
                         continue;
                     }
@@ -181,9 +184,8 @@ namespace backend {
             if(has_dense) {
                 block_stmts.emplace_back(llir::Store::make(
                     get_partition_struct_current_thread_field(forall_idx),
-                    i == current_sparse_intersection
-                            ? llir::lConst::make((int64_t)-1)
-                            : llir::lConst::make((int64_t)0)));
+                    get_partition_initializer_expr_for_boundary_cases(i, tensor_with_dense_dim, false)
+                    ));
             }
         }
 
@@ -210,7 +212,7 @@ namespace backend {
             if(result_tensor.tensor_level_exists(forall_idx)){
                 block_stmts.emplace_back(llir::Store::make(
                     get_partition_struct_current_thread_field(result_tensor.get_iterator_suffix(forall_idx)),
-                    result_tensor.is_sparse(forall_idx) ? result_tensor.get_length_field(forall_idx) : result_tensor.get_size_field(forall_idx)));
+                    get_partition_initializer_expr_for_boundary_cases(i, result_tensor, true)));
             }
         }
 
@@ -241,12 +243,7 @@ namespace backend {
             if(has_dense) {
                 block_stmts.emplace_back(llir::Store::make(
                     get_partition_struct_current_thread_field(forall_idx),
-                    llir::lFieldAccess::make(
-                        llir::lVar::make(
-                            llir::Generic_t::make(tensor_with_dense_dim.get_struct_name()),
-                            tensor_with_dense_dim.tensor_name),
-                        tensor_with_dense_dim.get_size_field_name(forall_idx)) -
-                            ((i == current_sparse_intersection) ? 1 : 0)
+                    get_partition_initializer_expr_for_boundary_cases(i, tensor_with_dense_dim, true)
                     ));
             }
         }

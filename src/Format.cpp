@@ -267,6 +267,12 @@ Format mul_formats(const Format &a, const Format &b) {
     return make_format(a, b, [](LevelFormat fa, LevelFormat fb) {
         // Sparse if either is sparse
         if (is_sparse_format(fa) || is_sparse_format(fb)) {
+            if(!is_sparse_format(fa)){
+                return fb;
+            }
+            if(!is_sparse_format(fb)){
+                return fa;
+            }
             // This may not be completely right
             if(is_singleton_format(fa) && is_singleton_format(fb)) {
                 if(is_unique_format(fa) && is_unique_format(fb)) {

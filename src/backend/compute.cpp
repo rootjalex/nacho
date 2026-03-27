@@ -55,9 +55,6 @@ void ComputeKernelLowerer::add_partition_assignments(
 
     auto get_max_iterator = [&](const Index *idx) {
         TensorLowerer tlow = get_tensor(idx->tensor);
-        if(!tlow.is_sparse(TensorLevelNum(idx->level))) {
-            return tlow.get_size_field(TensorLevelNum(idx->level)) - 1;
-        }
         return get_partition_initializer_expr_for_boundary_cases(tlow.tensor_level_to_loop_num(TensorLevelNum(idx->level)), tlow, true);
     };
 
@@ -87,7 +84,12 @@ void ComputeKernelLowerer::add_partition_assignments(
                     internal_assert(idx) << iters[0];
                 }
                 auto tlow = get_tensor(idx->tensor);
-                llir::lExpr max_iter = tlow.get_size_field(TensorLevelNum(idx->level))-1;
+                // TODO: Dedup this with the get_partition_initializer_expr_for_boundary_cases function
+                // issue is that its currently using a random tensor whose cooresponding level
+                // may not be dense. Probably can use result tensor here?
+                llir::lExpr max_iter = tlow.get_size_field(TensorLevelNum(idx->level)) 
+                                         - (loop_level == current_sparse_intersection? 1 : 0);
+                                         
                 stmts.emplace_back(
                     llir::Declare::make(
                         index_t, "start_" + forall->idx,
@@ -858,7 +860,7 @@ llir::lStmt ComputeKernelLowerer::lower_loop(
 
         internal_assert(cond.defined()) << s;
 
-        auto get_body_epilogue_stmt = [&](const CIN nextCin, Seq seq, const Forall *forall) {
+        auto get_body_epilogue_stmt = [&](const CIN nextCin, const Forall *forall) {
             // epilogue statement only required for loops >= previous_sparse_intersection_loops
             if(loop_num < previous_sparse_intersection) {
                 return llir::lStmt();
@@ -999,6 +1001,13 @@ llir::lStmt ComputeKernelLowerer::lower_loop(
                     {assign_operand_pos_map_stmt, std::move(body)}) : std::move(assign_operand_pos_map_stmt);
             }
 
+            auto epilogue_stmt = get_body_epilogue_stmt(cin, forall);
+            if (body.defined() && epilogue_stmt.defined()) {
+                body = llir::Sequence::make({std::move(body), std::move(epilogue_stmt)});
+            } else if (epilogue_stmt.defined()) {
+                body = std::move(epilogue_stmt);
+            }
+
             return body;
         };
 
@@ -1037,6 +1046,13 @@ llir::lStmt ComputeKernelLowerer::lower_loop(
             //std::cout<<"make evals : "<<a<<std::endl;
             auto [as, ls, has_universe_iter] = partition_iterators_locators(a);
             if(is_loop_before_prev_intersection) {
+                auto level = result_tensor.loop_num_to_tensor_level(loop_num);
+                stmts.push_back(llir::IfElse::make(
+                    result_tensor.get_iter(level) >= (result_tensor.is_sparse(level)? result_tensor.get_length_field(level) : result_tensor.get_size_field(level)),
+                    llir::Break::make(),
+                    nullptr
+                ));
+
                 for(const auto &term: as) {
                      const Index *idx = term.as<Index>();
                     internal_assert(idx) << term;
@@ -1052,7 +1068,7 @@ llir::lStmt ComputeKernelLowerer::lower_loop(
                             llir::lSelect::make(
                                 map_result_pos_to_operand_pos(forall, tlower,result_tensor.get_iter(TensorLevelNum(idx->level))) != llir::lConst::make(-1),
                                 map_result_pos_to_operand_pos(forall, tlower,result_tensor.get_iter(TensorLevelNum(idx->level))),
-                                tlower.get_bound(TensorLevelNum(idx->level), true, pos_vars)
+                                tlower.get_bound(TensorLevelNum(idx->level), true, pos_vars) + 1
                             )
                         )
                     );
@@ -1141,13 +1157,6 @@ llir::lStmt ComputeKernelLowerer::lower_loop(
 
             llir::lStmt body = make_body(s);
 
-            auto epilogue_stmt = get_body_epilogue_stmt(forall->body, s, forall);
-            if (body.defined() && epilogue_stmt.defined()) {
-                body = llir::Sequence::make({std::move(body), std::move(epilogue_stmt)});
-            } else if (epilogue_stmt.defined()) {
-                body = std::move(epilogue_stmt);
-            }
-
             if (const auto *as_seq = body.as<llir::Sequence>()) {
                 stmts.insert(stmts.end(), as_seq->stmts.begin(),
                             as_seq->stmts.end());
@@ -1189,13 +1198,6 @@ llir::lStmt ComputeKernelLowerer::lower_loop(
             auto stmts = make_evals(s);
 
             auto if_else = build_ifelse(0); 
-            // append epilogue statement
-            auto epilogue_stmt = get_body_epilogue_stmt(forall->body, s, forall);
-            if (if_else.defined() && epilogue_stmt.defined()) {
-                if_else = llir::Sequence::make({std::move(if_else), std::move(epilogue_stmt)});
-            } else if (epilogue_stmt.defined()) {
-                if_else = std::move(epilogue_stmt);
-            }
             if(!if_else.defined()) {
                 return llir::lStmt();
             }

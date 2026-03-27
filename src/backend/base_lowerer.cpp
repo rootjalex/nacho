@@ -77,8 +77,15 @@ llir::lExpr BaseKernelLowerer::map_result_pos_to_operand_pos(const Forall* foral
 }
 
 llir::lExpr BaseKernelLowerer::get_partition_initializer_expr_for_boundary_cases(LoopNum forall_loop_num, TensorLowerer& tensor, bool is_last_thread) {
-    internal_assert(tensor.tensor_level_exists(forall_loop_num) && tensor.is_sparse(forall_loop_num)) << "Expected sparse tensor at level " << forall_loop_num;
+    internal_assert(tensor.tensor_level_exists(forall_loop_num)) << "Expected level exists in tensor " << forall_loop_num;
+
+
     std::string forall_idx = tensor.loop_name(forall_loop_num);
+
+    if(!tensor.is_sparse(forall_loop_num)) {
+        return is_last_thread ? tensor.get_size_field(forall_idx) : llir::lConst::make((int64_t)0) 
+                 - (forall_loop_num == current_sparse_intersection? 1 : 0);
+    }
 
     if(forall_loop_num <= previous_sparse_intersection) {
         if(is_last_thread) {
