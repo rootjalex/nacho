@@ -352,15 +352,12 @@ namespace backend {
         llir::lExpr arr_var = llir::lVar::make(llir::Ptr_t::make(index_t), "arr");
         llir::lExpr target_value_var = llir::lVar::make(index_t, "target_value");
         llir::lExpr mid_expr = start_var + (((end_var - start_var) + 1) / 2);
-        if(!is_upper_bound) {
-            mid_expr = start_var + ((end_var - start_var) / 2);
-        }
 
         stmts.emplace_back(
             llir::Declare::make(
                 index_t,
                 "mid",
-                start_var + (((end_var - start_var) + 1) / 2)
+                mid_expr
             )
         );  
         std::vector<llir::lStmt> while_stmts;
@@ -368,7 +365,7 @@ namespace backend {
         while_stmts.emplace_back(
             llir::Store::make(
                 mid_var,
-                start_var + (((end_var - start_var) + 1) / 2)
+                mid_expr
             )
         );
 
@@ -379,11 +376,18 @@ namespace backend {
                 llir::Store::make(end_var, mid_var - 1)
             ));
         } else {
-            while_stmts.emplace_back(llir::IfElse::make(
-                arr_var[mid_var] < target_value_var,
-                llir::Store::make(start_var, mid_var + 1),
-                llir::Store::make(end_var, mid_var)
-            ));
+            while_stmts.emplace_back(
+                llir::IfElse::make(
+                    arr_var[mid_var] < target_value_var,
+                    llir::Store::make(start_var, mid_var),
+                    llir::IfElse::make(
+                    arr_var[mid_var] > target_value_var,
+                    llir::Store::make(end_var, mid_var - 1),
+                    llir::Sequence::make({
+                        llir::IfElse::make(start_var == mid_var-1, llir::Return::make(mid_var), nullptr),
+                        llir::Store::make(end_var, mid_var),
+                    })
+            )));
         }
 
         stmts.emplace_back(
@@ -396,7 +400,7 @@ namespace backend {
         stmts.emplace_back(
             llir::Store::make(
                 mid_var,
-                start_var + (((end_var - start_var) + 1) / 2)
+                mid_expr
             )
         );
         

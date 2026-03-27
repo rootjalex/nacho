@@ -14,45 +14,87 @@ using namespace nacho;
 
 void test() {
     std::cout << "Basic tests\n";
-    Format csr = Format::ordered({
+    Format csr_1 = Format::ordered({
         {"i", LevelFormat::Dense},
-        {"j", LevelFormat::Compressed},
+        {"j", LevelFormat::Compressed_unique},
+    });
+    Format csr_2 = Format::ordered({
+        {"j", LevelFormat::Dense},
+        {"k", LevelFormat::Compressed_unique},
     });
 
     Format dcsr = Format::ordered({
-        {"i", LevelFormat::Compressed},
-        {"j", LevelFormat::Compressed},
+        {"i", LevelFormat::Compressed_unique},
+        {"j", LevelFormat::Compressed_unique},
+    });
+
+    Format csf = Format::ordered({
+        {"i", LevelFormat::Compressed_unique},
+        {"j", LevelFormat::Compressed_unique},
+        {"k", LevelFormat::Compressed_unique},
+    });
+
+    Format coo = Format::ordered({
+        {"i", LevelFormat::Compressed_non_unique},
+        {"j", LevelFormat::Singleton_unique},
+    });
+
+    Format coo_2 = Format::ordered({
+        {"j", LevelFormat::Compressed_non_unique},
+        {"k", LevelFormat::Singleton_unique},
+    });
+
+    Format coo3d = Format::ordered({
+        {"i", LevelFormat::Compressed_non_unique},
+        {"j", LevelFormat::Singleton_non_unique},
+        {"k", LevelFormat::Singleton_unique},
     });
 
     Format s = Format::ordered({
-        {"i", LevelFormat::Compressed}
+        {"k", LevelFormat::Compressed_unique}
     });
 
     Format d = Format::ordered({
         {"i", LevelFormat::Dense}
     });
 
-    TensorType csr_f32 = TensorType(csr, dType::Float32);
+    TensorType csr_f32 = TensorType(csr_1, dType::Float32);
+    TensorType csr2_f32 = TensorType(csr_2, dType::Float32);
+    TensorType csf_f32 = TensorType(csf, dType::Float32);
+    TensorType coo_f32 = TensorType(coo, dType::Float32);
+    TensorType coo_2_f32 = TensorType(coo_2, dType::Float32);
+    TensorType coo3d_f32 = TensorType(coo3d, dType::Float32);
     TensorType dcsr_f32 = TensorType(dcsr, dType::Float32);
     TensorType s_f32 = TensorType(s, dType::Float32);
     TensorType d_f32 = TensorType(d, dType::Float32);
 
 
-    Expr a_ij = Tensor::make(dcsr_f32, "a");
-    Expr b_ij = Tensor::make(dcsr_f32, "b");
+    Expr a_ij = Tensor::make(csr_f32, "a");
+    Expr b_jk = Tensor::make(csr2_f32, "b");
     Expr c_ij = Tensor::make(dcsr_f32, "c");
-    Expr d_ij = Tensor::make(csr_f32, "d");
+    Expr d_ij = Tensor::make(dcsr_f32, "d");
 
     Expr a_i = Tensor::make(s_f32, "a_vec");
-    Expr b_i = Tensor::make(s_f32, "b_vec");
+    Expr b_k = Tensor::make(s_f32, "b");
     Expr c_i = Tensor::make(s_f32, "c_vec");
     Expr d_i = Tensor::make(d_f32, "d_vec");
 
-    Expr z_ij = a_ij + b_ij;
-    // Expr z_ij = a_ij * (b_ij+c_ij);
+    //Expr z_ik = Sum::make("j",a_ij * b_jk);
+    Expr z_ij = d_ij+c_ij;
+     //Expr z_ij = (a_ik+d_ij)+c_ij;
+    // std::cout << z_ij << "\n";
+    // std::cout << compile_to_cin(z_ij) << "\n";
+    // nacho::backend::CINLowerer(compile_to_cin(z_ij), std::cout).lower_cin();
 
-    nacho::backend::CINLowerer(compile_to_cin(z_ij), std::cout).lower_cin();
+    a_ij = Tensor::make(coo_f32, "a");
+    Expr b_ij = Tensor::make(coo_f32, "b");
+    c_ij = Tensor::make(dcsr_f32, "c");
+    Expr a_ijk = Tensor::make(csf_f32, "a");
+    Expr b_ijk = Tensor::make(csf_f32, "b");
 
+    Expr z_ijk = a_ijk + b_ijk;
+    //std::cout << compile_to_cin(z_ijk) << "\n";
+    nacho::backend::CINLowerer(compile_to_cin(z_ijk), std::cout).lower_cin();
     // {
     //     Expr z_i = a_i * c_i;
     //     std::cout << z_i << "\n";
@@ -65,7 +107,7 @@ void test() {
     // b_ij = Tensor::make(dcsr_f32, "b");
 
     // z_ij = a_ij * b_ij;
-     Expr z_i = a_i * b_i;
+    // Expr z_i = a_i * b_i;
     // std::cout << z_i << "\n";
     // std::cout << compile_to_cin(z_i) << "\n";
     // std::cout << "Debug\n";
@@ -83,112 +125,112 @@ void test() {
     // ), std::cout).lower_cin();
     return;
 
-    std::cout << "Debug\n";
-    z_i = sum("i", z_ij);
-    std::cout << z_i << "\n";
-    std::cout << compile_to_cin(z_i) << "\n";
-    nacho::backend::CINLowerer(compile_to_cin(z_ij), std::cout).lower_cin();
+//     std::cout << "Debug\n";
+//     z_i = sum("i", z_ij);
+//     std::cout << z_i << "\n";
+//     std::cout << compile_to_cin(z_i) << "\n";
+//     nacho::backend::CINLowerer(compile_to_cin(z_ij), std::cout).lower_cin();
 
-    z_ij = a_ij * b_ij;
+//     z_ij = a_ij * b_ij;
 
-    std::cout << z_ij << "\n";
-    std::cout << compile_to_cin(z_ij) << "\n";
-    nacho::backend::CINLowerer(compile_to_cin(z_ij), std::cout).lower_cin();
+//     std::cout << z_ij << "\n";
+//     std::cout << compile_to_cin(z_ij) << "\n";
+//     nacho::backend::CINLowerer(compile_to_cin(z_ij), std::cout).lower_cin();
 
-    // z_ij = (a_ij + b_ij) * (c_ij + d_ij);
-    // std::cout << z_ij << "\n";
-    // std::cout << compile_to_cin(z_ij) << "\n";
-    // nacho::backend::CINLowerer(compile_to_cin(z_ij), std::cout).lower_cin();
-    // std::cout << "\n\n";
+//     // z_ij = (a_ij + b_ij) * (c_ij + d_ij);
+//     // std::cout << z_ij << "\n";
+//     // std::cout << compile_to_cin(z_ij) << "\n";
+//     // nacho::backend::CINLowerer(compile_to_cin(z_ij), std::cout).lower_cin();
+//     // std::cout << "\n\n";
 
-    // Expr z = (a_i + b_i + c_i) * d_i;
-    // std::cout << z << "\n";
-    // std::cout << compile_to_cin(z) << "\n";
-    // nacho::backend::CINLowerer(compile_to_cin(z), std::cout).lower_cin();
+//     // Expr z = (a_i + b_i + c_i) * d_i;
+//     // std::cout << z << "\n";
+//     // std::cout << compile_to_cin(z) << "\n";
+//     // nacho::backend::CINLowerer(compile_to_cin(z), std::cout).lower_cin();
 
-    Format sdssds = Format::ordered({
-        {"i", LevelFormat::Compressed},
-        {"j", LevelFormat::Dense},
-        {"k", LevelFormat::Compressed},
-        {"l", LevelFormat::Compressed},
-        {"m", LevelFormat::Dense},
-        {"n", LevelFormat::Compressed}
-    });
+//     Format sdssds = Format::ordered({
+//         {"i", LevelFormat::Compressed},
+//         {"j", LevelFormat::Dense},
+//         {"k", LevelFormat::Compressed},
+//         {"l", LevelFormat::Compressed},
+//         {"m", LevelFormat::Dense},
+//         {"n", LevelFormat::Compressed}
+//     });
 
-    Format ssds = Format::ordered({
-        {"i", LevelFormat::Compressed},
-        {"k", LevelFormat::Compressed},
-        {"l", LevelFormat::Dense},
-        {"n", LevelFormat::Compressed}
-    });
+//     Format ssds = Format::ordered({
+//         {"i", LevelFormat::Compressed},
+//         {"k", LevelFormat::Compressed},
+//         {"l", LevelFormat::Dense},
+//         {"n", LevelFormat::Compressed}
+//     });
 
-    TensorType ssds_f32 = TensorType(ssds, dType::Float32); 
-    TensorType sdssds_f32 = TensorType(sdssds, dType::Float32);
+//     TensorType ssds_f32 = TensorType(ssds, dType::Float32); 
+//     TensorType sdssds_f32 = TensorType(sdssds, dType::Float32);
 
-    Expr A_ijklmn = Tensor::make(sdssds_f32, "A");
-    Expr B_ikln = Tensor::make(ssds_f32, "B");
+//     Expr A_ijklmn = Tensor::make(sdssds_f32, "A");
+//     Expr B_ikln = Tensor::make(ssds_f32, "B");
 
-    Expr C_ijklmn = A_ijklmn + B_ikln;
-    std::cout << C_ijklmn << "\n";
-    std::cout << compile_to_cin(C_ijklmn) << "\n";
-    nacho::backend::CINLowerer(compile_to_cin(C_ijklmn), std::cout).lower_cin();
-    std::cout << "\n\n";
-}
+//     Expr C_ijklmn = A_ijklmn + B_ikln;
+//     std::cout << C_ijklmn << "\n";
+//     std::cout << compile_to_cin(C_ijklmn) << "\n";
+//     nacho::backend::CINLowerer(compile_to_cin(C_ijklmn), std::cout).lower_cin();
+//     std::cout << "\n\n";
+// }
 
-void test_vec() {
-    std::cout << "Vector math test\n";
-    Format dense = Format::ordered({
-        {"i", LevelFormat::Dense},
-    });
-    Format sparse = Format::ordered({
-        {"i", LevelFormat::Compressed},
-    });
+// void test_vec() {
+//     std::cout << "Vector math test\n";
+//     Format dense = Format::ordered({
+//         {"i", LevelFormat::Dense},
+//     });
+//     Format sparse = Format::ordered({
+//         {"i", LevelFormat::Compressed},
+//     });
 
-    TensorType dense_f32 = TensorType(dense, dType::Float32);
-    TensorType sparse_f32 = TensorType(sparse, dType::Float32);
+//     TensorType dense_f32 = TensorType(dense, dType::Float32);
+//     TensorType sparse_f32 = TensorType(sparse, dType::Float32);
 
-    Expr a_i = Tensor::make(sparse_f32, "a");
-    Expr b_i = Tensor::make(sparse_f32, "b");
-    Expr c_i = Tensor::make(dense_f32, "c");
-    Expr d_i = Tensor::make(dense_f32, "d");
+//     Expr a_i = Tensor::make(sparse_f32, "a");
+//     Expr b_i = Tensor::make(sparse_f32, "b");
+//     Expr c_i = Tensor::make(dense_f32, "c");
+//     Expr d_i = Tensor::make(dense_f32, "d");
 
-    Expr e = a_i * b_i;
-    std::cout << "Expect sparse: " << e.type().format << "\n";
-    std::cout << compile_to_cin(e) << "\n";
+//     Expr e = a_i * b_i;
+//     std::cout << "Expect sparse: " << e.type().format << "\n";
+//     std::cout << compile_to_cin(e) << "\n";
 
-    e = c_i * d_i;
-    std::cout << "Expect dense: " << e.type().format << "\n";
-    std::cout << compile_to_cin(e) << "\n";
+//     e = c_i * d_i;
+//     std::cout << "Expect dense: " << e.type().format << "\n";
+//     std::cout << compile_to_cin(e) << "\n";
 
-    e = a_i * c_i;
-    std::cout << "Expect sparse: " << e.type().format << "\n";
-    std::cout << compile_to_cin(e) << "\n";
+//     e = a_i * c_i;
+//     std::cout << "Expect sparse: " << e.type().format << "\n";
+//     std::cout << compile_to_cin(e) << "\n";
 
-    e = a_i + b_i;
-    std::cout << "Expect sparse: " << e.type().format << "\n";
-    std::cout << compile_to_cin(e) << "\n";
+//     e = a_i + b_i;
+//     std::cout << "Expect sparse: " << e.type().format << "\n";
+//     std::cout << compile_to_cin(e) << "\n";
 
-    e = c_i + d_i;
-    std::cout << "Expect dense: " << e.type().format << "\n";
-    std::cout << compile_to_cin(e) << "\n";
+//     e = c_i + d_i;
+//     std::cout << "Expect dense: " << e.type().format << "\n";
+//     std::cout << compile_to_cin(e) << "\n";
 
-    e = a_i + c_i;
-    std::cout << "Expect dense: " << e.type().format << "\n";
-    std::cout << compile_to_cin(e) << "\n";
+//     e = a_i + c_i;
+//     std::cout << "Expect dense: " << e.type().format << "\n";
+//     std::cout << compile_to_cin(e) << "\n";
 
-    std::cout << "\n\n";
+//     std::cout << "\n\n";
 }
 
 void spgemm() {
     std::cout << "SpGEMM test\n";
     Format csr0 = Format::ordered({
         {"i", LevelFormat::Dense},
-        {"j", LevelFormat::Compressed},
+        {"j", LevelFormat::Compressed_unique},
     });
 
     Format csr1 = Format::ordered({
         {"j", LevelFormat::Dense},
-        {"k", LevelFormat::Compressed},
+        {"k", LevelFormat::Compressed_unique},
     });
 
     TensorType csr0_f32 = TensorType(csr0, dType::Float32);
@@ -212,19 +254,19 @@ void spgemm() {
 
 void sss_s_s(){
     Format sss = Format::ordered({
-        {"i", LevelFormat::Compressed},
-        {"j", LevelFormat::Compressed},
-        {"l", LevelFormat::Compressed},
+        {"i", LevelFormat::Compressed_unique},
+        {"j", LevelFormat::Compressed_unique},
+        {"l", LevelFormat::Compressed_unique},
         {"m", LevelFormat::Dense},
     });
     Format s1 = Format::ordered({
-        {"j", LevelFormat::Compressed},
+        {"j", LevelFormat::Compressed_unique},
     });
     Format s2 = Format::ordered({
-        {"k", LevelFormat::Compressed},
+        {"k", LevelFormat::Compressed_unique},
     });
     Format s3 = Format::ordered({
-        {"o", LevelFormat::Compressed},
+        {"o", LevelFormat::Compressed_unique},
     });
     
     TensorType sss_f32 = TensorType(sss, dType::Float32);
@@ -248,12 +290,12 @@ void test_format_inf() {
     std::cout << "Format inference test\n";
     Format csr = Format::ordered({
         {"i", LevelFormat::Dense},
-        {"j", LevelFormat::Compressed},
+        {"j", LevelFormat::Compressed_unique},
     });
 
     Format dcsr = Format::ordered({
-        {"i", LevelFormat::Compressed},
-        {"j", LevelFormat::Compressed},
+        {"i", LevelFormat::Compressed_unique},
+        {"j", LevelFormat::Compressed_unique},
     });
 
     TensorType csr_f32 = TensorType(csr, dType::Float32);
@@ -278,7 +320,7 @@ void test_format_inf() {
 void test_lattice() {
     std::cout << "Lattice test\n";
     Format sparse = Format::ordered({
-        {"i", LevelFormat::Compressed},
+        {"i", LevelFormat::Compressed_unique},
     });
 
     Format dense = Format::ordered({
@@ -371,7 +413,7 @@ void test_lattice() {
 void test_locator_optimization() {
     std::cout << "Locator test\n";
     Format sparse = Format::ordered({
-        {"i", LevelFormat::Compressed},
+        {"i", LevelFormat::Compressed_unique},
     });
 
     Format dense = Format::ordered({
@@ -404,12 +446,12 @@ void test_locator_optimization() {
 
     auto check = [&print_list](const Seq &seq) {
         std::cout << "\n";
-        auto [iters, locs] = partition_iterators_locators(seq);
+        auto [iters, locs, has_universe_iter] = partition_iterators_locators(seq);
         std::cout << seq << " -> iterators: ";
         print_list(std::cout, iters);
         std::cout << " with locators: ";
         print_list(std::cout, locs);
-        std::cout << std::endl;
+        std::cout << " (has universe iter: " << has_universe_iter << ")" << std::endl;
     };
 
     Seq seq = Union::make(i_a, i_b);

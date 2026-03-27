@@ -482,19 +482,23 @@ namespace nacho {
         }
 
         llir::lStmt make_eval(const TensorLevelNum level,
-                              const llir::lType &index_t, bool is_loop_before_prev_intersection) const {
-
+                              const llir::lType &index_t, bool is_last_loop) {
+                            
             auto val = get_coord(level, index_t);
-            if(is_sparse(level) && is_loop_before_prev_intersection) {
-                // If this loop is before the previous intersection, then we are going to iterate only over the result tensor index. So if this level is sparse, we need to check if the coordinate is within bounds of the size of the dimension.
+            if(is_sparse(level) && !is_last_loop) {
+                // if the value is outside the bounds then use max possible val for the level (size val) which
+                // is never possible. We terminate iteration early if coordinate is evaluated to this value
+                std::map<TensorLevelNum, llir::lExpr> pos_vars;
+                for(TensorLevelNum l = BEFORE_FIRST_LEVEL + 1; l < TensorLevelNum(level); ++l) {
+                    pos_vars[l] = get_iter(l);
+                }
                 val = llir::lSelect::make(
-                    llir::lVar::make(index_t, get_iter_name(level))!=llir::lConst::make(-1),
-                    std::move(val),
-                    get_size_field(level)
+                    (llir::lVar::make(index_t, get_iter_name(level)) > this->get_bound(level, true, pos_vars)),
+                    get_size_field(level),
+                    std::move(val)
                 );
             }
-            return llir::Declare::make(index_t, get_coord_name(level),
-                                       get_coord(level, index_t));
+            return llir::Declare::make(index_t, get_coord_name(level), val);
         }
 
         llir::lStmt make_inc(const TensorLevelNum level,
