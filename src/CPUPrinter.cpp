@@ -123,32 +123,24 @@ void CPUPrinter::visit(const llir::DeviceTransfer *node) {
 }
 
 void CPUPrinter::visit(const llir::PrefixSum *node) {
-    // Sequential inclusive scan:
-    // output[0] = 0;
-    // for (int _ps_i = 0; _ps_i < count; _ps_i++) {
-    //   output[_ps_i + 1] = output[_ps_i] + input[_ps_i];
-    // }
     print_indent();
-    print_no_parens(node->output);
-    os << "[0] = 0;\n";
-    print_indent();
-    os << "for (int _ps_i = 0; _ps_i < ";
-    print_no_parens(node->count);
-    os << "; _ps_i++) {\n";
-    indent();
-    print_indent();
-    print_no_parens(node->output);
-    os << "[_ps_i + 1] = ";
-    print_no_parens(node->output);
-    os << "[_ps_i] + ";
+    os << "cpu_inclusive_scan(";
     print_no_parens(node->input);
-    os << "[_ps_i];\n";
-    dedent();
-    print_indent();
-    os << "}\n";
+    os << ", ";
+    print_no_parens(node->output);
+    os << ", ";
+    print_no_parens(node->count);
+    os << ");\n";
 }
 
 void CPUPrinter::visit(const llir::KernelLaunch *node) {
+    print_indent();
+    os << "tbb::parallel_for(0, (int)(";
+    print_no_parens(node->grid_dim);
+    os << " * ";
+    print_no_parens(node->block_dim);
+    os << "), [&](int _tid) {\n";
+    indent();
     print_indent();
     os << "gridDim.x = ";
     print_no_parens(node->grid_dim);
@@ -158,19 +150,13 @@ void CPUPrinter::visit(const llir::KernelLaunch *node) {
     print_no_parens(node->block_dim);
     os << ";\n";
     print_indent();
-    os << "for (int _blk = 0; _blk < ";
-    print_no_parens(node->grid_dim);
-    os << "; _blk++) {\n";
-    indent();
-    print_indent();
-    os << "blockIdx.x = _blk;\n";
-    print_indent();
-    os << "for (int _thr = 0; _thr < ";
+    os << "blockIdx.x = _tid / ";
     print_no_parens(node->block_dim);
-    os << "; _thr++) {\n";
-    indent();
+    os << ";\n";
     print_indent();
-    os << "threadIdx.x = _thr;\n";
+    os << "threadIdx.x = _tid % ";
+    print_no_parens(node->block_dim);
+    os << ";\n";
     print_indent();
     os << node->kernel_name;
     if (!node->template_args.empty()) {
@@ -191,10 +177,7 @@ void CPUPrinter::visit(const llir::KernelLaunch *node) {
     os << ");\n";
     dedent();
     print_indent();
-    os << "}\n";
-    dedent();
-    print_indent();
-    os << "}\n";
+    os << "});\n";
 }
 
 void CPUPrinter::visit(const llir::CubScratchQuery *node) {
@@ -229,32 +212,12 @@ void CPUPrinter::visit(const llir::SlabAlloc *node) {
 }
 
 void CPUPrinter::visit(const llir::InPlacePrefixSum *node) {
-    // Sequential in-place exclusive scan
     print_indent();
-    os << "{\n";
-    indent();
-    print_indent();
-    os << "index_t _running = 0;\n";
-    print_indent();
-    os << "for (int _ps_i = 0; _ps_i < ";
+    os << "cpu_exclusive_scan_inplace(";
+    print_no_parens(node->data);
+    os << ", ";
     print_no_parens(node->count);
-    os << "; _ps_i++) {\n";
-    indent();
-    print_indent();
-    os << "index_t _cur = ";
-    print_no_parens(node->data);
-    os << "[_ps_i];\n";
-    print_indent();
-    print_no_parens(node->data);
-    os << "[_ps_i] = _running;\n";
-    print_indent();
-    os << "_running += _cur;\n";
-    dedent();
-    print_indent();
-    os << "}\n";
-    dedent();
-    print_indent();
-    os << "}\n";
+    os << ");\n";
 }
 
 } // namespace nacho

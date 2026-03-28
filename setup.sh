@@ -144,6 +144,9 @@ setup_compiler() {
         info "Found cmake $(cmake --version | head -1 | awk '{print $3}')"
     fi
 
+    info "Installing TBB (CPU parallelism)..."
+    conda install -y tbb-devel
+
     info "Configuring nacho compiler..."
     cmake -S "$REPO_DIR" -B "$REPO_DIR/build"
 

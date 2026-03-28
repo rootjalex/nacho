@@ -175,11 +175,13 @@ if (nacho_BUILD_TESTING)
         list(APPEND NACHO_CPU_GEN_SRC "${NACHO_CPU_GEN_DIR}/${expr}.cpp")
     endforeach()
 
+    find_package(TBB REQUIRED)
     add_executable(cpu_codegen_test tests/cpu_codegen_test.cpp ${NACHO_CPU_GEN_SRC})
     target_include_directories(cpu_codegen_test PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/include"
         "${NACHO_CPU_GEN_DIR}"
     )
+    target_link_libraries(cpu_codegen_test PRIVATE TBB::tbb)
     add_test(NAME cpu_codegen COMMAND cpu_codegen_test)
 endif ()
 
