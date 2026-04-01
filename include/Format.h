@@ -9,7 +9,10 @@ namespace nacho {
 
 enum class LevelFormat {
     Dense,
-    Compressed,
+    Compressed_non_unique,
+    Compressed_unique,
+    Singleton_non_unique,
+    Singleton_unique,
     // TODO: Coordinate, Hash, etc (Change below function too when adding more sparse types)
 };
 
@@ -70,7 +73,19 @@ inline std::ostream &operator<<(std::ostream &os, const TensorLevelNum &lvl) {
 inline static const TensorLevelNum BEFORE_FIRST_LEVEL{-1};
 
 inline bool is_sparse_format(const LevelFormat lvl_fmt) {
-    return lvl_fmt == LevelFormat::Compressed;
+    return lvl_fmt != LevelFormat::Dense;
+}
+
+inline bool is_compressed_format(const LevelFormat lvl_fmt) {
+    return lvl_fmt == LevelFormat::Compressed_unique || lvl_fmt == LevelFormat::Compressed_non_unique;
+}
+
+inline bool is_singleton_format(const LevelFormat lvl_fmt) {
+    return lvl_fmt == LevelFormat::Singleton_unique || lvl_fmt == LevelFormat::Singleton_non_unique;
+}   
+
+inline bool is_unique_format(const LevelFormat lvl_fmt) {
+    return lvl_fmt == LevelFormat::Compressed_unique || lvl_fmt == LevelFormat::Singleton_unique;
 }
 
 struct Level {
@@ -115,12 +130,16 @@ struct Format {
     TensorLevelNum get_next_sparse_level(TensorLevelNum curr_level) const;
     TensorLevelNum get_last_sparse_level() const;
     TensorLevelNum get_level_order(const std::string &idx) const;
+    TensorLevelNum get_end_level() const {
+        return TensorLevelNum(static_cast<int>(levels.size()));
+    }
 
     LevelFormat lvlfmt_of(const std::string &idx) const;
     bool is_sparse(const std::string &idx) const;
     bool level_exists(const std::string &idx) const;
     bool is_bc_lvl(const std::string &idx) const;
     bool are_all_lvls_dense() const;
+
 };
 
 // Format inference.
