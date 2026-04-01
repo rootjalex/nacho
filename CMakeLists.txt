@@ -159,7 +159,7 @@ if (nacho_BUILD_TESTING)
     # CPU codegen tests: generate CPU code, compile, and run
     set(NACHO_CPU_EXPRESSIONS
         sparse_vec_mul sparse_vec_add sparse_vec_apb_c sparse_vec_ab_pc
-        csr_add
+        csr_add dcsr_mul dcsr_add tcsf_add
     )
 
     set(NACHO_CPU_GEN_DIR "${CMAKE_BINARY_DIR}/cpu_gen")
@@ -183,6 +183,20 @@ if (nacho_BUILD_TESTING)
     )
     target_link_libraries(cpu_codegen_test PRIVATE TBB::tbb)
     add_test(NAME cpu_codegen COMMAND cpu_codegen_test)
+
+    # Shared library for Python ctypes access to all CPU-generated operations
+    add_library(cpu_codegen SHARED tests/cpu_runtime_wrappers.cpp ${NACHO_CPU_GEN_SRC})
+    target_include_directories(cpu_codegen PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/include"
+        "${NACHO_CPU_GEN_DIR}"
+    )
+    target_link_libraries(cpu_codegen PRIVATE TBB::tbb)
+    set_target_properties(cpu_codegen PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+    add_test(NAME cpu_runtime_pytest
+        COMMAND python -m pytest ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_cpu_generated.py -v
+        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    )
 endif ()
 
 ##

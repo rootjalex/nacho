@@ -36,9 +36,12 @@ conda run -n nacho pip install runtime/
 
 # Run runtime tests
 conda run -n nacho pytest runtime/tests/
+
+# Run CPU runtime pytest suite (no CUDA needed, included in ctest)
+conda run -n nacho pytest tests/test_cpu_generated.py -v --forked
 ```
 
-Requires CMake 3.30+. Tests are defined in `compiler.cpp` and registered via CTest.
+Requires CMake 3.30+. Tests are defined in `compiler.cpp` and registered via CTest. CPU runtime tests are in `tests/test_cpu_generated.py` (pytest via ctypes, also registered as `cpu_runtime_pytest` in CTest).
 
 ## Code Style
 
