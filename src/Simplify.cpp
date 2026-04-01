@@ -296,7 +296,9 @@ struct RemoveDenseCoiteration : public Mutator {
     Seq visit(const Union *node) override { return handle(node); }
 };
 
-// Remove dense iterators when intersected with a sparse iterator.
+// Remove dense iterators when intersected with a sparse "unique" iterator.
+// TODO: If changed from sparse unique to something else, then may also require change in
+// get_all_sparse_intersection_levels
 struct RemoveDenseLocators : public SimplifySeq {
     using SimplifySeq::visit;
 
@@ -320,21 +322,27 @@ struct RemoveDenseLocators : public SimplifySeq {
             return Mutator::visit(node);
         }
         bool a_sparse = node->a.get()->is_sparse;
+        bool a_unique = node->a.get()->is_unique;
         bool b_sparse = node->b.get()->is_sparse;
+        bool b_unique = node->b.get()->is_unique;
 
         Seq a, b;
 
         if (a_sparse && !b_sparse) {
             // b is dense under sparse shadow
             a = mutate(node->a);
-            in_sparse_intersection = true;
+            if(a_unique)
+                in_sparse_intersection = true;
             b = mutate(node->b);
-            in_sparse_intersection = false;
+            if(a_unique)
+                in_sparse_intersection = false;
         } else if (b_sparse && !a_sparse) {
             // a is dense under sparse shadow
-            in_sparse_intersection = true;
+            if(b_unique)
+                in_sparse_intersection = true;
             a = mutate(node->a);
-            in_sparse_intersection = false;
+            if(b_unique)
+                in_sparse_intersection = false;
             b = mutate(node->b);
         } else {
             // both sparse or both dense: normal recursion

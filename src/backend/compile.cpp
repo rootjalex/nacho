@@ -174,7 +174,7 @@ namespace backend {
             // printer.print(it.second.lower_tensor_index_definition());
         }
         printer.print(result_tensor.lower_tensor_struct_definition());
-        if(reductionLoop<result_tensor.get_loop_num_for_last_sparse_level()) {
+        if(reductionLoop<result_tensor.get_loop_num_for_last_sparse_level() && reductionLoop!=BEFORE_FIRST_LOOP) {
             printer.print(scatter_reduced_result_tensor.lower_tensor_struct_definition());
         }
 
@@ -275,10 +275,16 @@ namespace backend {
                 // hence cin is not innermost sparse
                 ++loop_num;
                 found_sparse_intersection = false;
-                //<<" Going inside seq "<<(Seq)node->seq<<std::endl;
-                node->seq.accept(this);
-                if(found_sparse_intersection) {
-                    sparse_intersection_levels.push_back(loop_num);
+
+                // level should be considered separately as a sparse intersection only if it is a unique level.
+                // TODO : not sure if the unique requirment is entirely correct, need to investigate further.
+                // TODO : if changed also change in RemoveDenseLocators
+                if(node->seq.get()->is_unique) {
+                    //<<" Going inside seq "<<(Seq)node->seq<<std::endl;
+                    node->seq.accept(this);
+                    if(found_sparse_intersection) {
+                        sparse_intersection_levels.push_back(loop_num);
+                    }
                 }
                 found_sparse_intersection = false;
                 node->body.accept(this);

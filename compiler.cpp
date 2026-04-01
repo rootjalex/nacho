@@ -70,7 +70,7 @@ void test() {
 
 
     Expr a_ij = Tensor::make(csr_f32, "a");
-    Expr b_jk = Tensor::make(csr2_f32, "b");
+    Expr b_jk = Tensor::make(csr_f32, "b");
     Expr c_ij = Tensor::make(dcsr_f32, "c");
     Expr d_ij = Tensor::make(dcsr_f32, "d");
 
@@ -80,19 +80,19 @@ void test() {
     Expr d_i = Tensor::make(d_f32, "d_vec");
 
     //Expr z_ik = Sum::make("j",a_ij * b_jk);
-    Expr z_ij = d_ij+c_ij;
+     Expr z_ij = a_ij+b_jk;
      //Expr z_ij = (a_ik+d_ij)+c_ij;
     // std::cout << z_ij << "\n";
     // std::cout << compile_to_cin(z_ij) << "\n";
-    // nacho::backend::CINLowerer(compile_to_cin(z_ij), std::cout).lower_cin();
+    //nacho::backend::CINLowerer(compile_to_cin(z_ij), std::cout).lower_cin();
 
     a_ij = Tensor::make(coo_f32, "a");
-    Expr b_ij = Tensor::make(coo_f32, "b");
-    c_ij = Tensor::make(dcsr_f32, "c");
-    Expr a_ijk = Tensor::make(csf_f32, "a");
-    Expr b_ijk = Tensor::make(csf_f32, "b");
+    Expr b_ij = Tensor::make(csr_f32, "b");
+    // c_ij = Tensor::make(dcsr_f32, "c");
+    // Expr a_ijk = Tensor::make(csf_f32, "a");
+    // Expr b_ijk = Tensor::make(csf_f32, "b");
 
-    Expr z_ijk = a_ijk + b_ijk;
+    Expr z_ijk = a_ij + b_ij;
     //std::cout << compile_to_cin(z_ijk) << "\n";
     nacho::backend::CINLowerer(compile_to_cin(z_ijk), std::cout).lower_cin();
     // {

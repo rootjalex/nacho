@@ -483,22 +483,55 @@ namespace nacho {
 
         llir::lStmt make_eval(const TensorLevelNum level,
                               const llir::lType &index_t, bool is_last_loop) {
-                            
+            std::vector<llir::lStmt> stmts;
+            std::map<TensorLevelNum, llir::lExpr> pos_vars;
+            for(TensorLevelNum l = BEFORE_FIRST_LEVEL + 1; l < TensorLevelNum(level); ++l) {
+                pos_vars[l] = get_iter(l);
+            }
+            
             auto val = get_coord(level, index_t);
             if(is_sparse(level) && !is_last_loop) {
                 // if the value is outside the bounds then use max possible val for the level (size val) which
                 // is never possible. We terminate iteration early if coordinate is evaluated to this value
-                std::map<TensorLevelNum, llir::lExpr> pos_vars;
-                for(TensorLevelNum l = BEFORE_FIRST_LEVEL + 1; l < TensorLevelNum(level); ++l) {
-                    pos_vars[l] = get_iter(l);
-                }
                 val = llir::lSelect::make(
                     (llir::lVar::make(index_t, get_iter_name(level)) > this->get_bound(level, true, pos_vars)),
                     get_size_field(level),
                     std::move(val)
                 );
             }
-            return llir::Declare::make(index_t, get_coord_name(level), val);
+            stmts.push_back(llir::Declare::make(index_t, get_coord_name(level), val));
+            return llir::Sequence::make(std::move(stmts));
+        }
+
+        llir::lStmt make_seg_end(const TensorLevelNum level, const llir::lExpr index_value) {
+            std::vector<llir::lStmt> stmts;
+            std::map<TensorLevelNum, llir::lExpr> pos_vars;
+            for(TensorLevelNum l = BEFORE_FIRST_LEVEL + 1; l < TensorLevelNum(level); ++l) {
+                pos_vars[l] = get_iter(l);
+            }
+            internal_assert(is_sparse(level) && !is_unique(level));
+
+            llir::lExpr binary_search_call = llir::lFunctionCall::make(
+                "binary_search_ub",
+                std::vector<llir::lExpr>{
+                    get_indices_field(level),
+                    index_value,
+                    get_iter(level),
+                    get_bound(level, true, pos_vars)
+                }
+            );
+            stmts.push_back(
+                llir::Declare::make(
+                    index_t, get_seg_end_name(level),
+                    llir::lSelect::make(
+                        index_value != get_coord_var(level, index_t),
+                        get_iter(level),
+                        binary_search_call
+                    )
+                )
+            );
+        
+            return llir::Sequence::make(std::move(stmts));
         }
 
         llir::lStmt make_inc(const TensorLevelNum level,
@@ -512,6 +545,22 @@ namespace nacho {
                     ? (crd == llir::lVar::make(index_t, tensor_level_name(level)))
                     : llir::lConst::make(1);
             return llir::Accumulate::make(std::move(iter), std::move(value));
+        }
+
+        llir::lStmt make_seg_inc(const TensorLevelNum level,
+                                 const llir::lType &index_t) const {
+            internal_assert(is_sparse(level) && !is_unique(level));
+            llir::lExpr iter = get_iter_var(level, index_t);
+            llir::lExpr crd = get_coord_var(level, index_t);
+            llir::lExpr seg_end = get_seg_end(level);
+            return llir::Store::make(
+                iter,
+                llir::lSelect::make(
+                    (crd == llir::lVar::make(index_t, tensor_level_name(level))),
+                    seg_end,
+                    iter
+                )
+            );
         }
 
         Seq get_index_sequence(const TensorLevelNum level) const {
