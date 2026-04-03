@@ -195,7 +195,7 @@ setup_runtime() {
     fi
 
     info "Installing Python dependencies..."
-    pip install --quiet numpy pandas matplotlib tqdm pytest-forked
+    pip install --quiet numpy pandas matplotlib tqdm pytest-xdist
 
     # Install PyTorch with CUDA support
     info "Installing PyTorch (CUDA)..."

@@ -7,6 +7,7 @@
 #include <cuco/static_map.cuh>
 #include <thrust/device_vector.h>
 #include <thrust/sort.h>
+#include <thrust/distance.h>
 #include <iostream>
 #include <sstream>
 

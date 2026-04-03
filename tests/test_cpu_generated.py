@@ -723,7 +723,6 @@ class TestDcsrAdd:
         expected = np.array([[5.0, 7.0], [9.0, 0.0]], dtype=np.float32)
         np.testing.assert_allclose(got, expected, rtol=1e-5, atol=1e-6)
 
-    @_xfail_codegen
     def test_no_overlap_rows(self):
         r_ri, r_ro, r_ci, r_val = call_dcsr_add(
             [0], [0, 1], [0], [1.0], 5, 5,
@@ -735,7 +734,6 @@ class TestDcsrAdd:
         expected[2, 1] = 2.0
         np.testing.assert_allclose(got, expected, rtol=1e-5, atol=1e-6)
 
-    @_xfail_codegen
     @pytest.mark.parametrize("seed", range(20))
     def test_random_correctness(self, seed):
         rng = random.Random(seed)
@@ -773,7 +771,6 @@ class TestTcsfAdd:
         expected[0, 1, 0] = 4.0
         np.testing.assert_allclose(got, expected, rtol=1e-5, atol=1e-6)
 
-    @_xfail_codegen
     def test_no_overlap(self):
         r = call_tcsf_add(
             [0], [0, 1], [0], [0, 1], [0], [1.0], (3, 3, 3),
@@ -786,7 +783,6 @@ class TestTcsfAdd:
         expected[1, 1, 2] = 2.0
         np.testing.assert_allclose(got, expected, rtol=1e-5, atol=1e-6)
 
-    @_xfail_codegen
     @pytest.mark.parametrize("seed", range(20))
     def test_random_correctness(self, seed):
         rng = random.Random(seed)
