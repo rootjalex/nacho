@@ -18,7 +18,7 @@ struct lStmt;
 
 // Types (for declarations)
 // TODO: make this complete
-enum class lTypeEnum { Generic_t, Float_t, Int_t, Ptr_t, Tuple_t, Struct_t };
+enum class lTypeEnum { Generic_t, Float_t, Int_t, Ptr_t, Tuple_t, Struct_t, Bool_t };
 
 // Expressions
 enum class lExprEnum {
@@ -199,6 +199,12 @@ struct Ptr_t : lTypeNode<Ptr_t> {
     static lType make(lType type);
 
     static const lTypeEnum node_type = lTypeEnum::Ptr_t;
+};
+
+struct Bool_t : lTypeNode<Bool_t> {
+    static lType make();
+
+    static const lTypeEnum node_type = lTypeEnum::Bool_t;
 };
 
 struct Tuple_t : lTypeNode<Tuple_t> {

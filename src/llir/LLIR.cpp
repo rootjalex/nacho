@@ -36,6 +36,10 @@ lType Ptr_t::make(lType type) {
     return node;
 }
 
+lType Bool_t::make() {
+    return new Bool_t;
+}
+
 lType Tuple_t::make(std::vector<lType> types) {
     internal_assert(!types.empty()) << "Cannot make empty tuple type.";
     for (const auto &t : types) {

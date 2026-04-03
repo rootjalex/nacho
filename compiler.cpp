@@ -44,7 +44,7 @@ static void compile_and_lower(const std::string &name, Expr expr,
 
 // a ∩ b  (element-wise multiply, single phase)
 void test_sparse_vec_mul() {
-    Format s = Format::ordered({{"i", LevelFormat::Compressed}});
+    Format s = Format::ordered({{"i", LevelFormat::Compressed_unique}});
     TensorType s_f32(s, dType::Float32);
 
     Expr a = Tensor::make(s_f32, "a");
@@ -54,7 +54,7 @@ void test_sparse_vec_mul() {
 
 // a ∪ b  (element-wise add, single phase)
 void test_sparse_vec_add() {
-    Format s = Format::ordered({{"i", LevelFormat::Compressed}});
+    Format s = Format::ordered({{"i", LevelFormat::Compressed_unique}});
     TensorType s_f32(s, dType::Float32);
 
     Expr a = Tensor::make(s_f32, "a");
@@ -65,7 +65,7 @@ void test_sparse_vec_add() {
 // Runtime parity: runtime/src/sparse_vector/sparse_vector.cu
 // (A+B)*C — union then intersect, fused 3-operand expression.
 void test_sparse_vec_apb_c() {
-    Format s = Format::ordered({{"i", LevelFormat::Compressed}});
+    Format s = Format::ordered({{"i", LevelFormat::Compressed_unique}});
     TensorType s_f32(s, dType::Float32);
 
     Expr a = Tensor::make(s_f32, "a");
@@ -78,7 +78,7 @@ void test_sparse_vec_apb_c() {
 // Runtime parity: runtime/src/sparse_vector/sp_ab_c.cu
 // (A*B)+C — intersect then union, fused 3-operand expression.
 void test_sparse_vec_ab_pc() {
-    Format s = Format::ordered({{"i", LevelFormat::Compressed}});
+    Format s = Format::ordered({{"i", LevelFormat::Compressed_unique}});
     TensorType s_f32(s, dType::Float32);
 
     Expr a = Tensor::make(s_f32, "a");
@@ -95,8 +95,30 @@ void test_sparse_vec_ab_pc() {
 // Element-wise multiply: A ∩ B  (multi-phase: i then j)
 void test_dcsr_mul() {
     Format dcsr = Format::ordered({
-        {"i", LevelFormat::Compressed},
-        {"j", LevelFormat::Compressed},
+        {"i", LevelFormat::Compressed_unique},
+        {"j", LevelFormat::Compressed_unique},
+    });
+
+    Format csf = Format::ordered({
+        {"i", LevelFormat::Compressed_unique},
+        {"j", LevelFormat::Compressed_unique},
+        {"k", LevelFormat::Compressed_unique},
+    });
+
+    Format coo = Format::ordered({
+        {"i", LevelFormat::Compressed_non_unique},
+        {"j", LevelFormat::Singleton_unique},
+    });
+
+    Format coo_2 = Format::ordered({
+        {"j", LevelFormat::Compressed_non_unique},
+        {"k", LevelFormat::Singleton_unique},
+    });
+
+    Format coo3d = Format::ordered({
+        {"i", LevelFormat::Compressed_non_unique},
+        {"j", LevelFormat::Singleton_non_unique},
+        {"k", LevelFormat::Singleton_unique},
     });
     TensorType dcsr_f32(dcsr, dType::Float32);
 
@@ -109,8 +131,8 @@ void test_dcsr_mul() {
 // Runtime parity: runtime/src/csr_add/csr_add.cu (DCSR variant)
 void test_dcsr_add() {
     Format dcsr = Format::ordered({
-        {"i", LevelFormat::Compressed},
-        {"j", LevelFormat::Compressed},
+        {"i", LevelFormat::Compressed_unique},
+        {"j", LevelFormat::Compressed_unique},
     });
     TensorType dcsr_f32(dcsr, dType::Float32);
 
@@ -123,7 +145,7 @@ void test_dcsr_add() {
 void test_csr_add() {
     Format csr = Format::ordered({
         {"i", LevelFormat::Dense},
-        {"j", LevelFormat::Compressed},
+        {"j", LevelFormat::Compressed_unique},
     });
     TensorType csr_f32(csr, dType::Float32);
 
@@ -140,9 +162,9 @@ void test_csr_add() {
 // This exercises non-innermost sparse row/plane completion guards.
 void test_tcsf_add() {
     Format tcsf = Format::ordered({
-        {"i", LevelFormat::Compressed},
-        {"j", LevelFormat::Compressed},
-        {"k", LevelFormat::Compressed},
+        {"i", LevelFormat::Compressed_unique},
+        {"j", LevelFormat::Compressed_unique},
+        {"k", LevelFormat::Compressed_unique},
     });
     TensorType tcsf_f32(tcsf, dType::Float32);
 
@@ -158,13 +180,13 @@ void test_tcsf_add() {
 void test_format_inference() {
     Format csr = Format::ordered({
         {"i", LevelFormat::Dense},
-        {"j", LevelFormat::Compressed},
+        {"j", LevelFormat::Compressed_unique},
     });
     Format dcsr = Format::ordered({
-        {"i", LevelFormat::Compressed},
-        {"j", LevelFormat::Compressed},
+        {"i", LevelFormat::Compressed_unique},
+        {"j", LevelFormat::Compressed_unique},
     });
-    Format sparse = Format::ordered({{"i", LevelFormat::Compressed}});
+    Format sparse = Format::ordered({{"i", LevelFormat::Compressed_unique}});
     Format dense = Format::ordered({{"i", LevelFormat::Dense}});
 
     TensorType csr_f32(csr, dType::Float32);
@@ -214,7 +236,7 @@ void test_format_inference() {
 // ===========================================================================
 
 void test_lattice() {
-    Format sparse = Format::ordered({{"i", LevelFormat::Compressed}});
+    Format sparse = Format::ordered({{"i", LevelFormat::Compressed_unique}});
     Format dense = Format::ordered({{"i", LevelFormat::Dense}});
 
     TensorType sparse_f32(sparse, dType::Float32);
@@ -255,7 +277,7 @@ void test_lattice() {
 // ===========================================================================
 
 void test_locator_optimization() {
-    Format sparse = Format::ordered({{"i", LevelFormat::Compressed}});
+    Format sparse = Format::ordered({{"i", LevelFormat::Compressed_unique}});
     Format dense = Format::ordered({{"i", LevelFormat::Dense}});
 
     TensorType sparse_f32(sparse, dType::Float32);
@@ -302,17 +324,17 @@ using ExprBuilder = std::function<Expr()>;
 // clang-format off
 const std::map<std::string, ExprBuilder> EXPRESSIONS = {
     {"sparse_vec_mul", []() {
-        Format s = Format::ordered({{"i", LevelFormat::Compressed}});
+        Format s = Format::ordered({{"i", LevelFormat::Compressed_unique}});
         TensorType s_f32(s, dType::Float32);
         return Tensor::make(s_f32, "a") * Tensor::make(s_f32, "b");
     }},
     {"sparse_vec_add", []() {
-        Format s = Format::ordered({{"i", LevelFormat::Compressed}});
+        Format s = Format::ordered({{"i", LevelFormat::Compressed_unique}});
         TensorType s_f32(s, dType::Float32);
         return Tensor::make(s_f32, "a") + Tensor::make(s_f32, "b");
     }},
     {"sparse_vec_apb_c", []() {
-        Format s = Format::ordered({{"i", LevelFormat::Compressed}});
+        Format s = Format::ordered({{"i", LevelFormat::Compressed_unique}});
         TensorType s_f32(s, dType::Float32);
         Expr a = Tensor::make(s_f32, "a");
         Expr b = Tensor::make(s_f32, "b");
@@ -320,7 +342,7 @@ const std::map<std::string, ExprBuilder> EXPRESSIONS = {
         return (a + b) * c;
     }},
     {"sparse_vec_ab_pc", []() {
-        Format s = Format::ordered({{"i", LevelFormat::Compressed}});
+        Format s = Format::ordered({{"i", LevelFormat::Compressed_unique}});
         TensorType s_f32(s, dType::Float32);
         Expr a = Tensor::make(s_f32, "a");
         Expr b = Tensor::make(s_f32, "b");
@@ -329,16 +351,16 @@ const std::map<std::string, ExprBuilder> EXPRESSIONS = {
     }},
     {"dcsr_mul", []() {
         Format dcsr = Format::ordered({
-            {"i", LevelFormat::Compressed},
-            {"j", LevelFormat::Compressed},
+            {"i", LevelFormat::Compressed_unique},
+            {"j", LevelFormat::Compressed_unique},
         });
         TensorType dcsr_f32(dcsr, dType::Float32);
         return Tensor::make(dcsr_f32, "A") * Tensor::make(dcsr_f32, "B");
     }},
     {"dcsr_add", []() {
         Format dcsr = Format::ordered({
-            {"i", LevelFormat::Compressed},
-            {"j", LevelFormat::Compressed},
+            {"i", LevelFormat::Compressed_unique},
+            {"j", LevelFormat::Compressed_unique},
         });
         TensorType dcsr_f32(dcsr, dType::Float32);
         return Tensor::make(dcsr_f32, "A") + Tensor::make(dcsr_f32, "B");
@@ -346,16 +368,16 @@ const std::map<std::string, ExprBuilder> EXPRESSIONS = {
     {"csr_add", []() {
         Format csr = Format::ordered({
             {"i", LevelFormat::Dense},
-            {"j", LevelFormat::Compressed},
+            {"j", LevelFormat::Compressed_unique},
         });
         TensorType csr_f32(csr, dType::Float32);
         return Tensor::make(csr_f32, "A") + Tensor::make(csr_f32, "B");
     }},
     {"tcsf_add", []() {
         Format tcsf = Format::ordered({
-            {"i", LevelFormat::Compressed},
-            {"j", LevelFormat::Compressed},
-            {"k", LevelFormat::Compressed},
+            {"i", LevelFormat::Compressed_unique},
+            {"j", LevelFormat::Compressed_unique},
+            {"k", LevelFormat::Compressed_unique},
         });
         TensorType tcsf_f32(tcsf, dType::Float32);
         return Tensor::make(tcsf_f32, "A") + Tensor::make(tcsf_f32, "B");

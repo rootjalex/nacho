@@ -60,6 +60,7 @@ struct Printer : public Visitor {
     virtual void visit(const llir::Ptr_t *) override;
     virtual void visit(const llir::Tuple_t *) override;
     virtual void visit(const llir::Struct_t *) override;
+    virtual void visit(const llir::Bool_t *) override;
 
     virtual void print(const llir::lExpr &);
     virtual void print_no_parens(const llir::lExpr &);

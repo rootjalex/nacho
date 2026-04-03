@@ -69,6 +69,17 @@ namespace nacho {
     struct TensorLowerer {
 
         TensorType tensor_type;
+
+        inline std::string
+        get_offsets_field_name(const std::string &index) const {
+            return "dim_" + index + "_offsets";
+        }
+
+        inline std::string get_offsets_field_name(const TensorLevelNum level) const {
+            return get_offsets_field_name(tensor_level_name(level));
+        }
+
+        public:
         std::string tensor_name;
         std::vector<std::string> all_loop_indices;
         bool is_result_tensor;
@@ -125,10 +136,6 @@ namespace nacho {
 
         inline std::string get_struct_name() const {
             return tensor_name + "_tensor_format";
-        }
-
-        inline std::string get_index_struct_name() const {
-            return tensor_name + "_tensor_index";
         }
 
         inline std::string get_values_field_name() const {
@@ -188,10 +195,6 @@ namespace nacho {
             );
         }
 
-        inline std::string
-        get_offsets_field_name(const std::string &index) const {
-            return "dim_" + index + "_offsets";
-        }
 
         inline llir::lExpr get_offsets_field(const std::string &index) const {
             return llir::lFieldAccess::make(
@@ -200,9 +203,7 @@ namespace nacho {
             );
         }
 
-        inline std::string get_offsets_field_name(const TensorLevelNum level) const {
-            return get_offsets_field_name(tensor_level_name(level));
-        }
+        
 
         inline llir::lExpr get_offsets_field(const TensorLevelNum level) const {
             return llir::lFieldAccess::make(
@@ -240,8 +241,7 @@ namespace nacho {
 
         inline std::string get_type_suffix(const TensorLevelNum level) const {
             // TODO: standardize the "_p" stuff somewhere.
-            return tensor_type.format.levels[level.get()].format ==
-                           LevelFormat::Compressed
+            return is_sparse(level)
                        ? "_p"
                        : "";
         }
@@ -285,11 +285,6 @@ namespace nacho {
 
 
 
-        // Lower the tensor index definition to LLIR.
-        // This struct defines an object to specify the values of different
-        // levels to index into the tensor.
-        llir::lType lower_tensor_index_definition();
-
         inline llir::lType get_lType_from_dType(dType dtype) {
             switch (dtype) {
             case dType::Float32:
@@ -313,6 +308,48 @@ namespace nacho {
 
         inline bool is_sparse(const TensorLevelNum level) const {
             return is_sparse_format(tensor_type.format.levels[level.get()].format);
+        }
+
+        inline bool is_singleton(std::string index) const {
+            internal_assert(tensor_type.format.level_exists(index)) << "Index " << index << " does not exist in tensor format levels. Tensor " << tensor_name;
+            return is_singleton_format(tensor_type.format.lvlfmt_of(index));
+        }
+
+        inline bool is_singleton(LoopNum loop_num) const {
+            internal_assert(tensor_level_exists(loop_num)) << "Level " << loop_num.get() << " does not exist in tensor format levels.";
+            return is_singleton_format(tensor_type.format.levels[loop_num_to_tensor_level(loop_num).get()].format);
+        }
+
+        inline bool is_singleton(const TensorLevelNum level) const {
+            return is_singleton_format(tensor_type.format.levels[level.get()].format);
+        }
+
+        inline bool is_unique(std::string index) const {
+            internal_assert(tensor_type.format.level_exists(index)) << "Index " << index << " does not exist in tensor format levels. Tensor " << tensor_name;
+            return is_unique_format(tensor_type.format.lvlfmt_of(index));
+        }
+
+        inline bool is_unique(LoopNum loop_num) const {
+            internal_assert(tensor_level_exists(loop_num)) << "Level " << loop_num.get() << " does not exist in tensor format levels.";
+            return is_unique_format(tensor_type.format.levels[loop_num_to_tensor_level(loop_num).get()].format);
+        }
+
+        inline bool is_unique(const TensorLevelNum level) const {
+            return is_unique_format(tensor_type.format.levels[level.get()].format);
+        }
+
+        inline bool is_compressed(std::string index) const {
+            internal_assert(tensor_type.format.level_exists(index)) << "Index " << index << " does not exist in tensor format levels. Tensor " << tensor_name;
+            return is_compressed_format(tensor_type.format.lvlfmt_of(index));
+        }
+
+        inline bool is_compressed(LoopNum loop_num) const {
+            internal_assert(tensor_level_exists(loop_num)) << "Level " << loop_num.get() << " does not exist in tensor format levels.";
+            return is_compressed_format(tensor_type.format.levels[loop_num_to_tensor_level(loop_num).get()].format);
+        }
+
+        inline bool is_compressed(const TensorLevelNum level) const {
+            return is_compressed_format(tensor_type.format.levels[level.get()].format);
         }
 
         inline std::string loop_name(const LoopNum loop_num) const {
@@ -339,6 +376,10 @@ namespace nacho {
             return "end_" + get_iterator_suffix(forall_index);
         }
 
+        inline std::string get_seg_end_name(const std::string &forall_index) const {
+            return "seg_end_" + get_iterator_suffix(forall_index);
+        }
+
         inline std::string get_iter_name(const TensorLevelNum level) const {
             return get_iter_name(tensor_level_name(level));
         }
@@ -353,6 +394,10 @@ namespace nacho {
 
         inline std::string get_end_name(const TensorLevelNum level) const {
             return get_end_name(tensor_level_name(level));
+        }
+
+        inline std::string get_seg_end_name(const TensorLevelNum level) const {
+            return get_seg_end_name(tensor_level_name(level));
         }
 
         inline llir::lExpr get_iter(const std::string &forall_index) const {
@@ -371,6 +416,10 @@ namespace nacho {
             return llir::lVar::make(index_t, get_end_name(forall_index));
         }
 
+        inline llir::lExpr get_seg_end(const std::string &forall_index) const {
+            return llir::lVar::make(index_t, get_seg_end_name(forall_index));
+        }
+
         inline llir::lExpr get_iter(const TensorLevelNum level) const {
             return llir::lVar::make(index_t, get_iter_name(level));
         }
@@ -385,6 +434,10 @@ namespace nacho {
 
         inline llir::lExpr get_end(const TensorLevelNum level) const {
             return llir::lVar::make(index_t, get_end_name(level));
+        }
+
+        inline llir::lExpr get_seg_end(const TensorLevelNum level) const {
+            return llir::lVar::make(index_t, get_seg_end_name(level));
         }
 
         inline std::string get_coord_name(const TensorLevelNum level) const {
@@ -428,19 +481,23 @@ namespace nacho {
         }
 
         llir::lStmt make_eval(const TensorLevelNum level,
-                              const llir::lType &index_t, bool is_loop_before_prev_intersection) const {
-
+                              const llir::lType &index_t, bool is_last_loop) {
+                            
             auto val = get_coord(level, index_t);
-            if(is_sparse(level) && is_loop_before_prev_intersection) {
-                // If this loop is before the previous intersection, then we are going to iterate only over the result tensor index. So if this level is sparse, we need to check if the coordinate is within bounds of the size of the dimension.
+            if(is_sparse(level) && !is_last_loop) {
+                // if the value is outside the bounds then use max possible val for the level (size val) which
+                // is never possible. We terminate iteration early if coordinate is evaluated to this value
+                std::map<TensorLevelNum, llir::lExpr> pos_vars;
+                for(TensorLevelNum l = BEFORE_FIRST_LEVEL + 1; l < TensorLevelNum(level); ++l) {
+                    pos_vars[l] = get_iter(l);
+                }
                 val = llir::lSelect::make(
-                    llir::lVar::make(index_t, get_iter_name(level))!=llir::lConst::make(-1),
-                    std::move(val),
-                    get_size_field(level)
+                    (llir::lVar::make(index_t, get_iter_name(level)) > this->get_bound(level, true, pos_vars)),
+                    get_size_field(level),
+                    std::move(val)
                 );
             }
-            return llir::Declare::make(index_t, get_coord_name(level),
-                                       get_coord(level, index_t));
+            return llir::Declare::make(index_t, get_coord_name(level), val);
         }
 
         llir::lStmt make_inc(const TensorLevelNum level,

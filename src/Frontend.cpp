@@ -141,6 +141,9 @@ Expr Tensor::make(TensorType type, std::string name) {
     internal_assert(!name.empty()) << "Cannot make Tensor with empty name.";
     internal_assert(type.format.bc_levels.empty())
         << "Tensor cannot be made with a type with unordered levels: " << name;
+    auto last_lvl_fmt = type.format.levels[type.format.levels.size() - 1].format;
+    internal_assert(!is_sparse_format(last_lvl_fmt) || is_unique_format(last_lvl_fmt))
+        << "Last Tensor level format cannot be non-unique " << name;
     Tensor *node = new Tensor;
     node->type = std::move(type);
     node->name = std::move(name);

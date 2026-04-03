@@ -16,8 +16,20 @@ std::ostream &operator<<(std::ostream &os, const Level &lvl) {
         os << "D";
         break;
     }
-    case LevelFormat::Compressed: {
-        os << "C";
+    case LevelFormat::Compressed_non_unique: {
+        os << "C(NU)";
+        break;
+    }
+    case LevelFormat::Compressed_unique: {
+        os << "C(U)";
+        break;
+    }
+    case LevelFormat::Singleton_non_unique: {
+        os << "S(NU)";
+        break;
+    }
+    case LevelFormat::Singleton_unique: {
+        os << "S(U)";
         break;
     }
     }
@@ -366,6 +378,10 @@ void Printer::visit(const llir::Tuple_t *node) {
         print(node->types[i]);
     }
     os << ">";
+}
+
+void Printer::visit(const llir::Bool_t *node) {
+    os << "bool";
 }
 
 void Printer::visit(const llir::Struct_t *node) {

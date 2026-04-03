@@ -106,7 +106,8 @@ namespace backend {
             sparse_intersection_levels.push_back(loop_order.size()-1);
         }
 
-        this->lower_binary_search_function();
+        this->lower_binary_search_function(true);
+        this->lower_binary_search_function(false);
         this->lower_struct_definitions(sparse_intersection_levels[sparse_intersection_levels.size()-2]);
 
         for(int i=0; i< (int)sparse_intersection_levels.size()-1;i++) {
@@ -237,18 +238,18 @@ namespace backend {
             printer.print(BaseLowerer.lower_result_per_thread_count_struct());
         }
 
-        auto result_operand_pos_map = lower_result_pos_to_operand_pos_map_struct(last_sparse_intersection);
+        auto result_operand_pos_map = lower_result_pos_to_operand_pos_map_struct(LoopNum(last_sparse_intersection));
         if(result_operand_pos_map.get() != nullptr) {
             printer.print(result_operand_pos_map);
         }
     }
 
-    llir::lType CINLowerer::lower_result_pos_to_operand_pos_map_struct(int last_sparse_intersection) {
+    llir::lType CINLowerer::lower_result_pos_to_operand_pos_map_struct(LoopNum last_sparse_intersection) {
         std::vector<std::string> generics = {"index_t"};
         std::vector<std::pair<std::string, llir::lType>> fields;
         auto forall_list = get_forall_list(); auto empty_map = std::map<std::string, TensorLowerer>();
         BaseKernelLowerer BaseLowerer(operand_tensors, result_tensor, empty_map, forall_list, BEFORE_FIRST_LOOP, BEFORE_FIRST_LOOP, BEFORE_FIRST_LOOP, reductionLoop);
-        for(int level=0; level<=last_sparse_intersection;level++) {
+        for(int level=0; level<=last_sparse_intersection.get();level++) {
             if(level >= (int)forall_list.size()-1) {
                 continue;
             }
@@ -369,7 +370,7 @@ namespace backend {
     }
 
 
-    void CINLowerer::lower_binary_search_function() {
+    void CINLowerer::lower_binary_search_function(bool is_upper_bound) {
         std::vector<std::string> generics = {"index_t"};
 
         std::vector<llir::Function::Attribute> attributes = {
@@ -380,7 +381,7 @@ namespace backend {
         std::string name;
         llir::lStmt body;
 
-        name = "binary_search";
+        name = "binary_search_" + (std::string)(is_upper_bound ? "ub" : "lb");
 
         ret_type = index_t;
 
@@ -401,12 +402,13 @@ namespace backend {
         llir::lExpr end_var = llir::lVar::make(index_t, "end_index");
         llir::lExpr arr_var = llir::lVar::make(llir::Ptr_t::make(index_t), "arr");
         llir::lExpr target_value_var = llir::lVar::make(index_t, "target_value");
+        llir::lExpr mid_expr = start_var + (((end_var - start_var) + 1) / 2);
 
         stmts.emplace_back(
             llir::Declare::make(
                 index_t,
                 "mid",
-                start_var + (((end_var - start_var) + 1) / 2)
+                mid_expr
             )
         );  
         std::vector<llir::lStmt> while_stmts;
@@ -414,15 +416,30 @@ namespace backend {
         while_stmts.emplace_back(
             llir::Store::make(
                 mid_var,
-                start_var + (((end_var - start_var) + 1) / 2)
+                mid_expr
             )
         );
 
-        while_stmts.emplace_back(llir::IfElse::make(
-            arr_var[mid_var] <= target_value_var,
-            llir::Store::make(start_var, mid_var),
-            llir::Store::make(end_var, mid_var - 1)
-        ));
+        if(is_upper_bound) {
+            while_stmts.emplace_back(llir::IfElse::make(
+                arr_var[mid_var] <= target_value_var,
+                llir::Store::make(start_var, mid_var),
+                llir::Store::make(end_var, mid_var - 1)
+            ));
+        } else {
+            while_stmts.emplace_back(
+                llir::IfElse::make(
+                    arr_var[mid_var] < target_value_var,
+                    llir::Store::make(start_var, mid_var),
+                    llir::IfElse::make(
+                    arr_var[mid_var] > target_value_var,
+                    llir::Store::make(end_var, mid_var - 1),
+                    llir::Sequence::make({
+                        llir::IfElse::make(start_var == mid_var-1, llir::Return::make(mid_var), nullptr),
+                        llir::Store::make(end_var, mid_var),
+                    })
+            )));
+        }
 
         stmts.emplace_back(
             llir::While::make(
@@ -434,7 +451,7 @@ namespace backend {
         stmts.emplace_back(
             llir::Store::make(
                 mid_var,
-                start_var + (((end_var - start_var) + 1) / 2)
+                mid_expr
             )
         );
         

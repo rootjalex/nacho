@@ -17,19 +17,19 @@ llir::lType TensorLowerer::lower_tensor_struct_definition() const {
     std::vector<std::pair<std::string, llir::lType>> data_fields;
     data_fields.emplace_back("nnz", index_t);
     data_fields.emplace_back(get_values_field_name(), llir::Ptr_t::make(value_t));
-    for (int i = tensor_type.format.levels.size() - 1; i >= 0; i--) {
-        auto index = tensor_type.format.levels[i].index;
+    for (TensorLevelNum i = tensor_type.format.get_end_level()-1; i > BEFORE_FIRST_LEVEL; --i) {
+        auto index = tensor_level_name(i);
 
         // only dimensions with sparse format need separate fields for index and
         // offsets
         // TODO: This only handles compressed dimensions as of now
-        if (is_sparse_format(tensor_type.format.lvlfmt_of(index))) {
+        if (is_sparse(i)) {
             data_fields.emplace_back(get_indices_field_name(index),
                                      llir::Ptr_t::make(index_t));
             data_fields.emplace_back(get_length_field_name(index), index_t);
             // offsets field is not required if the outermost dimension is
-            // sparse
-            if (i != 0)
+            // compressed
+            if (is_compressed(i) && i != BEFORE_FIRST_LEVEL+1)
                 data_fields.emplace_back(get_offsets_field_name(index),
                                          llir::Ptr_t::make(index_t));
         }
@@ -110,10 +110,25 @@ llir::lExpr TensorLowerer::get_bound(TensorLevelNum tensor_level,
     }
 
     // this level is sparse
+    if(tensor_level==BEFORE_FIRST_LEVEL+1) {
+        if(upper_bound) {
+            return get_length_field(tensor_level) - 1;
+        } else {
+            return llir::lConst::make(0);
+        }
+    }
 
     llir::lExpr offset = get_level_indexing_expression(tensor_level, upper_bound, pos_vars);
-    llir::lExpr array = get_offsets_field(tensor_level_name(tensor_level));
-    return upper_bound ? array[offset] - 1 : array[offset];
+    if (is_compressed(tensor_level)) {
+        llir::lExpr offset = get_level_indexing_expression(tensor_level, upper_bound, pos_vars);
+        llir::lExpr array = get_offsets_field(tensor_level_name(tensor_level));
+        return upper_bound ? array[offset] - 1 : array[offset];
+    } else if (is_singleton(tensor_level)) {
+        // upperbound and lower bound is always the same for a singleton level
+        return get_level_indexing_expression(tensor_level, false, pos_vars);
+    } else {
+        internal_assert(false) << "Unsupported format for level " << tensor_level.get() << " in tensor " << tensor_name;
+    }
 }
 
 
@@ -235,17 +250,32 @@ TensorLowerer::lower_work_function(std::vector<std::string> partial_loop_order,
     std::string name = get_work_function_name(all_loops_string, partial_loop_order[target_loop_num.get()]);
 
     // Create position variables map for each tensor level, used for get_sparse_level_indexing_expression
-    std::map<TensorLevelNum, llir::lExpr> pos_vars;
+    std::map<TensorLevelNum, llir::lExpr> pos_vars_start, pos_vars_end;
     for(TensorLevelNum i = BEFORE_FIRST_LEVEL + 1; i <= last_tensor_level_before_target_loop; ++i) {
         if(is_sparse(i)) {
-            pos_vars[i] = llir::lVar::make(index_t, loop_name(tensor_level_to_loop_num(i)) + "_p");
+            pos_vars_start[i] = llir::lVar::make(index_t, loop_name(tensor_level_to_loop_num(i)) + "_p");
+            pos_vars_end[i] = llir::lVar::make(index_t, loop_name(tensor_level_to_loop_num(i)) + "_p");
         } else {
-            pos_vars[i] = llir::lVar::make(index_t, loop_name(tensor_level_to_loop_num(i)));
+            pos_vars_start[i] = llir::lVar::make(index_t, loop_name(tensor_level_to_loop_num(i)));
+            pos_vars_end[i] = llir::lVar::make(index_t, loop_name(tensor_level_to_loop_num(i)));
+        }
+    }
+
+    // if last_tensor_level_before_target_loop is same as target loop
+    // and target_loop_value is not fixed then start var should be 0 for 
+    // the dense case. The value for sparse case does not matter, it will
+    // get overwritten to 'start' variable anyway in the logic that comes
+    // after. TODO: Seems hacky, make this code more readable
+    if(tensor_level_exists(target_loop_num) && !is_target_loop_value_fixed) {
+        internal_assert(tensor_level_to_loop_num(last_tensor_level_before_target_loop) == target_loop_num);
+        if(!is_sparse(target_loop_num)) {
+            pos_vars_start[last_tensor_level_before_target_loop] = llir::lConst::make((int64_t)0);
         }
     }
 
     for(TensorLevelNum i = last_tensor_level_before_target_loop + 1; i < last_tensor_level_in_partial_loop; ++i) {
-        pos_vars[i] = llir::lConst::make((int64_t)0);
+        pos_vars_start[i] = llir::lConst::make((int64_t)0);
+        pos_vars_end[i] = llir::lConst::make((int64_t)0);
     }
 
     std::vector<llir::lStmt> stmts;
@@ -268,15 +298,15 @@ TensorLowerer::lower_work_function(std::vector<std::string> partial_loop_order,
     // We need to iterate on all the nonzeros if last_tensor_level_before_target_loop == BEFORE_FIRST_LEVEL
     if (last_tensor_level_before_target_loop == BEFORE_FIRST_LEVEL) {
         // if there is no sparse dimension in the tensor in the given loop order(i.e all dense) just
-        // return 1 (as length of pos array for first dim is 1)
-        TensorLevelNum last_sparse_tensor_level_in_loop_order = tensor_type.format.get_prev_sparse_level(last_tensor_level_in_partial_loop + 1);
-        if (last_sparse_tensor_level_in_loop_order == BEFORE_FIRST_LEVEL) {
+        // return 1 (as length of pos array for zero dim is 1)
+        TensorLevelNum last_sparse_tensor_level_in_partial_loop = tensor_type.format.get_prev_sparse_level(last_tensor_level_in_partial_loop + 1);
+        if (last_sparse_tensor_level_in_partial_loop == BEFORE_FIRST_LEVEL) {
             count_expr = llir::lConst::make((int64_t)1);
         } else {
             // We iterate on the whole last sparse dim that comes before last_level_loop_place
-            count_expr = this->get_length_field(last_sparse_tensor_level_in_loop_order);
+            count_expr = this->get_length_field(last_sparse_tensor_level_in_partial_loop);
         }
-        for (TensorLevelNum i = last_sparse_tensor_level_in_loop_order + 1;
+        for (TensorLevelNum i = last_sparse_tensor_level_in_partial_loop + 1;
              i <= last_tensor_level_in_partial_loop; ++i) {
             count_expr = count_expr * this->get_size_field(i);
         }
@@ -293,38 +323,36 @@ TensorLowerer::lower_work_function(std::vector<std::string> partial_loop_order,
         auto next_sparse_level = tensor_type.format.get_next_sparse_level(last_sparse_tensor_level_before_target_loop);
         // target_dim is a level inside this tensor
         if (tensor_level_exists(target_loop_num) && !is_target_loop_value_fixed) {
-            // partial_loop_order[target_dim] == last_tensor_level_before_target_dim
-
+            // level(target_loop_num) == last_tensor_level_before_target_loop
+            internal_assert(tensor_level_to_loop_num(last_tensor_level_before_target_loop) == target_loop_num);
             // last_tensor_level_before_target_loop is also sparse
-            //if (last_tensor_level_before_target_loop == last_sparse_tensor_level_before_target_loop) {
-                start_expr = last_tensor_level_before_target_loop > BEFORE_FIRST_LEVEL+1 ? 
-                                this->get_offsets_field(last_sparse_tensor_level_before_target_loop)[
-                                    get_level_indexing_expression(
-                                        last_sparse_tensor_level_before_target_loop, false, pos_vars
-                                    )] : llir::lConst::make((int64_t)0);
-            // } else {
-            //     start_expr = get_level_indexing_expression(
-            //             min(next_sparse_level, last_tensor_level_in_partial_loop+1),false, pos_vars
-            //         );
-            // }
+            if (last_tensor_level_before_target_loop == last_sparse_tensor_level_before_target_loop) {
+                start_expr = get_level_indexing_expression(last_sparse_tensor_level_before_target_loop, false, pos_vars_start);
+                if(is_compressed(last_sparse_tensor_level_before_target_loop) && last_tensor_level_before_target_loop > BEFORE_FIRST_LEVEL+1)
+                    start_expr = this->get_offsets_field(last_sparse_tensor_level_before_target_loop)[start_expr];
+            } else {
+                start_expr = get_level_indexing_expression(
+                        min(next_sparse_level, last_tensor_level_in_partial_loop+1),false, pos_vars_start
+                    );
+            }
         } else {
             start_expr = get_level_indexing_expression(
-                        min(next_sparse_level, last_tensor_level_in_partial_loop+1),false, pos_vars
+                        min(next_sparse_level, last_tensor_level_in_partial_loop+1),false, pos_vars_start
                     );
         }
         end_expr = get_level_indexing_expression(
-                        min(next_sparse_level, last_tensor_level_in_partial_loop+1),true, pos_vars
+                        min(next_sparse_level, last_tensor_level_in_partial_loop+1),true, pos_vars_end
                     );
 
         stmts.emplace_back(llir::Declare::make(
             index_t, "end",
-            next_sparse_level < last_tensor_level_in_partial_loop + 1
+            next_sparse_level < last_tensor_level_in_partial_loop + 1 && is_compressed(next_sparse_level)
                 ? this->get_offsets_field(next_sparse_level)[end_expr]
                 : end_expr));
 
         stmts.emplace_back(llir::Declare::make(
             index_t, "start",
-            next_sparse_level < last_tensor_level_in_partial_loop + 1
+            next_sparse_level < last_tensor_level_in_partial_loop + 1 && is_compressed(next_sparse_level)
                 ? this->get_offsets_field(next_sparse_level)[start_expr]
                 : start_expr));
         
@@ -336,28 +364,27 @@ TensorLowerer::lower_work_function(std::vector<std::string> partial_loop_order,
             next_sparse_level =
                 tensor_type.format.get_next_sparse_level(next_sparse_level);
 
-            pos_vars[prev_sparse_level] = start_var;
+            pos_vars_start[prev_sparse_level] = start_var;
             auto start_expr = get_level_indexing_expression(
                     min(next_sparse_level, last_tensor_level_in_partial_loop+1),
-                    false, pos_vars
+                    false, pos_vars_start
                 );
 
-            
-            pos_vars[prev_sparse_level] = end_var;
+            pos_vars_end[prev_sparse_level] = end_var;
             end_expr = get_level_indexing_expression(
                     min(next_sparse_level, last_tensor_level_in_partial_loop+1),
-                    true, pos_vars
+                    false, pos_vars_end
                 );
 
             stmts.emplace_back(llir::Store::make(
                 end_var,
-                next_sparse_level < last_tensor_level_in_partial_loop + 1
+                next_sparse_level < last_tensor_level_in_partial_loop + 1 && is_compressed(next_sparse_level)
                     ? this->get_offsets_field(next_sparse_level)[end_expr]
                     : end_expr));
 
             stmts.emplace_back(llir::Store::make(
                 start_var,
-                next_sparse_level < last_tensor_level_in_partial_loop + 1
+                next_sparse_level < last_tensor_level_in_partial_loop + 1 && is_compressed(next_sparse_level)
                     ? this->get_offsets_field(next_sparse_level)[start_expr]
                     : start_expr));
         }
@@ -401,31 +428,6 @@ TensorLowerer::lower_work_function(std::vector<std::string> partial_loop_order,
                                 std::move(body));
 }
 
-
-
-// Lower the tensor index definition to LLIR.
-// This struct defines an object to specify the values of different levels to
-// index into the tensor.
-llir::lType TensorLowerer::lower_tensor_index_definition() {
-    llir::lType index_t = llir::Generic_t::make("index_t");
-    llir::lType value_t = llir::Generic_t::make("value_t");
-    std::vector<std::string> generics = {"index_t", "value_t"};
-
-    std::vector<std::pair<std::string, llir::lType>> fields;
-
-    for (const auto &level : tensor_type.format.levels) {
-        std::string field_name = level.index;
-
-        if (is_sparse_format(level.format)) {
-            field_name = field_name + "_p";
-        }
-
-        fields.emplace_back(field_name, index_t);
-    }
-
-    return llir::Struct_t::make(get_index_struct_name(), std::move(fields),
-                                std::move(generics));
-}
 
 } // namespace backend
 } // namespace nacho

@@ -222,9 +222,37 @@ Format add_formats(const Format &a, const Format &b) {
 
     return make_format(a, b, [](LevelFormat fa, LevelFormat fb) {
         // Dense if either is dense
-        if (fa == LevelFormat::Dense || fb == LevelFormat::Dense)
+        if (!is_sparse_format(fa) || !is_sparse_format(fb))
             return LevelFormat::Dense;
-        return LevelFormat::Compressed;
+        else {
+            // This may not be completely right
+            if(is_singleton_format(fa) && is_singleton_format(fb)) {
+                if(is_unique_format(fa) && is_unique_format(fb)) {
+                    return LevelFormat::Singleton_unique;
+                } else if(!is_unique_format(fa) && !is_unique_format(fb)) {
+                    return LevelFormat::Singleton_non_unique;
+                } else {
+                    return LevelFormat::Singleton_non_unique;
+                }
+            } else if(is_compressed_format(fa) && is_compressed_format(fb)) {
+                if(is_unique_format(fa) && is_unique_format(fb)) {
+                    return LevelFormat::Compressed_unique;
+                } else if(!is_unique_format(fa) && !is_unique_format(fb)) {
+                    return LevelFormat::Compressed_non_unique;
+                } else {
+                    return LevelFormat::Compressed_non_unique;
+                }
+            } else {
+                if(is_unique_format(fa) && is_unique_format(fb)) {
+                    return LevelFormat::Compressed_unique;
+                } else if(!is_unique_format(fa) && !is_unique_format(fb)) {
+                    return LevelFormat::Compressed_non_unique;
+                } else {
+                    return LevelFormat::Compressed_non_unique;
+                }
+            }
+
+        }
     });
 }
 
@@ -239,8 +267,40 @@ Format mul_formats(const Format &a, const Format &b) {
 
     return make_format(a, b, [](LevelFormat fa, LevelFormat fb) {
         // Sparse if either is sparse
-        if (fa == LevelFormat::Compressed || fb == LevelFormat::Compressed)
-            return LevelFormat::Compressed;
+        if (is_sparse_format(fa) || is_sparse_format(fb)) {
+            if(!is_sparse_format(fa)){
+                return fb;
+            }
+            if(!is_sparse_format(fb)){
+                return fa;
+            }
+            // This may not be completely right
+            if(is_singleton_format(fa) && is_singleton_format(fb)) {
+                if(is_unique_format(fa) && is_unique_format(fb)) {
+                    return LevelFormat::Singleton_unique;
+                } else if(!is_unique_format(fa) && !is_unique_format(fb)) {
+                    return LevelFormat::Singleton_non_unique;
+                } else {
+                    return LevelFormat::Singleton_unique;
+                }
+            } else if(is_compressed_format(fa) && is_compressed_format(fb)) {
+                if(is_unique_format(fa) && is_unique_format(fb)) {
+                    return LevelFormat::Compressed_unique;
+                } else if(!is_unique_format(fa) && !is_unique_format(fb)) {
+                    return LevelFormat::Compressed_non_unique;
+                } else {
+                    return LevelFormat::Compressed_unique;
+                }
+            } else {
+                if(is_unique_format(fa) && is_unique_format(fb)) {
+                    return LevelFormat::Singleton_unique;
+                } else if(!is_unique_format(fa) && !is_unique_format(fb)) {
+                    return LevelFormat::Singleton_non_unique;
+                } else {
+                    return LevelFormat::Singleton_unique;
+                }
+            }
+        }
         return LevelFormat::Dense;
     });
 }

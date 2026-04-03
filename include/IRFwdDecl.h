@@ -42,6 +42,7 @@ struct Float_t;
 struct Ptr_t;
 struct Tuple_t;
 struct Struct_t;
+struct Bool_t;
 
 struct lExpr;
 struct lOp;
