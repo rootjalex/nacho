@@ -587,11 +587,15 @@ namespace backend {
 
         std::vector<TensorLowerer> tensors_with_curr_dim;
         std::vector<TensorLowerer> tensors_with_curr_dim_sparse;
+        bool all_unique_levels = true;
         for(auto it : included_tensors) {
             if(it.second.tensor_level_exists(forall_idx)){
                 tensors_with_curr_dim.push_back(it.second);
                 if(it.second.is_sparse(forall_idx)) {
                     tensors_with_curr_dim_sparse.push_back(it.second);
+                    if(!it.second.is_unique(forall_idx)) {
+                        all_unique_levels = false;
+                    }
                 }
             } 
         }
@@ -599,17 +603,17 @@ namespace backend {
 
         // Optimization Case : Can Use normal balanced mergepath to optimize partitioning
         // When no dim is sparse the general scheme is best as that will require just 1 binary search.
-        if(!need_to_exclude_tensors_at_runtime && included_tensors.size()==2 && tensors_with_curr_dim_sparse.size()==2 && is_last_loop) {
+        if(!need_to_exclude_tensors_at_runtime && included_tensors.size()==2 && tensors_with_curr_dim_sparse.size()==2 && is_last_loop && all_unique_levels) {
             return lower_mergepath_partition_loop(loop_num, is_last_loop, tensors_with_curr_dim_sparse);
         }
 
         // Optimization Case: Can return partitions directly w/o binary search
-        if(!need_to_exclude_tensors_at_runtime && included_tensors.size()==1 && is_last_loop) {
+        if(!need_to_exclude_tensors_at_runtime && included_tensors.size()==1 && is_last_loop && all_unique_levels) {
             return lower_trivial_partition_loop(loop_num, is_last_loop);
         }
 
         // Optimization Case: Can use simple partitioning when no tensor has sparse dim at current level
-        if(!need_to_exclude_tensors_at_runtime && tensors_with_curr_dim_sparse.size() == 0 && is_last_loop) {
+        if(!need_to_exclude_tensors_at_runtime && tensors_with_curr_dim_sparse.size() == 0 && is_last_loop && all_unique_levels) {
             return lower_trivial_partition_loop(loop_num, is_last_loop);
         }   
 

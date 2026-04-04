@@ -224,7 +224,7 @@ Format add_formats(const Format &a, const Format &b) {
         if (!is_sparse_format(fa) || !is_sparse_format(fb))
             return LevelFormat::Dense;
         else {
-            // This may not be completely right
+            // TODO: This may not be completely right
             if(is_singleton_format(fa) && is_singleton_format(fb)) {
                 if(is_unique_format(fa) && is_unique_format(fb)) {
                     return LevelFormat::Singleton_unique;
@@ -273,7 +273,7 @@ Format mul_formats(const Format &a, const Format &b) {
             if(!is_sparse_format(fb)){
                 return fa;
             }
-            // This may not be completely right
+            // TODO: This may not be completely right
             if(is_singleton_format(fa) && is_singleton_format(fb)) {
                 if(is_unique_format(fa) && is_unique_format(fb)) {
                     return LevelFormat::Singleton_unique;

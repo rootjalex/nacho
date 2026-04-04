@@ -199,7 +199,9 @@ void Visitor::visit(const llir::For *node) {
         node->init.accept(this);
     }
     node->cond.accept(this);
-    node->inc.accept(this);
+    if (node->inc.defined()) {
+        node->inc.accept(this);
+    }
     node->body.accept(this);
 }
 

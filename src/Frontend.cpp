@@ -144,6 +144,13 @@ Expr Tensor::make(TensorType type, std::string name) {
     auto last_lvl_fmt = type.format.levels[type.format.levels.size() - 1].format;
     internal_assert(!is_sparse_format(last_lvl_fmt) || is_unique_format(last_lvl_fmt))
         << "Last Tensor level format cannot be non-unique " << name;
+    for(int i=0;i<type.format.levels.size()-1;i++) {
+        if(is_sparse_format(type.format.levels[i].format) && !is_unique_format(type.format.levels[i].format)) {
+            internal_assert(is_sparse_format(type.format.levels[i+1].format) && is_singleton_format(type.format.levels[i+1].format))
+                << "If a Tensor has a non-unique sparse level, subsequent level must be a singleton level: " << name;
+        }
+    }
+
     Tensor *node = new Tensor;
     node->type = std::move(type);
     node->name = std::move(name);
