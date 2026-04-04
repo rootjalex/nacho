@@ -893,11 +893,11 @@ llir::lStmt ComputeKernelLowerer::lower_loop(
 
             std::vector<llir::lStmt> stmts;
 
-            auto current_level = result_tensor.loop_num_to_tensor_level(result_tensor.get_loop_num(idx));
+            auto current_level = result_tensor.loop_num_to_tensor_level(loop_num);
             auto next_level = TensorLevelNum(current_level.get() + 1);
             // If this is not the innermost loop need to wrap the increment statement under a condition
             // also, add the offset calculation statement here
-            if(next_level != result_tensor.end_tensor_level() && result_tensor.is_sparse(next_level) && result_tensor.is_compressed(next_level)) {
+            if(result_tensor.tensor_level_to_loop_num(next_level) != current_sparse_intersection+1 && result_tensor.is_sparse(next_level) && result_tensor.is_compressed(next_level)) {
                 // offset calculation statement here
                 // eg :- result.dim_j_offsets[offset_i + 1] = offset_j
                 TensorLevelNum level = result_tensor.loop_num_to_tensor_level(loop_num+1);
@@ -958,7 +958,7 @@ llir::lStmt ComputeKernelLowerer::lower_loop(
 
 
             if(stmts.size()>0) {
-                return next_level != result_tensor.end_tensor_level() ? llir::IfElse::make(offset_write_cond, llir::Sequence::make(stmts), nullptr) : llir::Sequence::make(stmts);
+                return result_tensor.tensor_level_to_loop_num(next_level) != current_sparse_intersection+1 ? llir::IfElse::make(offset_write_cond, llir::Sequence::make(stmts), nullptr) : llir::Sequence::make(stmts);
             } else {
                 return llir::lStmt();
             }

@@ -23,6 +23,11 @@ void test() {
         {"k", LevelFormat::Compressed_unique},
     });
 
+    Format csr_3 = Format::ordered({
+        {"i", LevelFormat::Dense},
+        {"k", LevelFormat::Compressed_unique},
+    });
+
     Format dcsr = Format::ordered({
         {"i", LevelFormat::Compressed_unique},
         {"j", LevelFormat::Compressed_unique},
@@ -60,6 +65,7 @@ void test() {
 
     TensorType csr_f32 = TensorType(csr_1, dType::Float32);
     TensorType csr2_f32 = TensorType(csr_2, dType::Float32);
+    TensorType csr3_f32 = TensorType(csr_3, dType::Float32);
     TensorType csf_f32 = TensorType(csf, dType::Float32);
     TensorType coo_f32 = TensorType(coo, dType::Float32);
     TensorType coo_2_f32 = TensorType(coo_2, dType::Float32);
@@ -86,13 +92,14 @@ void test() {
     // std::cout << compile_to_cin(z_ij) << "\n";
     //nacho::backend::CINLowerer(compile_to_cin(z_ij), std::cout).lower_cin();
 
-    a_ij = Tensor::make(coo_f32, "a");
-    Expr b_ij = Tensor::make(csr_f32, "b");
+    a_ij = Tensor::make(csr_f32, "a");
+    b_jk = Tensor::make(csr2_f32, "b");
+    Expr c_ik = Tensor::make(csr3_f32, "c");
     // c_ij = Tensor::make(dcsr_f32, "c");
     // Expr a_ijk = Tensor::make(csf_f32, "a");
     // Expr b_ijk = Tensor::make(csf_f32, "b");
 
-    Expr z_ijk = a_ij + b_ij;
+    Expr z_ijk = Sum::make("j", c_ik*(a_ij * b_jk));
     //std::cout << compile_to_cin(z_ijk) << "\n";
     nacho::backend::CINLowerer(compile_to_cin(z_ijk), std::cout).lower_cin();
     // {
