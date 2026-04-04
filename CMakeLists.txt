@@ -159,7 +159,7 @@ if (nacho_BUILD_TESTING)
     # CPU codegen tests: generate CPU code, compile, and run
     set(NACHO_CPU_EXPRESSIONS
         sparse_vec_mul sparse_vec_add sparse_vec_apb_c sparse_vec_ab_pc
-        csr_add dcsr_mul dcsr_add tcsf_add
+        csr_add dcsr_mul dcsr_add tcsf_add coo_add
     )
 
     set(NACHO_CPU_GEN_DIR "${CMAKE_BINARY_DIR}/cpu_gen")
@@ -194,7 +194,7 @@ if (nacho_BUILD_TESTING)
     set_target_properties(cpu_codegen PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
     add_test(NAME cpu_runtime_pytest
-        COMMAND python -m pytest ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_cpu_generated.py -v
+        COMMAND python -m pytest ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_cpu_generated.py -v --forked
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
     )
 endif ()

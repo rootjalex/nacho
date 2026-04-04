@@ -4,6 +4,7 @@
 #include "Simplify.h"
 #include "Visitor.h"
 
+#include <algorithm>
 #include <functional>
 
 namespace nacho {

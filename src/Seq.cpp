@@ -23,6 +23,12 @@ Seq Index::make(std::string tensor, TensorType type, size_t level) {
 
     node->is_sparse = is_sparse_format(node->type.format.lvlfmt_of(
         node->type.format.levels[level].index));
+    node->is_unique = node->is_sparse && is_unique_format(node->type.format.lvlfmt_of(
+        node->type.format.levels[level].index));
+    node->is_compressed = node->is_sparse && is_compressed_format(node->type.format.lvlfmt_of(
+        node->type.format.levels[level].index));
+    node->is_singleton = node->is_sparse && is_singleton_format(node->type.format.lvlfmt_of(
+        node->type.format.levels[level].index));
 
     return node;
 }
@@ -36,6 +42,9 @@ Seq Intersect::make(Seq a, Seq b) {
 
     // an intersection sequence is sparse if either a or b are sparse
     node->is_sparse = node->a.get()->is_sparse || node->b.get()->is_sparse;
+    node->is_compressed = node->a.get()->is_compressed && node->b.get()->is_compressed;
+    node->is_singleton = node->a.get()->is_singleton || node->b.get()->is_singleton;
+    node->is_unique = node->a.get()->is_unique || node->b.get()->is_unique;
 
     return node;
 }
@@ -49,6 +58,9 @@ Seq Union::make(Seq a, Seq b) {
 
     // a union sequence is sparse if both a and b are sparse
     node->is_sparse = node->a.get()->is_sparse && node->b.get()->is_sparse;
+    node->is_compressed = node->a.get()->is_compressed || node->b.get()->is_compressed;
+    node->is_singleton = node->a.get()->is_singleton && node->b.get()->is_singleton;
+    node->is_unique = node->a.get()->is_unique && node->b.get()->is_unique;
 
     return node;
 }

@@ -124,8 +124,8 @@ llir::lExpr TensorLowerer::get_bound(TensorLevelNum tensor_level,
         llir::lExpr array = get_offsets_field(tensor_level_name(tensor_level));
         return upper_bound ? array[offset] - 1 : array[offset];
     } else if (is_singleton(tensor_level)) {
-        // upperbound and lower bound is always the same for a singleton level
-        return get_level_indexing_expression(tensor_level, false, pos_vars);
+        llir::lExpr offset = get_level_indexing_expression(tensor_level, upper_bound, pos_vars);
+         return upper_bound ? offset - 1 : offset;
     } else {
         internal_assert(false) << "Unsupported format for level " << tensor_level.get() << " in tensor " << tensor_name;
     }

@@ -5,6 +5,7 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include "Error.h"
 
 namespace nacho {
 
@@ -78,14 +79,17 @@ inline bool is_sparse_format(const LevelFormat lvl_fmt) {
 }
 
 inline bool is_compressed_format(const LevelFormat lvl_fmt) {
+    internal_assert(is_sparse_format(lvl_fmt)) << "Level format " << static_cast<int>(lvl_fmt) << " is not a sparse format.";
     return lvl_fmt == LevelFormat::Compressed_unique || lvl_fmt == LevelFormat::Compressed_non_unique;
 }
 
 inline bool is_singleton_format(const LevelFormat lvl_fmt) {
+    internal_assert(is_sparse_format(lvl_fmt)) << "Level format " << static_cast<int>(lvl_fmt) << " is not a sparse format.";
     return lvl_fmt == LevelFormat::Singleton_unique || lvl_fmt == LevelFormat::Singleton_non_unique;
-}   
+}
 
 inline bool is_unique_format(const LevelFormat lvl_fmt) {
+    internal_assert(is_sparse_format(lvl_fmt)) << "Level format " << static_cast<int>(lvl_fmt) << " is not a sparse format.";
     return lvl_fmt == LevelFormat::Compressed_unique || lvl_fmt == LevelFormat::Singleton_unique;
 }
 

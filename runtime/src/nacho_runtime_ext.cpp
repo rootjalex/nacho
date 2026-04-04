@@ -114,6 +114,7 @@ NB_MODULE(nacho_runtime_ext, m) {
     m.def("nacho_dcsr_add", &nacho_dcsr_add_nb);
     m.def("nacho_csr_add", &nacho_csr_add_nb);
     m.def("nacho_tcsf_add", &nacho_tcsf_add_nb);
+    m.def("nacho_coo_add", &nacho_coo_add_nb);
 
     // handwritten
     // m.def("cv_collapse_coo", &cv_collapse_coo<uint32_t, uint32_t, float>);

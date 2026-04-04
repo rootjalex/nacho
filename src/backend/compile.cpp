@@ -225,7 +225,7 @@ namespace backend {
             // printer.print(it.second.lower_tensor_index_definition());
         }
         printer.print(result_tensor.lower_tensor_struct_definition());
-        if(reductionLoop<result_tensor.get_loop_num_for_last_sparse_level()) {
+        if(reductionLoop<result_tensor.get_loop_num_for_last_sparse_level() && reductionLoop!=BEFORE_FIRST_LOOP) {
             printer.print(scatter_reduced_result_tensor.lower_tensor_struct_definition());
         }
 
@@ -321,15 +321,21 @@ namespace backend {
 
 
             void visit(const Forall * node) override{
-                // if we already found a sparse intersection, 
+                // if we already found a sparse intersection,
                 // that means this forall is inside a sparse intersection forall
                 // hence cin is not innermost sparse
                 loop_level++;
                 found_sparse_intersection = false;
-                //<<" Going inside seq "<<(Seq)node->seq<<std::endl;
-                node->seq.accept(this);
-                if(found_sparse_intersection) {
-                    sparse_intersection_levels.push_back(loop_level);
+
+                // level should be considered separately as a sparse intersection only if it is a unique level.
+                // TODO : not sure if the unique requirment is entirely correct, need to investigate further.
+                // TODO : if changed also change in RemoveDenseLocators
+                if(node->seq.get()->is_unique) {
+                    //<<" Going inside seq "<<(Seq)node->seq<<std::endl;
+                    node->seq.accept(this);
+                    if(found_sparse_intersection) {
+                        sparse_intersection_levels.push_back(loop_level);
+                    }
                 }
                 found_sparse_intersection = false;
                 node->body.accept(this);
@@ -853,10 +859,10 @@ namespace backend {
                     }
                 }
 
-                // Allocate offsets arrays for non-outermost sparse dimensions
+                // Allocate offsets arrays for non-outermost compressed sparse dimensions
                 for (int lvl = 1; lvl <= phase_info.current_sparse_intersection; lvl++) {
                     auto idx = result_tensor.tensor_type.format.levels[lvl].index;
-                    if (is_sparse_format(result_tensor.tensor_type.format.lvlfmt_of(idx))) {
+                    if (is_sparse_format(result_tensor.tensor_type.format.lvlfmt_of(idx)) && is_compressed_format(result_tensor.tensor_type.format.lvlfmt_of(idx))) {
                         auto parent_idx = result_tensor.tensor_type.format.levels[lvl - 1].index;
                         llir::lExpr offsets_size;
                         if (is_sparse_format(result_tensor.tensor_type.format.lvlfmt_of(parent_idx))) {
@@ -1126,17 +1132,18 @@ namespace backend {
             }
         }
 
-        // Output references: indices (and offsets for non-outermost) for each sparse dim
+        // Output references: indices (and offsets for non-outermost compressed) for each sparse dim
         for (int i = (int)result_tensor.tensor_type.format.levels.size() - 1; i >= 0; i--) {
             auto idx = result_tensor.tensor_type.format.levels[i].index;
-            if (is_sparse_format(result_tensor.tensor_type.format.lvlfmt_of(idx))) {
+            auto lvlfmt = result_tensor.tensor_type.format.lvlfmt_of(idx);
+            if (is_sparse_format(lvlfmt)) {
                 args.push_back({
                     .mutating = true,
                     .by_reference = true,
                     .type = llir::Ptr_t::make(index_t),
                     .name = "out_" + result_tensor.get_indices_field_name(idx)
                 });
-                if (i != 0) {
+                if (i != 0 && is_compressed_format(lvlfmt)) {
                     args.push_back({
                         .mutating = true,
                         .by_reference = true,
@@ -1225,11 +1232,12 @@ namespace backend {
         }
         for (int i = (int)result_tensor.tensor_type.format.levels.size() - 1; i >= 0; i--) {
             auto idx = result_tensor.tensor_type.format.levels[i].index;
-            if (is_sparse_format(result_tensor.tensor_type.format.lvlfmt_of(idx))) {
+            auto lvlfmt = result_tensor.tensor_type.format.lvlfmt_of(idx);
+            if (is_sparse_format(lvlfmt)) {
                 body_stmts.push_back(llir::Store::make(
                     llir::lVar::make(llir::Ptr_t::make(index_t), "out_" + result_tensor.get_indices_field_name(idx)),
                     llir::lFieldAccess::make(result_var_expr, result_tensor.get_indices_field_name(idx))));
-                if (i != 0) {
+                if (i != 0 && is_compressed_format(lvlfmt)) {
                     body_stmts.push_back(llir::Store::make(
                         llir::lVar::make(llir::Ptr_t::make(index_t), "out_" + result_tensor.get_offsets_field_name(idx)),
                         llir::lFieldAccess::make(result_var_expr, result_tensor.get_offsets_field_name(idx))));

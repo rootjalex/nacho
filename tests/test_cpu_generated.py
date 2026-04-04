@@ -83,6 +83,13 @@ def dcsr_to_dense(row_indices, row_offsets, col_indices, values, nrows, ncols):
     return dense
 
 
+def coo_to_dense(row_indices, col_indices, values, nrows, ncols):
+    dense = np.zeros((nrows, ncols), dtype=np.float32)
+    for r, c, v in zip(row_indices, col_indices, values):
+        dense[r, c] += v
+    return dense
+
+
 def tcsf_to_dense(i_indices, j_offsets, j_indices, k_offsets, k_indices,
                   values, shape):
     dense = np.zeros(shape, dtype=np.float32)
@@ -181,6 +188,20 @@ def random_tcsf(shape, density, seed):
                 i_indices.pop()
                 j_offsets.pop()
     return i_indices, j_offsets, j_indices, k_offsets, k_indices, values
+
+
+def random_coo(nrows, ncols, density, seed):
+    rng = random.Random(seed)
+    row_indices = []
+    col_indices = []
+    values = []
+    for r in range(nrows):
+        for c in range(ncols):
+            if rng.random() < density:
+                row_indices.append(r)
+                col_indices.append(c)
+                values.append(rng.uniform(0.1, 10.0))
+    return row_indices, col_indices, values
 
 
 # ---------------------------------------------------------------------------
@@ -430,6 +451,40 @@ def call_tcsf_add(a_ii, a_jo, a_ji, a_ko, a_ki, a_val, shape,
     _free(out_k_indices)
     _free(out_values)
     return r_ii, r_jo, r_ji, r_ko, r_ki, r_val
+
+
+def call_coo_add(a_ri, a_ci, a_val, nrows, ncols,
+                 b_ri, b_ci, b_val):
+    out_nnz = c_int(0)
+    out_dim_i_length = c_int(0)
+    out_j_indices = c_int_p()
+    out_i_indices = c_int_p()
+    out_values = c_float_p()
+    _lib.cpu_coo_add(
+        c_int(nrows), c_int(ncols),
+        c_int(len(a_ri)), _int_array(a_ri),
+        c_int(len(a_ci)), _int_array(a_ci),
+        _float_array(a_val), c_int(len(a_val)),
+        c_int(nrows), c_int(ncols),
+        c_int(len(b_ri)), _int_array(b_ri),
+        c_int(len(b_ci)), _int_array(b_ci),
+        _float_array(b_val), c_int(len(b_val)),
+        c_int(nrows), c_int(ncols),
+        ctypes.byref(out_nnz), ctypes.byref(out_dim_i_length),
+        ctypes.byref(out_j_indices), ctypes.byref(out_i_indices),
+        ctypes.byref(out_values),
+    )
+    nnz = out_nnz.value
+    if nnz == 0:
+        return [], [], []
+    n_i = out_dim_i_length.value
+    r_ri = _copy_int_buf(out_i_indices, n_i)
+    r_ci = _copy_int_buf(out_j_indices, nnz)
+    r_val = _copy_float_buf(out_values, nnz)
+    _free(out_i_indices)
+    _free(out_j_indices)
+    _free(out_values)
+    return r_ri, r_ci, r_val
 
 
 # ===========================================================================
@@ -803,5 +858,56 @@ class TestTcsfAdd:
         got = tcsf_to_dense(r_ii, r_jo, r_ji, r_ko, r_ki, r_val, shape)
         a_d = tcsf_to_dense(a_ii, a_jo, a_ji, a_ko, a_ki, a_val, shape)
         b_d = tcsf_to_dense(b_ii, b_jo, b_ji, b_ko, b_ki, b_val, shape)
+        expected = a_d + b_d
+        np.testing.assert_allclose(got, expected, rtol=1e-4, atol=1e-5)
+
+
+class TestCooAdd:
+    def test_basic_union(self):
+        # A: (0,0)=1, (0,1)=2, (1,0)=3
+        # B: (0,1)=4, (1,0)=5, (1,1)=6
+        r_ri, r_ci, r_val = call_coo_add(
+            [0, 0, 1], [0, 1, 0], [1.0, 2.0, 3.0], 2, 2,
+            [0, 1, 1], [1, 0, 1], [4.0, 5.0, 6.0],
+        )
+        got = coo_to_dense(r_ri, r_ci, r_val, 2, 2)
+        expected = np.array([[1.0, 6.0], [8.0, 6.0]], dtype=np.float32)
+        np.testing.assert_allclose(got, expected, rtol=1e-5)
+
+    def test_no_overlap(self):
+        r_ri, r_ci, r_val = call_coo_add(
+            [0], [0], [1.0], 2, 2,
+            [1], [1], [2.0],
+        )
+        got = coo_to_dense(r_ri, r_ci, r_val, 2, 2)
+        expected = np.array([[1.0, 0.0], [0.0, 2.0]], dtype=np.float32)
+        np.testing.assert_allclose(got, expected, rtol=1e-5)
+
+    def test_full_overlap(self):
+        r_ri, r_ci, r_val = call_coo_add(
+            [0, 1], [0, 1], [1.0, 2.0], 2, 2,
+            [0, 1], [0, 1], [3.0, 4.0],
+        )
+        got = coo_to_dense(r_ri, r_ci, r_val, 2, 2)
+        expected = np.array([[4.0, 0.0], [0.0, 6.0]], dtype=np.float32)
+        np.testing.assert_allclose(got, expected, rtol=1e-5)
+
+    @pytest.mark.parametrize("seed", range(20))
+    def test_random_correctness(self, seed):
+        rng = random.Random(seed)
+        nrows = rng.randint(3, 20)
+        ncols = rng.randint(3, 20)
+        density = rng.uniform(0.1, 0.4)
+        a_ri, a_ci, a_val = random_coo(nrows, ncols, density, seed * 1000)
+        b_ri, b_ci, b_val = random_coo(nrows, ncols, density, seed * 1000 + 1)
+        if not a_ri or not b_ri:
+            return
+        r_ri, r_ci, r_val = call_coo_add(
+            a_ri, a_ci, a_val, nrows, ncols,
+            b_ri, b_ci, b_val,
+        )
+        got = coo_to_dense(r_ri, r_ci, r_val, nrows, ncols)
+        a_d = coo_to_dense(a_ri, a_ci, a_val, nrows, ncols)
+        b_d = coo_to_dense(b_ri, b_ci, b_val, nrows, ncols)
         expected = a_d + b_d
         np.testing.assert_allclose(got, expected, rtol=1e-4, atol=1e-5)

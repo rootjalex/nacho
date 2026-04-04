@@ -3,6 +3,7 @@
 #include "Error.h"
 #include "Printer.h"
 
+#include <algorithm>
 #include <functional>
 #include <unordered_map>
 

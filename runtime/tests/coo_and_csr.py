@@ -210,6 +210,20 @@ def coo_add(A_COO, B_COO, use_pytorch):
 def torch_add(A,B):
     return _time_on_stream(lambda: A + B, iterations=14, trim=2)
 
+def nacho_csr_add(A_CSR, B_CSR):
+    """Time nacho-generated CSR add kernel."""
+    return _time_on_stream(
+        lambda: nacho_runtime.nacho_csr_add(A_CSR, B_CSR),
+        iterations=14, trim=2,
+    )
+
+def nacho_coo_add(A_COO, B_COO):
+    """Time nacho-generated COO add kernel."""
+    return _time_on_stream(
+        lambda: nacho_runtime.nacho_coo_add(A_COO, B_COO),
+        iterations=14, trim=2,
+    )
+
 
 
 def failure_reason(C_manual, C_result):

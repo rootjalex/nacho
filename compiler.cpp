@@ -382,6 +382,14 @@ const std::map<std::string, ExprBuilder> EXPRESSIONS = {
         TensorType tcsf_f32(tcsf, dType::Float32);
         return Tensor::make(tcsf_f32, "A") + Tensor::make(tcsf_f32, "B");
     }},
+    {"coo_add", []() {
+        Format coo = Format::ordered({
+            {"i", LevelFormat::Compressed_non_unique},
+            {"j", LevelFormat::Singleton_unique},
+        });
+        TensorType coo_f32(coo, dType::Float32);
+        return Tensor::make(coo_f32, "A") + Tensor::make(coo_f32, "B");
+    }},
 };
 // clang-format on
 
@@ -393,7 +401,13 @@ const std::map<std::string, ExprBuilder> EXPRESSIONS = {
 // files.  The mapping from compiler struct fields to runtime struct accessors
 // is determined entirely by the tensor format.
 
-enum class RuntimeType { CVector, CSR, DCSR, TCSF };
+enum class RuntimeType { CVector, CSR, DCSR, COO, TCSF };
+
+static bool format_has_singleton(const Format &fmt) {
+    for (auto &l : fmt.levels)
+        if (is_sparse_format(l.format) && is_singleton_format(l.format)) return true;
+    return false;
+}
 
 static RuntimeType get_runtime_type(const Format &fmt) {
     int n = (int)fmt.levels.size();
@@ -402,6 +416,7 @@ static RuntimeType get_runtime_type(const Format &fmt) {
         if (is_sparse_format(l.format)) s++;
     if (n == 1 && s == 1) return RuntimeType::CVector;
     if (n == 2 && s == 1) return RuntimeType::CSR;
+    if (n == 2 && s == 2 && format_has_singleton(fmt)) return RuntimeType::COO;
     if (n == 2 && s == 2) return RuntimeType::DCSR;
     if (n == 3 && s == 3) return RuntimeType::TCSF;
     std::cerr << "Unsupported format for runtime wrapper generation\n";
@@ -413,6 +428,7 @@ static std::string runtime_type_str(RuntimeType rt) {
     case RuntimeType::CVector: return "CVector<int, int, float>";
     case RuntimeType::CSR:     return "CSR<int, float>";
     case RuntimeType::DCSR:    return "DCSR<int, float>";
+    case RuntimeType::COO:     return "COO<int, float>";
     case RuntimeType::TCSF:    return "TCSF<int, float>";
     }
     return "";
@@ -430,6 +446,7 @@ static std::string rt_field(RuntimeType rt, const std::string &var,
         case RuntimeType::CVector: return "(int)" + var + ".indices.shape(0)";
         case RuntimeType::CSR:     return "(int)" + var + ".indices.shape(0)";
         case RuntimeType::DCSR:    return "(int)" + var + ".col_indices.shape(0)";
+        case RuntimeType::COO:     return "(int)" + var + ".row.shape(0)";
         case RuntimeType::TCSF:    return "(int)" + var + ".k_indices.shape(0)";
         }
     }
@@ -438,6 +455,7 @@ static std::string rt_field(RuntimeType rt, const std::string &var,
         case RuntimeType::CVector: return var + ".size";
         case RuntimeType::CSR:     return var + ".shape(" + std::to_string(dim) + ")";
         case RuntimeType::DCSR:    return dim == 0 ? var + ".nrows" : var + ".ncols";
+        case RuntimeType::COO:     return var + ".shape(" + std::to_string(dim) + ")";
         case RuntimeType::TCSF: {
             const char *f[] = {"dim_i_size", "dim_j_size", "dim_k_size"};
             return var + "." + f[dim];
@@ -450,6 +468,8 @@ static std::string rt_field(RuntimeType rt, const std::string &var,
         case RuntimeType::CSR:     return "(int)" + var + ".indices.shape(0)";
         case RuntimeType::DCSR:
             return "(int)" + var + (dim == 0 ? ".row_indices" : ".col_indices") + ".shape(0)";
+        case RuntimeType::COO:
+            return "(int)" + var + (dim == 0 ? ".row" : ".col") + ".shape(0)";
         case RuntimeType::TCSF: {
             const char *f[] = {"i_indices", "j_indices", "k_indices"};
             return "(int)" + var + "." + f[dim] + ".shape(0)";
@@ -462,6 +482,8 @@ static std::string rt_field(RuntimeType rt, const std::string &var,
         case RuntimeType::CSR:     return "(int *)" + var + ".indices.data()";
         case RuntimeType::DCSR:
             return "(int *)" + var + (dim == 0 ? ".row_indices" : ".col_indices") + ".data()";
+        case RuntimeType::COO:
+            return "(int *)" + var + (dim == 0 ? ".row" : ".col") + ".data()";
         case RuntimeType::TCSF: {
             const char *f[] = {"i_indices", "j_indices", "k_indices"};
             return "(int *)" + var + "." + f[dim] + ".data()";
@@ -473,6 +495,7 @@ static std::string rt_field(RuntimeType rt, const std::string &var,
         case RuntimeType::CVector: return "";
         case RuntimeType::CSR:     return "(int *)" + var + ".indptr.data()";
         case RuntimeType::DCSR:    return "(int *)" + var + ".row_offsets.data()";
+        case RuntimeType::COO:     return "";  // COO has no offsets
         case RuntimeType::TCSF: {
             const char *f[] = {"", "j_offsets", "k_offsets"};
             return "(int *)" + var + "." + f[dim] + ".data()";
@@ -499,7 +522,7 @@ static std::vector<std::string> build_operand_args(const Format &fmt,
         if (is_sparse_format(fmt.levels[i].format)) {
             data.push_back(rt_field(rt, var, "indices", i));
             data.push_back(rt_field(rt, var, "length", i));
-            if (i != 0)
+            if (i != 0 && is_compressed_format(fmt.levels[i].format))
                 data.push_back(rt_field(rt, var, "offsets", i));
         }
     }
@@ -543,7 +566,7 @@ static void emit_flat_forward_decl(std::ostream &os, const std::string &op,
             if (is_sparse_format(fmt.levels[i].format)) {
                 dp.push_back("index_t *" + name + "_dim_" + idx + "_indices");
                 dp.push_back("index_t " + name + "_dim_" + idx + "_length");
-                if (i != 0)
+                if (i != 0 && is_compressed_format(fmt.levels[i].format))
                     dp.push_back("index_t *" + name + "_dim_" + idx + "_offsets");
             }
         }
@@ -563,7 +586,7 @@ static void emit_flat_forward_decl(std::ostream &os, const std::string &op,
         auto idx = rfmt.levels[i].index;
         if (is_sparse_format(rfmt.levels[i].format)) {
             params.push_back("index_t *&out_dim_" + idx + "_indices");
-            if (i != 0)
+            if (i != 0 && is_compressed_format(rfmt.levels[i].format))
                 params.push_back("index_t *&out_dim_" + idx + "_offsets");
         }
     }
@@ -637,7 +660,7 @@ static void emit_wrapper_impl(std::ostream &os, const std::string &op,
     for (int i = (int)rfmt.levels.size() - 1; i >= 0; i--)
         if (is_sparse_format(rfmt.levels[i].format)) {
             os << "    int *out_dim_" << rfmt.levels[i].index << "_indices;\n";
-            if (i != 0)
+            if (i != 0 && is_compressed_format(rfmt.levels[i].format))
                 os << "    int *out_dim_" << rfmt.levels[i].index << "_offsets;\n";
         }
     os << "    float *out_values;\n\n";
@@ -663,7 +686,7 @@ static void emit_wrapper_impl(std::ostream &os, const std::string &op,
     for (int i = (int)rfmt.levels.size() - 1; i >= 0; i--)
         if (is_sparse_format(rfmt.levels[i].format)) {
             call_args.push_back("out_dim_" + rfmt.levels[i].index + "_indices");
-            if (i != 0)
+            if (i != 0 && is_compressed_format(rfmt.levels[i].format))
                 call_args.push_back("out_dim_" + rfmt.levels[i].index + "_offsets");
         }
     call_args.push_back("out_values");
@@ -707,6 +730,16 @@ static void emit_wrapper_impl(std::ostream &os, const std::string &op,
            << "_offsets, sizeof(int)));\n";
         os << "        CHECK_CUDA(cudaMemset(out_dim_" << j
            << "_offsets, 0, sizeof(int)));\n";
+        os << "        CHECK_CUDA(cudaMalloc((void **)&out_dim_" << j
+           << "_indices, sizeof(int)));\n";
+        os << "        CHECK_CUDA(cudaMalloc((void **)&out_values, sizeof(float)));\n";
+        os << "        out_dim_" << i << "_length = 0;\n";
+        break;
+    }
+    case RuntimeType::COO: {
+        auto i = rfmt.levels[0].index, j = rfmt.levels[1].index;
+        os << "        CHECK_CUDA(cudaMalloc((void **)&out_dim_" << i
+           << "_indices, sizeof(int)));\n";
         os << "        CHECK_CUDA(cudaMalloc((void **)&out_dim_" << j
            << "_indices, sizeof(int)));\n";
         os << "        CHECK_CUDA(cudaMalloc((void **)&out_values, sizeof(float)));\n";
@@ -763,6 +796,14 @@ static void emit_wrapper_impl(std::ostream &os, const std::string &op,
            << rt_field(prts[0], pnames[0], "size", 0) << ", "
            << rt_field(prts[0], pnames[0], "size", 1) << ", out_dim_"
            << i << "_length, out_nnz)";
+        break;
+    }
+    case RuntimeType::COO: {
+        auto i = rfmt.levels[0].index, j = rfmt.levels[1].index;
+        os << rt_str << "(out_dim_" << i << "_indices, out_dim_" << j
+           << "_indices, out_values, "
+           << rt_field(prts[0], pnames[0], "size", 0) << ", "
+           << rt_field(prts[0], pnames[0], "size", 1) << ", out_nnz)";
         break;
     }
     case RuntimeType::TCSF: {
@@ -913,9 +954,10 @@ static void emit_to_file(const std::string &dir, const std::string &op_name,
     // Output refs: indices (and offsets for non-outermost)
     for (int i = (int)lowerer.result_tensor.tensor_type.format.levels.size() - 1; i >= 0; i--) {
         auto idx = lowerer.result_tensor.tensor_type.format.levels[i].index;
-        if (is_sparse_format(lowerer.result_tensor.tensor_type.format.lvlfmt_of(idx))) {
+        auto lvlfmt = lowerer.result_tensor.tensor_type.format.lvlfmt_of(idx);
+        if (is_sparse_format(lvlfmt)) {
             ofs << ", int*&";
-            if (i != 0) ofs << ", int*&";
+            if (i != 0 && is_compressed_format(lvlfmt)) ofs << ", int*&";
         }
     }
     // Output ref: values
@@ -1004,9 +1046,10 @@ static void emit_to_file_cpu(const std::string &dir, const std::string &op_name,
     }
     for (int i = (int)lowerer.result_tensor.tensor_type.format.levels.size() - 1; i >= 0; i--) {
         auto idx = lowerer.result_tensor.tensor_type.format.levels[i].index;
-        if (is_sparse_format(lowerer.result_tensor.tensor_type.format.lvlfmt_of(idx))) {
+        auto lvlfmt = lowerer.result_tensor.tensor_type.format.lvlfmt_of(idx);
+        if (is_sparse_format(lvlfmt)) {
             ofs << ", int*&";
-            if (i != 0) ofs << ", int*&";
+            if (i != 0 && is_compressed_format(lvlfmt)) ofs << ", int*&";
         }
     }
     ofs << ", float*&";

@@ -33,6 +33,9 @@ struct BaseSeqNode : public IRSeqNode {
     virtual Seq mutate_Seq(Mutator *m) const = 0;
 
     bool is_sparse;
+    bool is_unique;
+    bool is_compressed;
+    bool is_singleton;
 };
 
 template <typename T>

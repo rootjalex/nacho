@@ -48,6 +48,12 @@ void tcsf_add(index_t, index_t, index_t, index_t, index_t*, index_t*, index_t,
               index_t, index_t&, index_t&, index_t&, index_t*&, index_t*&,
               index_t*&, index_t*&, index_t*&, value_t*&);
 
+template <typename index_t, typename value_t>
+void coo_add(index_t, index_t, index_t, index_t*, index_t, index_t*, value_t*,
+             index_t, index_t, index_t, index_t, index_t*, index_t, index_t*,
+             value_t*, index_t, index_t, index_t, index_t&, index_t&, index_t*&,
+             index_t*&, value_t*&);
+
 extern "C" {
 
 void cpu_free(void *ptr) { free(ptr); }
@@ -185,6 +191,25 @@ void cpu_tcsf_add(
         *out_dim_i_length, *out_dim_j_length, *out_dim_k_indices,
         *out_dim_k_offsets, *out_dim_j_indices, *out_dim_j_offsets,
         *out_dim_i_indices, *out_values);
+}
+
+// ---- coo_add ----
+void cpu_coo_add(
+    int A_dim_i_size, int A_dim_j_size, int A_dim_i_length,
+    int *A_dim_i_indices, int A_dim_j_length, int *A_dim_j_indices,
+    float *A_values, int A_nnz, int B_dim_i_size, int B_dim_j_size,
+    int B_dim_i_length, int *B_dim_i_indices, int B_dim_j_length,
+    int *B_dim_j_indices, float *B_values, int B_nnz,
+    int result_dim_i_size, int result_dim_j_size, int *out_nnz,
+    int *out_dim_i_length, int **out_dim_j_indices,
+    int **out_dim_i_indices, float **out_values) {
+    coo_add<int, float>(
+        A_dim_i_size, A_dim_j_size, A_dim_i_length, A_dim_i_indices,
+        A_dim_j_length, A_dim_j_indices, A_values, A_nnz,
+        B_dim_i_size, B_dim_j_size, B_dim_i_length, B_dim_i_indices,
+        B_dim_j_length, B_dim_j_indices, B_values, B_nnz,
+        result_dim_i_size, result_dim_j_size, *out_nnz, *out_dim_i_length,
+        *out_dim_j_indices, *out_dim_i_indices, *out_values);
 }
 
 } // extern "C"

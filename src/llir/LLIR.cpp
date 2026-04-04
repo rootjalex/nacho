@@ -354,7 +354,7 @@ lStmt For::make(lType type, std::string name, lExpr init, lExpr cond, lExpr inc,
     node->name = std::move(name);
     node->init = std::move(init);
     node->cond = std::move(cond);
-    node->inc = std::move(inc);
+    node->inc = inc.defined() ? std::move(inc) : lExpr();
     node->body = std::move(body);
     return node;
 }
@@ -362,7 +362,6 @@ lStmt For::make(lType type, std::string name, lExpr init, lExpr cond, lExpr inc,
 lStmt For::make(std::string name, lExpr cond, lExpr inc, lStmt body) {
     internal_assert(!name.empty()) << "Empty name in For::make()";
     internal_assert(cond.defined()) << "Undefined cond in For::make()";
-    internal_assert(inc.defined()) << "Undefined inc in For::make()";
     internal_assert(body.defined()) << "Undefined body in For::make()";
 
     For *node = new For;
@@ -370,7 +369,7 @@ lStmt For::make(std::string name, lExpr cond, lExpr inc, lStmt body) {
     node->name = std::move(name);
     node->init = lExpr(); // undefined!
     node->cond = std::move(cond);
-    node->inc = std::move(inc);
+    node->inc = inc.defined() ? std::move(inc) : lExpr();
     node->body = std::move(body);
     return node;
 }

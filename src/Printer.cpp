@@ -703,8 +703,10 @@ void Printer::visit(const llir::For *node) {
     os << "; ";
     print_no_parens(node->cond);
     os << "; ";
-    os << node->name << " += ";
-    print_no_parens(node->inc);
+    if(node->inc.defined()) {
+        os << node->name << " += ";
+        print_no_parens(node->inc);
+    }
     os << ") {\n";
     indent();
     print(node->body);
