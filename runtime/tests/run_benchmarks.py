@@ -713,6 +713,55 @@ def run_nacho_comparison(start, end, save_and_plot, continue_mode=False, csv_nam
                      labels=("Nacho", "", "PyTorch"))
 
 
+def _replot_from_csv(csv_name, benchmark):
+    """Regenerate plots from an existing CSV without re-running benchmarks."""
+    from plotter import plot, plot_bar_graph_2
+
+    path = _csv_path(csv_name)
+    if not os.path.isfile(path):
+        print(f"CSV not found: {path}")
+        return
+    rdf = pd.read_csv(path)
+    print(f"Replotting {benchmark} from {path} ({len(rdf)} rows)")
+
+    if benchmark == 'csr_add':
+        plot(rdf["nnz"].tolist(), rdf["manual_ms"].tolist(),
+             rdf["cusparse_ms"].tolist(), rdf["pytorch_ms"].tolist(), csv_name)
+    elif benchmark == 'coo_add':
+        plot(rdf["nnz"].tolist(), rdf["manual_ms"].tolist(),
+             [], rdf["pytorch_ms"].tolist(), csv_name)
+    elif benchmark == 'spgemm':
+        plot(rdf["nnz"].tolist(), rdf["manual_ms"].tolist(),
+             rdf["cusparse_ms"].tolist(), [], csv_name)
+    elif benchmark == 'sparse_vectors':
+        full_lb = rdf[["full_mergepath_ms", "full_precompute_ms", "full_compute_ms"]].values.tolist()
+        partial_lb = rdf[["partial_mergepath_ms", "partial_precompute_ms", "partial_compute_ms"]].values.tolist()
+        single_lb = rdf[["nofusion_mergepath_ms", "nofusion_precompute_ms", "nofusion_compute_ms"]].values.tolist()
+        plot_bar_graph_2(0, rdf["total_nnz"].tolist(), full_lb, partial_lb, single_lb, csv_name)
+    elif benchmark == 'nacho_comparison':
+        if 'nnz_csr' in rdf.columns:
+            csr = rdf.dropna(subset=["nnz_csr"])
+            if not csr.empty:
+                plot(csr["nnz_csr"].tolist(), csr["csr_nacho_ms"].tolist(),
+                     csr["csr_cusparse_ms"].tolist(), csr["csr_pytorch_ms"].tolist(),
+                     csv_name.replace("nacho_comparison", "nacho_csr_add"),
+                     labels=("Nacho", "cuSPARSE", "PyTorch"))
+        if 'nnz_coo' in rdf.columns:
+            coo = rdf.dropna(subset=["nnz_coo"])
+            if not coo.empty:
+                plot(coo["nnz_coo"].tolist(), coo["coo_nacho_ms"].tolist(),
+                     [], coo["coo_pytorch_ms"].tolist(),
+                     csv_name.replace("nacho_comparison", "nacho_coo_add"),
+                     labels=("Nacho", "", "PyTorch"))
+        if 'nnz_coo_mul' in rdf.columns:
+            coo_mul = rdf.dropna(subset=["nnz_coo_mul"])
+            if not coo_mul.empty:
+                plot(coo_mul["nnz_coo_mul"].tolist(), coo_mul["coo_mul_nacho_ms"].tolist(),
+                     [], coo_mul["coo_mul_pytorch_ms"].tolist(),
+                     csv_name.replace("nacho_comparison", "nacho_coo_mul"),
+                     labels=("Nacho", "", "PyTorch"))
+
+
 BENCHMARKS = {
     'csr_add':           run_csr_add,
     'coo_add':           run_coo_add,
@@ -778,6 +827,10 @@ examples:
              '<benchmark>_<start>-<end> naming scheme. Continue mode resumes '
              'from this file.',
     )
+    parser.add_argument(
+        '--replot', action='store_true',
+        help='Regenerate plots from existing CSV data without running benchmarks',
+    )
     args = parser.parse_args()
 
     if 'all' in args.benchmarks:
@@ -800,6 +853,15 @@ examples:
         end = args.end if args.end is not None else num_matrices
 
     save_and_plot = not args.no_plot
+
+    if args.replot:
+        for name in to_run:
+            if name == 'broadcast':
+                continue
+            csv_name = args.output or f"{name}_{start}-{end}"
+            _replot_from_csv(csv_name, name)
+        print("\nDone.")
+        return
 
     print(f"Benchmarks: {', '.join(to_run)}")
     print(f"Matrix range: {start}–{end} (of {num_matrices} available)")
