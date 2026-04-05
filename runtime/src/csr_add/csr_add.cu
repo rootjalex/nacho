@@ -528,91 +528,87 @@ void gpu_manual_csr_add_f32(int* shape,
         cudaFree(nnz_count);
         cudaFree(nnzC_prefix);
 
-        
+        // Synchronize so CUDA event timing captures actual GPU execution
+        CHECK_CUDA(cudaDeviceSynchronize());
 
         return;
 }
 
 
-void gpu_cusparse_csr_add_f32(int* shape, 
-        int* rowOffsA, int* colIndsA, float* ValsA, uint64_t nnzA, 
-        int* rowOffsB, int* colIndsB, float* ValsB, uint64_t nnzB, 
+// Persistent cuSPARSE state (amortise handle/descriptor creation across calls)
+static cusparseHandle_t s_handle = nullptr;
+static cusparseMatDescr_t s_descrA = nullptr, s_descrB = nullptr, s_descrC = nullptr;
+
+static void ensure_cusparse_init() {
+    if (s_handle) return;
+    CHECK_CUSPARSE(cusparseCreate(&s_handle));
+    CHECK_CUSPARSE(cusparseCreateMatDescr(&s_descrA));
+    CHECK_CUSPARSE(cusparseCreateMatDescr(&s_descrB));
+    CHECK_CUSPARSE(cusparseCreateMatDescr(&s_descrC));
+    CHECK_CUSPARSE(cusparseSetMatType(s_descrA, CUSPARSE_MATRIX_TYPE_GENERAL));
+    CHECK_CUSPARSE(cusparseSetMatType(s_descrB, CUSPARSE_MATRIX_TYPE_GENERAL));
+    CHECK_CUSPARSE(cusparseSetMatType(s_descrC, CUSPARSE_MATRIX_TYPE_GENERAL));
+    CHECK_CUSPARSE(cusparseSetMatIndexBase(s_descrA, CUSPARSE_INDEX_BASE_ZERO));
+    CHECK_CUSPARSE(cusparseSetMatIndexBase(s_descrB, CUSPARSE_INDEX_BASE_ZERO));
+    CHECK_CUSPARSE(cusparseSetMatIndexBase(s_descrC, CUSPARSE_INDEX_BASE_ZERO));
+}
+
+void gpu_cusparse_csr_add_f32(int* shape,
+        int* rowOffsA, int* colIndsA, float* ValsA, uint64_t nnzA,
+        int* rowOffsB, int* colIndsB, float* ValsB, uint64_t nnzB,
         int* &rowOffsC, int* &colIndsC, float* &ValsC, int* &nnzC) {
-    
+
     int m = shape[0];
     int n = shape[1];
-    
-    cusparseHandle_t handle;
-    CHECK_CUSPARSE(cusparseCreate(&handle));
 
-    // Create matrix descriptors
-    cusparseMatDescr_t descrA, descrB, descrC;
-    CHECK_CUSPARSE(cusparseCreateMatDescr(&descrA));
-    CHECK_CUSPARSE(cusparseCreateMatDescr(&descrB));
-    CHECK_CUSPARSE(cusparseCreateMatDescr(&descrC));
+    ensure_cusparse_init();
 
-    // Set matrix types (general sparse matrix with 0-based indexing)
-    CHECK_CUSPARSE(cusparseSetMatType(descrA, CUSPARSE_MATRIX_TYPE_GENERAL));
-    CHECK_CUSPARSE(cusparseSetMatType(descrB, CUSPARSE_MATRIX_TYPE_GENERAL));
-    CHECK_CUSPARSE(cusparseSetMatType(descrC, CUSPARSE_MATRIX_TYPE_GENERAL));
-    CHECK_CUSPARSE(cusparseSetMatIndexBase(descrA, CUSPARSE_INDEX_BASE_ZERO));
-    CHECK_CUSPARSE(cusparseSetMatIndexBase(descrB, CUSPARSE_INDEX_BASE_ZERO));
-    CHECK_CUSPARSE(cusparseSetMatIndexBase(descrC, CUSPARSE_INDEX_BASE_ZERO));
+    float alpha_h = 1.0f;
+    float beta_h = 1.0f;
+
+    CHECK_CUDA(cudaMalloc((void**)&rowOffsC, sizeof(int)*(m+1)));
 
     // Get buffer size for the operation
     size_t bufferSize;
-      // C = alpha*A + beta*B
-
-    float alpha_h = 1.0f;     // host value
-    
-
-    float beta_h = 1.0f;     // host value
-    
-    CHECK_CUDA(cudaMalloc((void**)&rowOffsC, sizeof(int)*(m+1)));
-    
-    cusparseScsrgeam2_bufferSizeExt(handle, m, n,
+    cusparseScsrgeam2_bufferSizeExt(s_handle, m, n,
         &alpha_h,
-        descrA, nnzA, ValsA, rowOffsA, colIndsA,
+        s_descrA, nnzA, ValsA, rowOffsA, colIndsA,
         &beta_h,
-        descrB, nnzB, ValsB, rowOffsB, colIndsB,
-        descrC,
+        s_descrB, nnzB, ValsB, rowOffsB, colIndsB,
+        s_descrC,
         ValsC, rowOffsC, colIndsC,
         &bufferSize);
 
-    
     // Allocate workspace buffer
     void* buffer = nullptr;
     CHECK_CUDA(cudaMalloc(&buffer, sizeof(char)*bufferSize));
-    // Get number of non-zero elements in result matrix
 
-    //printf("nnzA %ld nnZB %ld buffer size = %ld\n", nnzA, nnzB, sizeof(char)*bufferSize);
-    
-    CHECK_CUSPARSE(cusparseXcsrgeam2Nnz(handle, m, n,
-        descrA, nnzA, rowOffsA, colIndsA,
-        descrB, nnzB, rowOffsB, colIndsB,
-        descrC, rowOffsC, nnzC,
+    // Get number of non-zero elements in result matrix
+    CHECK_CUSPARSE(cusparseXcsrgeam2Nnz(s_handle, m, n,
+        s_descrA, nnzA, rowOffsA, colIndsA,
+        s_descrB, nnzB, rowOffsB, colIndsB,
+        s_descrC, rowOffsC, nnzC,
         buffer));
 
-    
     CHECK_CUDA( cudaGetLastError() );
     CHECK_CUDA(cudaMalloc((void**)&colIndsC, sizeof(int)*(*nnzC)));
     CHECK_CUDA(cudaMalloc((void**)&ValsC, sizeof(float)*(*nnzC)));
+
     // Perform the actual matrix addition C = alpha*A + beta*B
-    CHECK_CUSPARSE(cusparseScsrgeam2(handle, m, n,
+    CHECK_CUSPARSE(cusparseScsrgeam2(s_handle, m, n,
         &alpha_h,
-        descrA, nnzA, ValsA, rowOffsA, colIndsA,
+        s_descrA, nnzA, ValsA, rowOffsA, colIndsA,
         &beta_h,
-        descrB, nnzB, ValsB, rowOffsB, colIndsB,
-        descrC,
+        s_descrB, nnzB, ValsB, rowOffsB, colIndsB,
+        s_descrC,
         ValsC, rowOffsC, colIndsC,
         buffer));
 
-    // Clean up
+    // Clean up workspace only (handle/descriptors are persistent)
     CHECK_CUDA(cudaFree(buffer));
-    CHECK_CUSPARSE(cusparseDestroyMatDescr(descrA));
-    CHECK_CUSPARSE(cusparseDestroyMatDescr(descrB));
-    CHECK_CUSPARSE(cusparseDestroyMatDescr(descrC));
-    CHECK_CUSPARSE(cusparseDestroy(handle));
     CHECK_CUDA( cudaGetLastError() );
+
+    // Synchronize so CUDA event timing captures actual GPU execution
+    CHECK_CUDA(cudaDeviceSynchronize());
 }
 
