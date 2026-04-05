@@ -178,14 +178,14 @@ def _load_done_rows(csv_name):
 # Benchmark runners
 # ---------------------------------------------------------------------------
 
-def run_csr_add(start, end, save_and_plot, continue_mode=False):
+def run_csr_add(start, end, save_and_plot, continue_mode=False, csv_name=None):
     import torch
     import nacho_runtime
     from parser import matrix_list, parse_matrix
     from coo_and_csr import csr_add, torch_add, failure_reason
     from plotter import plot
 
-    csv_name = f"csr_add_{start}-{end}"
+    csv_name = csv_name or f"csr_add_{start}-{end}"
     df = matrix_list()
     failed = []
     skip = {611}
@@ -256,14 +256,14 @@ def run_csr_add(start, end, save_and_plot, continue_mode=False):
         print(f"Failed: {failed}")
 
 
-def run_coo_add(start, end, save_and_plot, continue_mode=False):
+def run_coo_add(start, end, save_and_plot, continue_mode=False, csv_name=None):
     import torch
     import nacho_runtime
     from parser import matrix_list, parse_matrix
     from coo_and_csr import coo_add
     from plotter import plot
 
-    csv_name = f"coo_add_{start}-{end}"
+    csv_name = csv_name or f"coo_add_{start}-{end}"
     df = matrix_list()
     failed = []
 
@@ -326,7 +326,7 @@ def run_coo_add(start, end, save_and_plot, continue_mode=False):
         print(f"Failed: {failed}")
 
 
-def run_spgemm(start, end, save_and_plot, continue_mode=False):
+def run_spgemm(start, end, save_and_plot, continue_mode=False, csv_name=None):
     import torch
     import nacho_runtime
     from parser import matrix_list, parse_matrix
@@ -334,7 +334,7 @@ def run_spgemm(start, end, save_and_plot, continue_mode=False):
     from coo_and_csr import failure_reason
     from plotter import plot
 
-    csv_name = f"spgemm_{start}-{end}"
+    csv_name = csv_name or f"spgemm_{start}-{end}"
     df = matrix_list()
     failed = []
     skip = {611}
@@ -421,12 +421,12 @@ def run_spgemm(start, end, save_and_plot, continue_mode=False):
         print(f"Failed: {failed}")
 
 
-def run_sparse_vectors(start, end, save_and_plot, continue_mode=False):
+def run_sparse_vectors(start, end, save_and_plot, continue_mode=False, csv_name=None):
     from parser import matrix_list
     from sparse_vectors import test_mergepath
     from plotter import plot_bar_graph_2
 
-    csv_name = f"sparse_vectors_{start}-{end}"
+    csv_name = csv_name or f"sparse_vectors_{start}-{end}"
     df = matrix_list()
     n = len(df)
     end = min(end, n - 2)
@@ -489,7 +489,7 @@ def run_sparse_vectors(start, end, save_and_plot, continue_mode=False):
         print(f"Failed: {failed}")
 
 
-def run_broadcast(_start, _end, _save_and_plot, continue_mode=False):
+def run_broadcast(_start, _end, _save_and_plot, continue_mode=False, csv_name=None):
     from broadcasts import benchmark_broadcast
     print("Running broadcast (x*A) benchmark...")
     ans, xa_time, csr_time = benchmark_broadcast()
@@ -508,7 +508,7 @@ def _has_col(row_dict, col):
         return True
 
 
-def run_nacho_comparison(start, end, save_and_plot, continue_mode=False):
+def run_nacho_comparison(start, end, save_and_plot, continue_mode=False, csv_name=None):
     """Benchmark nacho-generated CSR add, COO add, and COO mul against cuSPARSE & PyTorch."""
     import torch
     import nacho_runtime
@@ -516,7 +516,7 @@ def run_nacho_comparison(start, end, save_and_plot, continue_mode=False):
     from coo_and_csr import csr_add, coo_add, torch_add, nacho_csr_add, nacho_coo_add, pytorch_coo_mul, failure_reason
     from plotter import plot
 
-    csv_name = f"nacho_comparison_{start}-{end}"
+    csv_name = csv_name or f"nacho_comparison_{start}-{end}"
     df = matrix_list()
     skip = {611}
 
@@ -681,17 +681,17 @@ def run_nacho_comparison(start, end, save_and_plot, continue_mode=False):
                      csr_rows["csr_cusparse_ms"].tolist(),
                      csr_rows["csr_pytorch_ms"].tolist(),
                      f"nacho_csr_add_{start}-{end}",
-                     labels=("nacho", "cuSPARSE", "PyTorch"))
+                     labels=("Nacho", "cuSPARSE", "PyTorch"))
         # COO add plot: nacho vs manual vs pytorch
         if 'nnz_coo' in rdf.columns:
             coo_rows = rdf.dropna(subset=["nnz_coo"])
             if not coo_rows.empty:
                 plot(coo_rows["nnz_coo"].tolist(),
                      coo_rows["coo_nacho_ms"].tolist(),
-                     coo_rows["coo_manual_ms"].tolist(),
+                     [],
                      coo_rows["coo_pytorch_ms"].tolist(),
                      f"nacho_coo_add_{start}-{end}",
-                     labels=("nacho", "Manual", "PyTorch"))
+                     labels=("Nacho", "", "cuSPARSE"))
         # COO mul plot: nacho vs pytorch
         if 'nnz_coo_mul' in rdf.columns:
             coo_mul_rows = rdf.dropna(subset=["nnz_coo_mul"])
@@ -701,7 +701,7 @@ def run_nacho_comparison(start, end, save_and_plot, continue_mode=False):
                      [],
                      coo_mul_rows["coo_mul_pytorch_ms"].tolist(),
                      f"nacho_coo_mul_{start}-{end}",
-                     labels=("nacho", "", "PyTorch"))
+                     labels=("Nacho", "", "PyTorch"))
 
 
 BENCHMARKS = {
@@ -763,6 +763,12 @@ examples:
         '--no-continue', dest='continue_mode', action='store_false', default=True,
         help='Start fresh instead of resuming from existing CSV',
     )
+    parser.add_argument(
+        '-o', '--output', type=str, default=None,
+        help='Output CSV name (without .csv extension). Overrides the default '
+             '<benchmark>_<start>-<end> naming scheme. Continue mode resumes '
+             'from this file.',
+    )
     args = parser.parse_args()
 
     if 'all' in args.benchmarks:
@@ -795,7 +801,8 @@ examples:
     print()
 
     for name in to_run:
-        BENCHMARKS[name](start, end, save_and_plot, continue_mode=args.continue_mode)
+        BENCHMARKS[name](start, end, save_and_plot, continue_mode=args.continue_mode,
+                         csv_name=args.output)
 
     print("\nDone.")
 

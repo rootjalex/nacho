@@ -89,12 +89,6 @@ def plot_2(size, lengths, full, partial, no, name):
 def plot(nnz, manual, cusparse, pytorch, name, labels=None):
     if labels is None:
         labels = ("Manual", "cusparse", "pytorch")
-    pd.DataFrame({
-        "nnz": nnz, "manual_ms": manual,
-        "cusparse_ms": cusparse if cusparse else [None] * len(nnz),
-        "pytorch_ms": pytorch if pytorch else [None] * len(nnz),
-    }).to_csv(_path(name, "csv"), index=False)
-
     plt.figure(figsize=(8, 6))
     plt.scatter(nnz, manual, label=labels[0], alpha=0.7, color="blue", marker="o", s=5)
     if len(cusparse) != 0:
