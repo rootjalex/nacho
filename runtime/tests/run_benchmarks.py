@@ -55,6 +55,84 @@ from tqdm import tqdm
 SAVE_EVERY = 20  # flush CSV every N iterations
 
 
+def _subprocess_nacho_timing(matrix_a, matrix_b, fmt, M, N, timeout=120):
+    """Run a nacho kernel in a completely separate process.
+
+    nanobind calls abort() on unrecoverable errors (e.g. buffer overflow on
+    large matrices).  abort() sends SIGABRT which kills the process — Python
+    try/except cannot catch it, and os.fork() breaks CUDA contexts.
+
+    Instead, we spawn a fresh Python interpreter that loads its own CUDA
+    context, parses the matrices, runs the nacho kernel, and prints the
+    timing to stdout.  If it crashes, subprocess.run() returns non-zero
+    and we skip.
+    """
+    # Build the kernel call based on format
+    if fmt == "csr":
+        kernel_code = f'''\
+from coo_and_csr import nacho_csr_add
+A = parse_matrix("{matrix_a}")
+B = parse_matrix("{matrix_b}")
+A_t = torch.sparse_csr_tensor(
+    A.crow_indices()[:M+1], A.col_indices()[:A.crow_indices()[M]],
+    A.values()[:A.crow_indices()[M]], (M, N))
+B_t = torch.sparse_csr_tensor(
+    B.crow_indices()[:M+1], B.col_indices()[:B.crow_indices()[M]],
+    B.values()[:B.crow_indices()[M]], (M, N))
+A_CSR = nacho_runtime.CSR(A_t.crow_indices(), A_t.col_indices(), A_t.values(),
+                           torch.tensor([M, N], dtype=torch.int32))
+B_CSR = nacho_runtime.CSR(B_t.crow_indices(), B_t.col_indices(), B_t.values(),
+                           torch.tensor([M, N], dtype=torch.int32))
+_, ms = nacho_csr_add(A_CSR, B_CSR)'''
+    elif fmt == "coo":
+        kernel_code = f'''\
+from coo_and_csr import nacho_coo_add
+A = parse_matrix("{matrix_a}", True).coalesce()
+B = parse_matrix("{matrix_b}", True).coalesce()
+A_t = torch.sparse_coo_tensor(A.indices(), A.values(), (M, N)).coalesce()
+B_t = torch.sparse_coo_tensor(B.indices(), B.values(), (M, N)).coalesce()
+A_COO = nacho_runtime.COO(A_t.indices()[0], A_t.indices()[1], A_t.values(),
+                           torch.tensor([M, N], dtype=torch.int32))
+B_COO = nacho_runtime.COO(B_t.indices()[0], B_t.indices()[1], B_t.values(),
+                           torch.tensor([M, N], dtype=torch.int32))
+_, ms = nacho_coo_add(A_COO, B_COO)'''
+    elif fmt == "coo_mul":
+        kernel_code = f'''\
+from coo_and_csr import nacho_coo_mul
+A = parse_matrix("{matrix_a}", True).coalesce()
+B = parse_matrix("{matrix_b}", True).coalesce()
+A_t = torch.sparse_coo_tensor(A.indices(), A.values(), (M, N)).coalesce()
+B_t = torch.sparse_coo_tensor(B.indices(), B.values(), (M, N)).coalesce()
+A_COO = nacho_runtime.COO(A_t.indices()[0], A_t.indices()[1], A_t.values(),
+                           torch.tensor([M, N], dtype=torch.int32))
+B_COO = nacho_runtime.COO(B_t.indices()[0], B_t.indices()[1], B_t.values(),
+                           torch.tensor([M, N], dtype=torch.int32))
+_, ms = nacho_coo_mul(A_COO, B_COO)'''
+    else:
+        return None
+
+    script = f'''\
+import sys; sys.path.insert(0, "runtime/tests")
+import nacho_runtime
+from parser import parse_matrix
+import torch
+M, N = {M}, {N}
+{kernel_code}
+print(ms)
+'''
+    try:
+        result = subprocess.run(
+            [sys.executable, '-c', script],
+            capture_output=True, text=True, timeout=timeout,
+            cwd=os.path.dirname(os.path.abspath(__file__)) or '.',
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return float(result.stdout.strip())
+    except (subprocess.TimeoutExpired, ValueError):
+        pass
+    return None
+
+
 def get_num_matrices():
     from parser import matrix_list
     return len(matrix_list())
@@ -80,6 +158,20 @@ def _load_done_indices(csv_name):
             done = set(df['idx'].tolist())
             return done, df.to_dict('records')
     return set(), []
+
+
+def _load_done_rows(csv_name):
+    """Load completed rows from CSV as a dict keyed by idx.
+
+    Returns {idx: row_dict} so callers can check which columns are populated
+    and only run missing sections.
+    """
+    path = _csv_path(csv_name)
+    if os.path.isfile(path):
+        df = pd.read_csv(path)
+        if 'idx' in df.columns:
+            return {int(r['idx']): r for r in df.to_dict('records')}
+    return {}
 
 
 # ---------------------------------------------------------------------------
@@ -404,139 +496,212 @@ def run_broadcast(_start, _end, _save_and_plot, continue_mode=False):
     print(f"  correct={ans}  broadcast={xa_time:.3f}ms  csr_add={csr_time:.3f}ms")
 
 
+def _has_col(row_dict, col):
+    """Check if a column is present and not NaN in a row dict."""
+    v = row_dict.get(col)
+    if v is None:
+        return False
+    try:
+        import math
+        return not math.isnan(float(v))
+    except (TypeError, ValueError):
+        return True
+
+
 def run_nacho_comparison(start, end, save_and_plot, continue_mode=False):
-    """Benchmark nacho-generated CSR add and COO add against cuSPARSE & PyTorch."""
+    """Benchmark nacho-generated CSR add, COO add, and COO mul against cuSPARSE & PyTorch."""
     import torch
     import nacho_runtime
     from parser import matrix_list, parse_matrix
-    from coo_and_csr import csr_add, coo_add, torch_add, nacho_csr_add, nacho_coo_add, failure_reason
+    from coo_and_csr import csr_add, coo_add, torch_add, nacho_csr_add, nacho_coo_add, pytorch_coo_mul, failure_reason
     from plotter import plot
 
     csv_name = f"nacho_comparison_{start}-{end}"
     df = matrix_list()
     skip = {611}
 
+    # Column-aware continue mode: load existing rows keyed by idx so we can
+    # skip sections that are already populated (e.g. csr_add / coo_add) and
+    # only collect data for missing sections (e.g. coo_mul).
     if continue_mode:
-        done, rows = _load_done_indices(csv_name)
-        if done:
-            tqdm.write(f"Continuing: {len(done)} pairs already done")
+        existing = _load_done_rows(csv_name)
+        if existing:
+            tqdm.write(f"Continuing: {len(existing)} pairs in existing CSV")
     else:
-        done, rows = set(), []
+        existing = {}
 
-    indices = [i for i in range(start + 1, end) if i not in skip and i not in done]
+    indices = [i for i in range(start + 1, end) if i not in skip]
     for i in tqdm(indices, desc="Nacho Comparison", unit="pair"):
-        row = {
-            "idx": i,
-            "matrix_a": df.iloc[i - 1]['name'],
-            "matrix_b": df.iloc[i]['name'],
-        }
+        prev = existing.get(i, {})
+        need_csr = not _has_col(prev, 'csr_nacho_ms')
+        need_coo_add = not _has_col(prev, 'coo_nacho_ms')
+        need_coo_mul = not _has_col(prev, 'coo_mul_nacho_ms')
+
+        if not need_csr and not need_coo_add and not need_coo_mul:
+            continue  # fully done
+
+        # Start with existing data so we don't lose already-collected columns
+        row = dict(prev)
+        row["idx"] = i
+        row["matrix_a"] = df.iloc[i - 1]['name']
+        row["matrix_b"] = df.iloc[i]['name']
 
         # --- CSR add ---
-        try:
-            A_csr = parse_matrix(df.iloc[i - 1]['name'])
-            B_csr = parse_matrix(df.iloc[i]['name'])
-            M = min(A_csr.size(0), B_csr.size(0))
-            N = max(A_csr.size(1), B_csr.size(1))
+        if need_csr:
+            try:
+                A_csr = parse_matrix(df.iloc[i - 1]['name'])
+                B_csr = parse_matrix(df.iloc[i]['name'])
+                M = min(A_csr.size(0), B_csr.size(0))
+                N = max(A_csr.size(1), B_csr.size(1))
 
-            A_t = torch.sparse_csr_tensor(
-                A_csr.crow_indices()[:M+1],
-                A_csr.col_indices()[:A_csr.crow_indices()[M]],
-                A_csr.values()[:A_csr.crow_indices()[M]], (M, N))
-            B_t = torch.sparse_csr_tensor(
-                B_csr.crow_indices()[:M+1],
-                B_csr.col_indices()[:B_csr.crow_indices()[M]],
-                B_csr.values()[:B_csr.crow_indices()[M]], (M, N))
+                A_t = torch.sparse_csr_tensor(
+                    A_csr.crow_indices()[:M+1],
+                    A_csr.col_indices()[:A_csr.crow_indices()[M]],
+                    A_csr.values()[:A_csr.crow_indices()[M]], (M, N))
+                B_t = torch.sparse_csr_tensor(
+                    B_csr.crow_indices()[:M+1],
+                    B_csr.col_indices()[:B_csr.crow_indices()[M]],
+                    B_csr.values()[:B_csr.crow_indices()[M]], (M, N))
 
-            A_CSR = nacho_runtime.CSR(A_t.crow_indices(), A_t.col_indices(), A_t.values(),
-                                      torch.tensor([M, N], dtype=torch.int32))
-            B_CSR = nacho_runtime.CSR(B_t.crow_indices(), B_t.col_indices(), B_t.values(),
-                                      torch.tensor([M, N], dtype=torch.int32))
+                A_CSR = nacho_runtime.CSR(A_t.crow_indices(), A_t.col_indices(), A_t.values(),
+                                          torch.tensor([M, N], dtype=torch.int32))
+                B_CSR = nacho_runtime.CSR(B_t.crow_indices(), B_t.col_indices(), B_t.values(),
+                                          torch.tensor([M, N], dtype=torch.int32))
 
-            C_nacho, nacho_ms = nacho_csr_add(A_CSR, B_CSR)
-            C_manual, manual_ms = csr_add(A_CSR, B_CSR, False)
-            C_cusparse, cusparse_ms = csr_add(A_CSR, B_CSR, True)
-            C_pytorch, pytorch_ms = torch_add(A_t, B_t)
+                nacho_ms = _subprocess_nacho_timing(df.iloc[i-1]['name'], df.iloc[i]['name'], 'csr', M, N)
+                if nacho_ms is None:
+                    tqdm.write(f"nacho CSR crash at {i}, skipping nacho timing")
+                C_manual, manual_ms = csr_add(A_CSR, B_CSR, False)
+                C_cusparse, cusparse_ms = csr_add(A_CSR, B_CSR, True)
+                C_pytorch, pytorch_ms = torch_add(A_t, B_t)
 
-            csr_correct = (torch.equal(C_nacho.indptr, C_cusparse.indptr)
-                           and torch.equal(C_nacho.indices, C_cusparse.indices)
-                           and torch.allclose(C_nacho.data, C_cusparse.data, rtol=1e-4, atol=1e-5))
-            if not csr_correct:
-                tqdm.write(f"CSR add mismatch at {i}: {df.iloc[i-1]['name']} x {df.iloc[i]['name']}")
-                failure_reason(C_nacho, C_cusparse)
+                csr_correct = (torch.equal(C_manual.indptr, C_cusparse.indptr)
+                               and torch.equal(C_manual.indices, C_cusparse.indices)
+                               and torch.allclose(C_manual.data, C_cusparse.data, rtol=1e-4, atol=1e-5))
+                if not csr_correct:
+                    tqdm.write(f"CSR add mismatch at {i}: {df.iloc[i-1]['name']} x {df.iloc[i]['name']}")
+                    failure_reason(C_manual, C_cusparse)
 
-            plus_row = A_t.crow_indices() + B_t.crow_indices()
-            row.update({
-                "nnz_csr": plus_row.max().item(),
-                "csr_nacho_ms": nacho_ms,
-                "csr_manual_ms": manual_ms,
-                "csr_cusparse_ms": cusparse_ms,
-                "csr_pytorch_ms": pytorch_ms,
-                "csr_correct": csr_correct,
-            })
-        except (RuntimeError, MemoryError) as e:
-            tqdm.write(f"CSR skip {i}: {e}")
-            torch.cuda.empty_cache()
+                plus_row = A_t.crow_indices() + B_t.crow_indices()
+                row.update({
+                    "nnz_csr": plus_row.max().item(),
+                    "csr_nacho_ms": nacho_ms,
+                    "csr_manual_ms": manual_ms,
+                    "csr_cusparse_ms": cusparse_ms,
+                    "csr_pytorch_ms": pytorch_ms,
+                    "csr_correct": csr_correct,
+                })
+            except (RuntimeError, MemoryError) as e:
+                tqdm.write(f"CSR skip {i}: {e}")
+                torch.cuda.empty_cache()
 
         # --- COO add ---
-        try:
-            A_coo = parse_matrix(df.iloc[i - 1]['name'], True).coalesce()
-            B_coo = parse_matrix(df.iloc[i]['name'], True).coalesce()
-            M = max(A_coo.size(0), B_coo.size(0))
-            N = max(A_coo.size(1), B_coo.size(1))
+        if need_coo_add:
+            try:
+                A_coo = parse_matrix(df.iloc[i - 1]['name'], True).coalesce()
+                B_coo = parse_matrix(df.iloc[i]['name'], True).coalesce()
+                M = max(A_coo.size(0), B_coo.size(0))
+                N = max(A_coo.size(1), B_coo.size(1))
 
-            A_t_coo = torch.sparse_coo_tensor(A_coo.indices(), A_coo.values(), (M, N)).coalesce()
-            B_t_coo = torch.sparse_coo_tensor(B_coo.indices(), B_coo.values(), (M, N)).coalesce()
+                A_t_coo = torch.sparse_coo_tensor(A_coo.indices(), A_coo.values(), (M, N)).coalesce()
+                B_t_coo = torch.sparse_coo_tensor(B_coo.indices(), B_coo.values(), (M, N)).coalesce()
 
-            A_COO = nacho_runtime.COO(A_coo.indices()[0], A_coo.indices()[1], A_coo.values(),
-                                      torch.tensor([M, N], dtype=torch.int32))
-            B_COO = nacho_runtime.COO(B_coo.indices()[0], B_coo.indices()[1], B_coo.values(),
-                                      torch.tensor([M, N], dtype=torch.int32))
+                A_COO = nacho_runtime.COO(A_coo.indices()[0], A_coo.indices()[1], A_coo.values(),
+                                          torch.tensor([M, N], dtype=torch.int32))
+                B_COO = nacho_runtime.COO(B_coo.indices()[0], B_coo.indices()[1], B_coo.values(),
+                                          torch.tensor([M, N], dtype=torch.int32))
 
-            C_coo_nacho, coo_nacho_ms = nacho_coo_add(A_COO, B_COO)
-            C_coo_manual, coo_manual_ms = coo_add(A_COO, B_COO, False)
-            C_coo_pytorch, coo_pytorch_ms = coo_add(A_t_coo, B_t_coo, True)
+                coo_nacho_ms = _subprocess_nacho_timing(df.iloc[i-1]['name'], df.iloc[i]['name'], 'coo', M, N)
+                if coo_nacho_ms is None:
+                    tqdm.write(f"nacho COO crash at {i}, skipping nacho timing")
+                C_coo_manual, coo_manual_ms = coo_add(A_COO, B_COO, False)
+                C_coo_pytorch, coo_pytorch_ms = coo_add(A_t_coo, B_t_coo, True)
 
-            coo_correct = (torch.equal(C_coo_pytorch.indices()[0], C_coo_manual.row)
-                           and torch.equal(C_coo_pytorch.indices()[1], C_coo_manual.col)
-                           and torch.equal(C_coo_pytorch.values(), C_coo_manual.data))
-            if not coo_correct:
-                tqdm.write(f"COO add mismatch at {i}: {df.iloc[i-1]['name']} x {df.iloc[i]['name']}")
+                coo_correct = (torch.equal(C_coo_pytorch.indices()[0], C_coo_manual.row)
+                               and torch.equal(C_coo_pytorch.indices()[1], C_coo_manual.col)
+                               and torch.equal(C_coo_pytorch.values(), C_coo_manual.data))
+                if not coo_correct:
+                    tqdm.write(f"COO add mismatch at {i}: {df.iloc[i-1]['name']} x {df.iloc[i]['name']}")
 
-            row.update({
-                "nnz_coo": A_COO.data.numel() + B_COO.data.numel(),
-                "coo_nacho_ms": coo_nacho_ms,
-                "coo_manual_ms": coo_manual_ms,
-                "coo_pytorch_ms": coo_pytorch_ms,
-                "coo_correct": coo_correct,
-            })
-        except (RuntimeError, MemoryError) as e:
-            tqdm.write(f"COO skip {i}: {e}")
-            torch.cuda.empty_cache()
+                row.update({
+                    "nnz_coo": A_COO.data.numel() + B_COO.data.numel(),
+                    "coo_nacho_ms": coo_nacho_ms,
+                    "coo_manual_ms": coo_manual_ms,
+                    "coo_pytorch_ms": coo_pytorch_ms,
+                    "coo_correct": coo_correct,
+                })
+            except (RuntimeError, MemoryError) as e:
+                tqdm.write(f"COO add skip {i}: {e}")
+                torch.cuda.empty_cache()
 
-        rows.append(row)
-        if len(rows) % SAVE_EVERY == 0:
-            _save_rows(rows, csv_name)
+        # --- COO mul (element-wise) ---
+        if need_coo_mul:
+            try:
+                A_coo = parse_matrix(df.iloc[i - 1]['name'], True).coalesce()
+                B_coo = parse_matrix(df.iloc[i]['name'], True).coalesce()
+                M = max(A_coo.size(0), B_coo.size(0))
+                N = max(A_coo.size(1), B_coo.size(1))
 
-    _save_rows(rows, csv_name)
+                A_t_coo = torch.sparse_coo_tensor(A_coo.indices(), A_coo.values(), (M, N)).coalesce()
+                B_t_coo = torch.sparse_coo_tensor(B_coo.indices(), B_coo.values(), (M, N)).coalesce()
 
-    if save_and_plot and rows:
-        rdf = pd.DataFrame(rows)
+                A_COO = nacho_runtime.COO(A_coo.indices()[0], A_coo.indices()[1], A_coo.values(),
+                                          torch.tensor([M, N], dtype=torch.int32))
+                B_COO = nacho_runtime.COO(B_coo.indices()[0], B_coo.indices()[1], B_coo.values(),
+                                          torch.tensor([M, N], dtype=torch.int32))
+
+                coo_mul_nacho_ms = _subprocess_nacho_timing(df.iloc[i-1]['name'], df.iloc[i]['name'], 'coo_mul', M, N)
+                if coo_mul_nacho_ms is None:
+                    tqdm.write(f"nacho COO mul crash at {i}, skipping nacho timing")
+                _, coo_mul_pytorch_ms = pytorch_coo_mul(A_t_coo, B_t_coo)
+
+                row.update({
+                    "nnz_coo_mul": A_COO.data.numel() + B_COO.data.numel(),
+                    "coo_mul_nacho_ms": coo_mul_nacho_ms,
+                    "coo_mul_pytorch_ms": coo_mul_pytorch_ms,
+                })
+            except (RuntimeError, MemoryError) as e:
+                tqdm.write(f"COO mul skip {i}: {e}")
+                torch.cuda.empty_cache()
+
+        existing[i] = row
+        # Save every row — nanobind aborts on large matrices can't be caught
+        _save_rows(list(existing.values()), csv_name)
+
+    _save_rows(list(existing.values()), csv_name)
+
+    if save_and_plot and existing:
+        rdf = pd.DataFrame(list(existing.values()))
         # CSR add plot: nacho vs cusparse vs pytorch
-        csr_rows = rdf.dropna(subset=["nnz_csr"])
-        if not csr_rows.empty:
-            plot(csr_rows["nnz_csr"].tolist(),
-                 csr_rows["csr_nacho_ms"].tolist(),
-                 csr_rows["csr_cusparse_ms"].tolist(),
-                 csr_rows["csr_pytorch_ms"].tolist(),
-                 f"nacho_csr_add_{start}-{end}")
+        if 'nnz_csr' in rdf.columns:
+            csr_rows = rdf.dropna(subset=["nnz_csr"])
+            if not csr_rows.empty:
+                plot(csr_rows["nnz_csr"].tolist(),
+                     csr_rows["csr_nacho_ms"].tolist(),
+                     csr_rows["csr_cusparse_ms"].tolist(),
+                     csr_rows["csr_pytorch_ms"].tolist(),
+                     f"nacho_csr_add_{start}-{end}",
+                     labels=("nacho", "cuSPARSE", "PyTorch"))
         # COO add plot: nacho vs manual vs pytorch
-        coo_rows = rdf.dropna(subset=["nnz_coo"])
-        if not coo_rows.empty:
-            plot(coo_rows["nnz_coo"].tolist(),
-                 coo_rows["coo_nacho_ms"].tolist(),
-                 coo_rows["coo_manual_ms"].tolist(),
-                 coo_rows["coo_pytorch_ms"].tolist(),
-                 f"nacho_coo_add_{start}-{end}")
+        if 'nnz_coo' in rdf.columns:
+            coo_rows = rdf.dropna(subset=["nnz_coo"])
+            if not coo_rows.empty:
+                plot(coo_rows["nnz_coo"].tolist(),
+                     coo_rows["coo_nacho_ms"].tolist(),
+                     coo_rows["coo_manual_ms"].tolist(),
+                     coo_rows["coo_pytorch_ms"].tolist(),
+                     f"nacho_coo_add_{start}-{end}",
+                     labels=("nacho", "Manual", "PyTorch"))
+        # COO mul plot: nacho vs pytorch
+        if 'nnz_coo_mul' in rdf.columns:
+            coo_mul_rows = rdf.dropna(subset=["nnz_coo_mul"])
+            if not coo_mul_rows.empty:
+                plot(coo_mul_rows["nnz_coo_mul"].tolist(),
+                     coo_mul_rows["coo_mul_nacho_ms"].tolist(),
+                     [],
+                     coo_mul_rows["coo_mul_pytorch_ms"].tolist(),
+                     f"nacho_coo_mul_{start}-{end}",
+                     labels=("nacho", "", "PyTorch"))
 
 
 BENCHMARKS = {
@@ -563,7 +728,7 @@ benchmarks:
   spgemm           Sparse matrix-matrix multiply (manual vs cuSPARSE)
   sparse_vectors   Sparse vector a*b+c with different fusion strategies
   broadcast         Broadcast x*A correctness + timing
-  nacho_comparison  Nacho-generated CSR add & COO add vs cuSPARSE & PyTorch
+  nacho_comparison  Nacho-generated CSR add, COO add & COO mul vs cuSPARSE & PyTorch
   all               Run all benchmarks (default)
 
 examples:

@@ -224,6 +224,20 @@ def nacho_coo_add(A_COO, B_COO):
         iterations=14, trim=2,
     )
 
+def nacho_coo_mul(A_COO, B_COO):
+    """Time nacho-generated COO element-wise mul kernel."""
+    return _time_on_stream(
+        lambda: nacho_runtime.nacho_coo_mul(A_COO, B_COO),
+        iterations=14, trim=2,
+    )
+
+def pytorch_coo_mul(A_coo, B_coo):
+    """Time PyTorch sparse COO element-wise mul."""
+    return _time_on_stream(
+        lambda: (A_coo * B_coo).coalesce(),
+        iterations=14, trim=2,
+    )
+
 
 
 def failure_reason(C_manual, C_result):
