@@ -487,6 +487,40 @@ def call_coo_add(a_ri, a_ci, a_val, nrows, ncols,
     return r_ri, r_ci, r_val
 
 
+def call_coo_mul(a_ri, a_ci, a_val, nrows, ncols,
+                 b_ri, b_ci, b_val):
+    out_nnz = c_int(0)
+    out_dim_i_length = c_int(0)
+    out_j_indices = c_int_p()
+    out_i_indices = c_int_p()
+    out_values = c_float_p()
+    _lib.cpu_coo_mul(
+        c_int(nrows), c_int(ncols),
+        c_int(len(a_ri)), _int_array(a_ri),
+        c_int(len(a_ci)), _int_array(a_ci),
+        _float_array(a_val), c_int(len(a_val)),
+        c_int(nrows), c_int(ncols),
+        c_int(len(b_ri)), _int_array(b_ri),
+        c_int(len(b_ci)), _int_array(b_ci),
+        _float_array(b_val), c_int(len(b_val)),
+        c_int(nrows), c_int(ncols),
+        ctypes.byref(out_nnz), ctypes.byref(out_dim_i_length),
+        ctypes.byref(out_j_indices), ctypes.byref(out_i_indices),
+        ctypes.byref(out_values),
+    )
+    nnz = out_nnz.value
+    if nnz == 0:
+        return [], [], []
+    n_i = out_dim_i_length.value
+    r_ri = _copy_int_buf(out_i_indices, n_i)
+    r_ci = _copy_int_buf(out_j_indices, nnz)
+    r_val = _copy_float_buf(out_values, nnz)
+    _free(out_i_indices)
+    _free(out_j_indices)
+    _free(out_values)
+    return r_ri, r_ci, r_val
+
+
 # ===========================================================================
 # Test classes
 # ===========================================================================
@@ -910,4 +944,54 @@ class TestCooAdd:
         a_d = coo_to_dense(a_ri, a_ci, a_val, nrows, ncols)
         b_d = coo_to_dense(b_ri, b_ci, b_val, nrows, ncols)
         expected = a_d + b_d
+        np.testing.assert_allclose(got, expected, rtol=1e-4, atol=1e-5)
+
+
+class TestCooMul:
+    def test_basic_intersection(self):
+        # A: (0,0)=2, (0,1)=3, (1,0)=4
+        # B: (0,1)=5, (1,0)=6, (1,1)=7
+        # intersection: (0,1)=15, (1,0)=24
+        r_ri, r_ci, r_val = call_coo_mul(
+            [0, 0, 1], [0, 1, 0], [2.0, 3.0, 4.0], 2, 2,
+            [0, 1, 1], [1, 0, 1], [5.0, 6.0, 7.0],
+        )
+        got = coo_to_dense(r_ri, r_ci, r_val, 2, 2)
+        expected = np.array([[0.0, 15.0], [24.0, 0.0]], dtype=np.float32)
+        np.testing.assert_allclose(got, expected, rtol=1e-5)
+
+    def test_no_overlap(self):
+        r_ri, r_ci, r_val = call_coo_mul(
+            [0], [0], [1.0], 2, 2,
+            [1], [1], [2.0],
+        )
+        assert r_ri == [] and r_ci == [] and r_val == []
+
+    def test_full_overlap(self):
+        r_ri, r_ci, r_val = call_coo_mul(
+            [0, 1], [0, 1], [2.0, 3.0], 2, 2,
+            [0, 1], [0, 1], [4.0, 5.0],
+        )
+        got = coo_to_dense(r_ri, r_ci, r_val, 2, 2)
+        expected = np.array([[8.0, 0.0], [0.0, 15.0]], dtype=np.float32)
+        np.testing.assert_allclose(got, expected, rtol=1e-5)
+
+    @pytest.mark.parametrize("seed", range(20))
+    def test_random_correctness(self, seed):
+        rng = random.Random(seed)
+        nrows = rng.randint(3, 20)
+        ncols = rng.randint(3, 20)
+        density = rng.uniform(0.1, 0.4)
+        a_ri, a_ci, a_val = random_coo(nrows, ncols, density, seed * 1000)
+        b_ri, b_ci, b_val = random_coo(nrows, ncols, density, seed * 1000 + 1)
+        if not a_ri or not b_ri:
+            return
+        r_ri, r_ci, r_val = call_coo_mul(
+            a_ri, a_ci, a_val, nrows, ncols,
+            b_ri, b_ci, b_val,
+        )
+        got = coo_to_dense(r_ri, r_ci, r_val, nrows, ncols)
+        a_d = coo_to_dense(a_ri, a_ci, a_val, nrows, ncols)
+        b_d = coo_to_dense(b_ri, b_ci, b_val, nrows, ncols)
+        expected = np.multiply(a_d, b_d)
         np.testing.assert_allclose(got, expected, rtol=1e-4, atol=1e-5)

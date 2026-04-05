@@ -24,6 +24,7 @@ set(NACHO_GENERATED_OPS
   csr_add
   tcsf_add
   coo_add
+  coo_mul
 )
 
 # Allow callers to provide a prebuilt compiler path. If omitted, default to

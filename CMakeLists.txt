@@ -159,7 +159,7 @@ if (nacho_BUILD_TESTING)
     # CPU codegen tests: generate CPU code, compile, and run
     set(NACHO_CPU_EXPRESSIONS
         sparse_vec_mul sparse_vec_add sparse_vec_apb_c sparse_vec_ab_pc
-        csr_add dcsr_mul dcsr_add tcsf_add coo_add
+        csr_add dcsr_mul dcsr_add tcsf_add coo_add coo_mul
     )
 
     set(NACHO_CPU_GEN_DIR "${CMAKE_BINARY_DIR}/cpu_gen")

@@ -390,6 +390,14 @@ const std::map<std::string, ExprBuilder> EXPRESSIONS = {
         TensorType coo_f32(coo, dType::Float32);
         return Tensor::make(coo_f32, "A") + Tensor::make(coo_f32, "B");
     }},
+    {"coo_mul", []() {
+        Format coo = Format::ordered({
+            {"i", LevelFormat::Compressed_non_unique},
+            {"j", LevelFormat::Singleton_unique},
+        });
+        TensorType coo_f32(coo, dType::Float32);
+        return Tensor::make(coo_f32, "A") * Tensor::make(coo_f32, "B");
+    }},
 };
 // clang-format on
 
