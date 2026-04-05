@@ -533,7 +533,11 @@ def run_nacho_comparison(start, end, save_and_plot, continue_mode=False, csv_nam
     indices = [i for i in range(start + 1, end) if i not in skip]
     for i in tqdm(indices, desc="Nacho Comparison", unit="pair"):
         prev = existing.get(i, {})
-        need_csr = not _has_col(prev, 'csr_nacho_ms')
+        need_csr_nacho = not _has_col(prev, 'csr_nacho_ms')
+        need_csr_baseline = (not _has_col(prev, 'csr_cusparse_ms')
+                             or not _has_col(prev, 'csr_manual_ms')
+                             or not _has_col(prev, 'csr_pytorch_ms'))
+        need_csr = need_csr_nacho or need_csr_baseline
         need_coo_add = not _has_col(prev, 'coo_nacho_ms')
         need_coo_mul = not _has_col(prev, 'coo_mul_nacho_ms')
 
@@ -568,9 +572,14 @@ def run_nacho_comparison(start, end, save_and_plot, continue_mode=False, csv_nam
                 B_CSR = nacho_runtime.CSR(B_t.crow_indices(), B_t.col_indices(), B_t.values(),
                                           torch.tensor([M, N], dtype=torch.int32))
 
-                nacho_ms = _subprocess_nacho_timing(df.iloc[i-1]['name'], df.iloc[i]['name'], 'csr', M, N)
-                if nacho_ms is None:
-                    tqdm.write(f"nacho CSR crash at {i}, skipping nacho timing")
+                # Only run expensive nacho subprocess if nacho data is missing
+                if need_csr_nacho:
+                    nacho_ms = _subprocess_nacho_timing(df.iloc[i-1]['name'], df.iloc[i]['name'], 'csr', M, N)
+                    if nacho_ms is None:
+                        tqdm.write(f"nacho CSR crash at {i}, skipping nacho timing")
+                else:
+                    nacho_ms = prev.get('csr_nacho_ms')
+
                 C_manual, manual_ms = csr_add(A_CSR, B_CSR, False)
                 C_cusparse, cusparse_ms = csr_add(A_CSR, B_CSR, True)
                 C_pytorch, pytorch_ms = torch_add(A_t, B_t)
@@ -691,7 +700,7 @@ def run_nacho_comparison(start, end, save_and_plot, continue_mode=False, csv_nam
                      [],
                      coo_rows["coo_pytorch_ms"].tolist(),
                      f"nacho_coo_add_{start}-{end}",
-                     labels=("Nacho", "", "cuSPARSE"))
+                     labels=("Nacho", "", "PyTorch"))
         # COO mul plot: nacho vs pytorch
         if 'nnz_coo_mul' in rdf.columns:
             coo_mul_rows = rdf.dropna(subset=["nnz_coo_mul"])
