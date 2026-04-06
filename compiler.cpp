@@ -228,6 +228,37 @@ void test() {
 //     std::cout << "\n\n";
 }
 
+void spmspv() {
+    std::cout << "SpMSpV test\n";
+    // A is CSR: (Dense, Compressed_unique) over (i, j)
+    Format csr = Format::ordered({
+        {"i", LevelFormat::Dense},
+        {"j", LevelFormat::Compressed_unique},
+    });
+
+    // x is a sparse vector: (Compressed_unique) over (j)
+    Format sparse_vec = Format::ordered({
+        {"j", LevelFormat::Compressed_unique},
+    });
+
+    TensorType csr_f32 = TensorType(csr, dType::Float32);
+    TensorType svec_f32 = TensorType(sparse_vec, dType::Float32);
+
+    Expr A_ij = Tensor::make(csr_f32, "A");
+    Expr x_j = Tensor::make(svec_f32, "x");
+
+    // z_i = sum_j(A_ij * x_j) — sparse matrix times sparse vector
+    Expr z_i = sum("j", A_ij * x_j);
+
+    std::cout << z_i << "\n";
+    std::cout << "Expect dense vector: " << z_i.type().format << "\n";
+
+    CIN cin = compile_to_cin(z_i);
+    std::cout << cin << "\n";
+    nacho::backend::CINLowerer(compile_to_cin(z_i), std::cout).lower_cin();
+    std::cout << "\n\n";
+}
+
 void spgemm() {
     std::cout << "SpGEMM test\n";
     Format csr0 = Format::ordered({
@@ -563,10 +594,11 @@ void test_locator_optimization() {
 
 // TODO: write a parser.
 int main(int argc, char **argv) {
-    test();
+    // test();
     // test_format_inf();
     // test_vec();
     // spgemm();
+    spmspv();
     // sss_s_s();
     // make_binary_search();
     // make_binary_partition();

@@ -74,6 +74,9 @@ Seq Universe::make(std::string idx, std::vector<std::tuple<std::string, TensorTy
 
     // a universe sequence is not sparse
     node->is_sparse = false;
+    node->is_compressed = false;
+    node->is_singleton = false;
+    node->is_unique = false;
     return node;
 }
 
