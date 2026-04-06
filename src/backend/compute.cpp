@@ -4,6 +4,8 @@
 #include "llir/Function.h"
 #include "llir/LLIR.h"
 
+#include <functional>
+
 namespace nacho {
 namespace backend {
 
@@ -403,7 +405,7 @@ llir::lStmt ComputeKernelLowerer::lower_assign_statement(
         void visit(const cTensor *node) override {
             auto get_iter_vars_operands = [&](TensorLowerer &tlower, TensorLevelNum end_level) {
                 std::map<TensorLevelNum, llir::lExpr> iter_vars;
-                for (TensorLevelNum level = BEFORE_FIRST_LEVEL+1; level <= end_level; ++level) {
+                for (TensorLevelNum level = BEFORE_FIRST_LEVEL+1; level < end_level; ++level) {
                     std::string iter_name = tlower.get_iter_name(level);
                     iter_vars[level] = llir::lVar::make(
                         llir::Generic_t::make("index_t"),
@@ -897,7 +899,7 @@ llir::lStmt ComputeKernelLowerer::lower_loop(
             auto next_level = TensorLevelNum(current_level.get() + 1);
             // If this is not the innermost loop need to wrap the increment statement under a condition
             // also, add the offset calculation statement here
-            if(result_tensor.tensor_level_to_loop_num(next_level) != current_sparse_intersection+1 && result_tensor.is_sparse(next_level) && result_tensor.is_compressed(next_level)) {
+            if(next_level < result_tensor.end_tensor_level() && result_tensor.tensor_level_to_loop_num(next_level) != current_sparse_intersection+1 && result_tensor.is_sparse(next_level) && result_tensor.is_compressed(next_level)) {
                 // offset calculation statement here
                 // eg :- result.dim_j_offsets[offset_i + 1] = offset_j
                 TensorLevelNum level = result_tensor.loop_num_to_tensor_level(loop_num+1);

@@ -32,10 +32,10 @@ struct BaseSeqNode : public IRSeqNode {
     BaseSeqNode(SeqEnum t) : IRSeqNode(t) {}
     virtual Seq mutate_Seq(Mutator *m) const = 0;
 
-    bool is_sparse;
-    bool is_unique;
-    bool is_compressed;
-    bool is_singleton;
+    bool is_sparse = false;
+    bool is_unique = false;
+    bool is_compressed = false;
+    bool is_singleton = false;
 };
 
 template <typename T>

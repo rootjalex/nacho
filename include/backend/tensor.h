@@ -3,6 +3,7 @@
 #include "CIN.h"
 #include "Type.h"
 #include "llir/LLIR.h"
+#include <algorithm>
 #include <numeric>
 #include <ostream>
 #include <map>
