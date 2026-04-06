@@ -403,7 +403,7 @@ llir::lStmt ComputeKernelLowerer::lower_assign_statement(
         void visit(const cTensor *node) override {
             auto get_iter_vars_operands = [&](TensorLowerer &tlower, TensorLevelNum end_level) {
                 std::map<TensorLevelNum, llir::lExpr> iter_vars;
-                for (TensorLevelNum level = BEFORE_FIRST_LEVEL+1; level <= end_level; ++level) {
+                for (TensorLevelNum level = BEFORE_FIRST_LEVEL+1; level < end_level; ++level) {
                     std::string iter_name = tlower.get_iter_name(level);
                     iter_vars[level] = llir::lVar::make(
                         llir::Generic_t::make("index_t"),
