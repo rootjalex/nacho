@@ -419,40 +419,41 @@ __global__ void csr_add_mergepath(
     return ;
 }
 
-void gpu_manual_csr_add_f32(int* shape, 
-        int* rowOffsA, int* colIndsA, float* ValsA, uint64_t nnzA, 
-        int* rowOffsB, int* colIndsB, float* ValsB, uint64_t nnzB, 
+void gpu_manual_csr_add_f32(int* shape,
+        int* rowOffsA, int* colIndsA, float* ValsA, uint64_t nnzA,
+        int* rowOffsB, int* colIndsB, float* ValsB, uint64_t nnzB,
         int* &rowOffsC, int* &colIndsC, float* &ValsC, int* &nnzC) {
 
-        
+        const cudaStream_t stream = 0;
+
         int * rowCountC, *nnz_count;
-        
-        CHECK_CUDA(cudaMalloc((void**)&rowCountC, sizeof(int)*(shape[0]+1)));
-        CHECK_CUDA(cudaMalloc((void**)&rowOffsC, sizeof(int)*(shape[0]+1)));
-        CHECK_CUDA(cudaMemset(rowCountC, 0, sizeof(int)*(shape[0]+1)));
-        CHECK_CUDA(cudaMemset(rowOffsC, 0, sizeof(int)*(shape[0]+1)));
-        
+
+        CHECK_CUDA(cudaMallocAsync((void**)&rowCountC, sizeof(int)*(shape[0]+1), stream));
+        CHECK_CUDA(cudaMallocAsync((void**)&rowOffsC, sizeof(int)*(shape[0]+1), stream));
+        CHECK_CUDA(cudaMemsetAsync(rowCountC, 0, sizeof(int)*(shape[0]+1), stream));
+        CHECK_CUDA(cudaMemsetAsync(rowOffsC, 0, sizeof(int)*(shape[0]+1), stream));
+
         int blockSize = 256;
         int numBlocks = 256; // tune this parameter
-        int per_thread_work = (nnzA+nnzB)/(numBlocks*blockSize) + 1; 
+        int per_thread_work = (nnzA+nnzB)/(numBlocks*blockSize) + 1;
         //int numBlocks = (nnzA + nnzB)/ (blockSize * per_thread_work) + 1;
         //printf("nnzA %d nnzB %d\n", nnzA, nnzB);
-        
+
         //printf("Using %d blocks of size %d\n per_thread_work %d\n", numBlocks, blockSize, per_thread_work);
         int * mergepath_boundary_A_row;
         int * mergepath_boundary_B_row;
         int * mergepath_boundary_A_col;
         int * mergepath_boundary_B_col;
-        CHECK_CUDA(cudaMalloc((void**)&nnz_count, sizeof(int)*((numBlocks*blockSize))));
-        CHECK_CUDA(cudaMalloc((void**)&mergepath_boundary_A_row, sizeof(int)*((numBlocks*blockSize))));
-        CHECK_CUDA(cudaMalloc((void**)&mergepath_boundary_A_col, sizeof(int)*((numBlocks*blockSize))));
-        CHECK_CUDA(cudaMalloc((void**)&mergepath_boundary_B_row, sizeof(int)*((numBlocks*blockSize))));
-        CHECK_CUDA(cudaMalloc((void**)&mergepath_boundary_B_col, sizeof(int)*((numBlocks*blockSize))));
+        CHECK_CUDA(cudaMallocAsync((void**)&nnz_count, sizeof(int)*((numBlocks*blockSize)), stream));
+        CHECK_CUDA(cudaMallocAsync((void**)&mergepath_boundary_A_row, sizeof(int)*((numBlocks*blockSize)), stream));
+        CHECK_CUDA(cudaMallocAsync((void**)&mergepath_boundary_A_col, sizeof(int)*((numBlocks*blockSize)), stream));
+        CHECK_CUDA(cudaMallocAsync((void**)&mergepath_boundary_B_row, sizeof(int)*((numBlocks*blockSize)), stream));
+        CHECK_CUDA(cudaMallocAsync((void**)&mergepath_boundary_B_col, sizeof(int)*((numBlocks*blockSize)), stream));
 
 
 
         //printf("Starting mergepath boundary find with %d blocks of size %d\n", numBlocks, blockSize);
-        mergepath_boundary_find<<<numBlocks, blockSize>>>(
+        mergepath_boundary_find<<<numBlocks, blockSize, 0, stream>>>(
             shape[0], shape[1],
             rowOffsA, colIndsA,
             rowOffsB, colIndsB,
@@ -461,18 +462,18 @@ void gpu_manual_csr_add_f32(int* shape,
             per_thread_work
         );
         CHECK_CUDA(cudaGetLastError());
-        
-        
+
+
 
         //printf("Starting csradd kernel with %d blocks of size %d\n", numBlocks, blockSize);
-        count_nnz_mergepath_kernel<<<numBlocks, blockSize>>>(
+        count_nnz_mergepath_kernel<<<numBlocks, blockSize, 0, stream>>>(
             shape[0], shape[1],
             rowOffsA, colIndsA,
             rowOffsB, colIndsB,
             mergepath_boundary_A_row, mergepath_boundary_B_row,
             mergepath_boundary_A_col, mergepath_boundary_B_col,
             rowCountC, nnz_count
-        );      
+        );
         CHECK_CUDA( cudaGetLastError() );
         //printf("Finished csradd kernel\n", numBlocks, blockSize);
 
@@ -480,36 +481,37 @@ void gpu_manual_csr_add_f32(int* shape,
         size_t temp_storage_bytes = 0;
 
         // First call: just to get temp storage size
-        cub::DeviceScan::InclusiveSum(d_temp_storage, temp_storage_bytes, rowCountC, rowOffsC+1, shape[0]);
+        cub::DeviceScan::InclusiveSum(d_temp_storage, temp_storage_bytes, rowCountC, rowOffsC+1, shape[0], stream);
 
-        cudaMalloc(&d_temp_storage, temp_storage_bytes);
+        cudaMallocAsync(&d_temp_storage, temp_storage_bytes, stream);
 
-        cub::DeviceScan::InclusiveSum(d_temp_storage, temp_storage_bytes, rowCountC, rowOffsC+1, shape[0]);
-        CHECK_CUDA( cudaMemcpy(nnzC, rowOffsC+shape[0], sizeof(int), cudaMemcpyDeviceToHost) );
-        
-        cudaFree(d_temp_storage);
+        cub::DeviceScan::InclusiveSum(d_temp_storage, temp_storage_bytes, rowCountC, rowOffsC+1, shape[0], stream);
+        CHECK_CUDA( cudaMemcpyAsync(nnzC, rowOffsC+shape[0], sizeof(int), cudaMemcpyDeviceToHost, stream) );
+        CHECK_CUDA( cudaStreamSynchronize(stream) );
+
+        cudaFreeAsync(d_temp_storage, stream);
         d_temp_storage = nullptr;
         temp_storage_bytes = 0;
 
         int * nnzC_prefix;
-        CHECK_CUDA(cudaMalloc((void**)&nnzC_prefix, sizeof(int)*((numBlocks*blockSize))));
-        cub::DeviceScan::ExclusiveSum(d_temp_storage, temp_storage_bytes, nnz_count, nnzC_prefix, numBlocks*blockSize);
+        CHECK_CUDA(cudaMallocAsync((void**)&nnzC_prefix, sizeof(int)*((numBlocks*blockSize)), stream));
+        cub::DeviceScan::ExclusiveSum(d_temp_storage, temp_storage_bytes, nnz_count, nnzC_prefix, numBlocks*blockSize, stream);
 
-        cudaMalloc(&d_temp_storage, temp_storage_bytes);
+        cudaMallocAsync(&d_temp_storage, temp_storage_bytes, stream);
 
-        cub::DeviceScan::ExclusiveSum(d_temp_storage, temp_storage_bytes, nnz_count, nnzC_prefix, numBlocks*blockSize);
-        cudaFree(d_temp_storage);
-        
-        
-        CHECK_CUDA(cudaMalloc((void**)&colIndsC, sizeof(int)*(*nnzC)));
-        CHECK_CUDA(cudaMalloc((void**)&ValsC, sizeof(float)*(*nnzC)));
+        cub::DeviceScan::ExclusiveSum(d_temp_storage, temp_storage_bytes, nnz_count, nnzC_prefix, numBlocks*blockSize, stream);
+        cudaFreeAsync(d_temp_storage, stream);
 
-        
+
+        CHECK_CUDA(cudaMallocAsync((void**)&colIndsC, sizeof(int)*(*nnzC), stream));
+        CHECK_CUDA(cudaMallocAsync((void**)&ValsC, sizeof(float)*(*nnzC), stream));
+
+
         //print_cuda(rowOffsC, 100);
         //print_cuda(nnzC_prefix, 10);
 
         //printf("Starting add mergepath kernel with %d blocks of size %d\n", numBlocks, blockSize);
-        csr_add_mergepath<<<numBlocks, blockSize>>>(
+        csr_add_mergepath<<<numBlocks, blockSize, 0, stream>>>(
             shape[0], shape[1],
             rowOffsA, colIndsA, ValsA,
             rowOffsB, colIndsB, ValsB,
@@ -520,95 +522,93 @@ void gpu_manual_csr_add_f32(int* shape,
         );
         CHECK_CUDA( cudaGetLastError() );
 
-        cudaFree(mergepath_boundary_A_row);
-        cudaFree(mergepath_boundary_B_row);
-        cudaFree(mergepath_boundary_A_col);
-        cudaFree(mergepath_boundary_B_col);
-        cudaFree(rowCountC);
-        cudaFree(nnz_count);
-        cudaFree(nnzC_prefix);
-
-        // Synchronize so CUDA event timing captures actual GPU execution
-        CHECK_CUDA(cudaDeviceSynchronize());
+        cudaFreeAsync(mergepath_boundary_A_row, stream);
+        cudaFreeAsync(mergepath_boundary_B_row, stream);
+        cudaFreeAsync(mergepath_boundary_A_col, stream);
+        cudaFreeAsync(mergepath_boundary_B_col, stream);
+        cudaFreeAsync(rowCountC, stream);
+        cudaFreeAsync(nnz_count, stream);
+        cudaFreeAsync(nnzC_prefix, stream);
 
         return;
 }
 
 
-// Persistent cuSPARSE state (amortise handle/descriptor creation across calls)
+// Persistent cuSPARSE handle (amortise creation across calls)
 static cusparseHandle_t s_handle = nullptr;
-static cusparseMatDescr_t s_descrA = nullptr, s_descrB = nullptr, s_descrC = nullptr;
-
-static void ensure_cusparse_init() {
-    if (s_handle) return;
-    CHECK_CUSPARSE(cusparseCreate(&s_handle));
-    CHECK_CUSPARSE(cusparseCreateMatDescr(&s_descrA));
-    CHECK_CUSPARSE(cusparseCreateMatDescr(&s_descrB));
-    CHECK_CUSPARSE(cusparseCreateMatDescr(&s_descrC));
-    CHECK_CUSPARSE(cusparseSetMatType(s_descrA, CUSPARSE_MATRIX_TYPE_GENERAL));
-    CHECK_CUSPARSE(cusparseSetMatType(s_descrB, CUSPARSE_MATRIX_TYPE_GENERAL));
-    CHECK_CUSPARSE(cusparseSetMatType(s_descrC, CUSPARSE_MATRIX_TYPE_GENERAL));
-    CHECK_CUSPARSE(cusparseSetMatIndexBase(s_descrA, CUSPARSE_INDEX_BASE_ZERO));
-    CHECK_CUSPARSE(cusparseSetMatIndexBase(s_descrB, CUSPARSE_INDEX_BASE_ZERO));
-    CHECK_CUSPARSE(cusparseSetMatIndexBase(s_descrC, CUSPARSE_INDEX_BASE_ZERO));
-}
 
 void gpu_cusparse_csr_add_f32(int* shape,
         int* rowOffsA, int* colIndsA, float* ValsA, uint64_t nnzA,
         int* rowOffsB, int* colIndsB, float* ValsB, uint64_t nnzB,
         int* &rowOffsC, int* &colIndsC, float* &ValsC, int* &nnzC) {
 
+    const cudaStream_t stream = 0;
+
     int m = shape[0];
     int n = shape[1];
 
-    ensure_cusparse_init();
+    if (s_handle == nullptr) {
+        CHECK_CUSPARSE(cusparseCreate(&s_handle));
+        CHECK_CUSPARSE(cusparseSetStream(s_handle, stream));
+    }
+
+    // Create matrix descriptors
+    cusparseMatDescr_t descrA, descrB, descrC;
+    CHECK_CUSPARSE(cusparseCreateMatDescr(&descrA));
+    CHECK_CUSPARSE(cusparseCreateMatDescr(&descrB));
+    CHECK_CUSPARSE(cusparseCreateMatDescr(&descrC));
+    CHECK_CUSPARSE(cusparseSetMatType(descrA, CUSPARSE_MATRIX_TYPE_GENERAL));
+    CHECK_CUSPARSE(cusparseSetMatType(descrB, CUSPARSE_MATRIX_TYPE_GENERAL));
+    CHECK_CUSPARSE(cusparseSetMatType(descrC, CUSPARSE_MATRIX_TYPE_GENERAL));
+    CHECK_CUSPARSE(cusparseSetMatIndexBase(descrA, CUSPARSE_INDEX_BASE_ZERO));
+    CHECK_CUSPARSE(cusparseSetMatIndexBase(descrB, CUSPARSE_INDEX_BASE_ZERO));
+    CHECK_CUSPARSE(cusparseSetMatIndexBase(descrC, CUSPARSE_INDEX_BASE_ZERO));
 
     float alpha_h = 1.0f;
     float beta_h = 1.0f;
 
-    CHECK_CUDA(cudaMalloc((void**)&rowOffsC, sizeof(int)*(m+1)));
+    CHECK_CUDA(cudaMallocAsync((void**)&rowOffsC, sizeof(int)*(m+1), stream));
 
     // Get buffer size for the operation
     size_t bufferSize;
     cusparseScsrgeam2_bufferSizeExt(s_handle, m, n,
         &alpha_h,
-        s_descrA, nnzA, ValsA, rowOffsA, colIndsA,
+        descrA, nnzA, ValsA, rowOffsA, colIndsA,
         &beta_h,
-        s_descrB, nnzB, ValsB, rowOffsB, colIndsB,
-        s_descrC,
+        descrB, nnzB, ValsB, rowOffsB, colIndsB,
+        descrC,
         ValsC, rowOffsC, colIndsC,
         &bufferSize);
 
     // Allocate workspace buffer
     void* buffer = nullptr;
-    CHECK_CUDA(cudaMalloc(&buffer, sizeof(char)*bufferSize));
+    CHECK_CUDA(cudaMallocAsync(&buffer, sizeof(char)*bufferSize, stream));
 
     // Get number of non-zero elements in result matrix
     CHECK_CUSPARSE(cusparseXcsrgeam2Nnz(s_handle, m, n,
-        s_descrA, nnzA, rowOffsA, colIndsA,
-        s_descrB, nnzB, rowOffsB, colIndsB,
-        s_descrC, rowOffsC, nnzC,
+        descrA, nnzA, rowOffsA, colIndsA,
+        descrB, nnzB, rowOffsB, colIndsB,
+        descrC, rowOffsC, nnzC,
         buffer));
 
     CHECK_CUDA( cudaGetLastError() );
-    CHECK_CUDA(cudaMalloc((void**)&colIndsC, sizeof(int)*(*nnzC)));
-    CHECK_CUDA(cudaMalloc((void**)&ValsC, sizeof(float)*(*nnzC)));
+    CHECK_CUDA(cudaMallocAsync((void**)&colIndsC, sizeof(int)*(*nnzC), stream));
+    CHECK_CUDA(cudaMallocAsync((void**)&ValsC, sizeof(float)*(*nnzC), stream));
 
     // Perform the actual matrix addition C = alpha*A + beta*B
     CHECK_CUSPARSE(cusparseScsrgeam2(s_handle, m, n,
         &alpha_h,
-        s_descrA, nnzA, ValsA, rowOffsA, colIndsA,
+        descrA, nnzA, ValsA, rowOffsA, colIndsA,
         &beta_h,
-        s_descrB, nnzB, ValsB, rowOffsB, colIndsB,
-        s_descrC,
+        descrB, nnzB, ValsB, rowOffsB, colIndsB,
+        descrC,
         ValsC, rowOffsC, colIndsC,
         buffer));
 
-    // Clean up workspace only (handle/descriptors are persistent)
-    CHECK_CUDA(cudaFree(buffer));
-    CHECK_CUDA( cudaGetLastError() );
-
-    // Synchronize so CUDA event timing captures actual GPU execution
-    CHECK_CUDA(cudaDeviceSynchronize());
+    // Clean up workspace and descriptors
+    CHECK_CUDA(cudaFreeAsync(buffer, stream));
+    CHECK_CUSPARSE(cusparseDestroyMatDescr(descrA));
+    CHECK_CUSPARSE(cusparseDestroyMatDescr(descrB));
+    CHECK_CUSPARSE(cusparseDestroyMatDescr(descrC));
 }
 

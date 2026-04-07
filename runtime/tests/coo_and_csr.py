@@ -231,10 +231,17 @@ def nacho_coo_mul(A_COO, B_COO):
         iterations=14, trim=2,
     )
 
+def _remove_zeros_coo(C_coo):
+    """Remove explicit zeros from a coalesced COO tensor."""
+    mask = C_coo.values() != 0
+    indices = C_coo.indices()[:, mask]
+    values = C_coo.values()[mask]
+    return torch.sparse_coo_tensor(indices, values, C_coo.size()).coalesce()
+
 def pytorch_coo_mul(A_coo, B_coo):
-    """Time PyTorch sparse COO element-wise mul."""
+    """Time PyTorch sparse COO element-wise mul (including zero removal)."""
     return _time_on_stream(
-        lambda: (A_coo * B_coo).coalesce(),
+        lambda: _remove_zeros_coo((A_coo * B_coo).coalesce()),
         iterations=14, trim=2,
     )
 

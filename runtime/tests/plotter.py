@@ -86,15 +86,46 @@ def plot_2(size, lengths, full, partial, no, name):
     plt.close()
 
 
+def _speedup_stats(baseline, other):
+    """Compute geomean/min/max speedup of baseline over other (other_time / baseline_time)."""
+    b = np.array(baseline, dtype=float)
+    o = np.array(other, dtype=float)
+    mask = (b > 0) & (o > 0) & np.isfinite(b) & np.isfinite(o)
+    if mask.sum() == 0:
+        return None
+    ratios = o[mask] / b[mask]
+    return {
+        "geomean": float(np.exp(np.mean(np.log(ratios)))),
+        "min": float(ratios.min()),
+        "max": float(ratios.max()),
+        "n": int(mask.sum()),
+    }
+
+
 def plot(nnz, manual, cusparse, pytorch, name, labels=None):
     if labels is None:
         labels = ("Manual", "cusparse", "pytorch")
     plt.figure(figsize=(8, 6))
-    plt.scatter(nnz, manual, label=labels[0], alpha=0.7, color="blue", marker="o", s=5)
+    # Wong's colorblind-safe palette
+    c_blue   = "#0072B2"
+    c_orange = "#D55E00"
+    c_teal   = "#009E73"
+    plt.scatter(nnz, manual, label=labels[0], alpha=0.7, color=c_blue, marker="o", s=5)
     if len(cusparse) != 0:
-        plt.scatter(nnz, cusparse, label=labels[1], alpha=0.7, color="red", marker="o", s=5)
+        plt.scatter(nnz, cusparse, label=labels[1], alpha=0.7, color=c_orange, marker="o", s=5)
     if len(pytorch) != 0:
-        plt.scatter(nnz, pytorch, label=labels[2], alpha=0.7, color="green", marker="o", s=5)
+        plt.scatter(nnz, pytorch, label=labels[2], alpha=0.7, color=c_teal, marker="o", s=5)
+
+    # Compute and display speedup stats
+    stat_lines = []
+    if len(cusparse) != 0:
+        s = _speedup_stats(manual, cusparse)
+        if s:
+            stat_lines.append(f"{labels[0]} vs {labels[1]}: {s['geomean']:.2f}x geomean  [{s['min']:.2f}x, {s['max']:.2f}x]  (n={s['n']})")
+    if len(pytorch) != 0:
+        s = _speedup_stats(manual, pytorch)
+        if s:
+            stat_lines.append(f"{labels[0]} vs {labels[2]}: {s['geomean']:.2f}x geomean  [{s['min']:.2f}x, {s['max']:.2f}x]  (n={s['n']})")
 
     plt.xscale("log")
     plt.yscale("log")
@@ -105,10 +136,18 @@ def plot(nnz, manual, cusparse, pytorch, name, labels=None):
     plt.xlabel("Total Non-Zeros (nnzA + nnzB)")
     plt.ylabel("Runtime (ms)")
     plt.title("Runtime vs Non-Zeros")
-    plt.legend()
+    plt.legend(fontsize=12, markerscale=3)
     plt.grid(True)
+
+    if stat_lines:
+        plt.figtext(0.5, -0.02, "\n".join(stat_lines), ha="center", fontsize=7, family="monospace")
+
     plt.savefig(_path(name, "pdf"), bbox_inches="tight")
     plt.close()
+
+    # Print stats to console
+    for line in stat_lines:
+        print(f"  {line}")
 
 
 def plot_bar_graph(size, lengths, full_lb, partial_lb, single_lb, name):

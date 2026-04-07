@@ -513,7 +513,7 @@ def run_nacho_comparison(start, end, save_and_plot, continue_mode=False, csv_nam
     import torch
     import nacho_runtime
     from parser import matrix_list, parse_matrix
-    from coo_and_csr import csr_add, coo_add, torch_add, nacho_csr_add, nacho_coo_add, pytorch_coo_mul, failure_reason
+    from coo_and_csr import csr_add, coo_add, torch_add, nacho_csr_add, nacho_coo_add, nacho_coo_mul, pytorch_coo_mul, _remove_zeros_coo, failure_reason
     from plotter import plot
 
     csv_name = csv_name or f"nacho_comparison_{start}-{end}"
@@ -662,12 +662,32 @@ def run_nacho_comparison(start, end, save_and_plot, continue_mode=False, csv_nam
                 coo_mul_nacho_ms = _subprocess_nacho_timing(df.iloc[i-1]['name'], df.iloc[i]['name'], 'coo_mul', M, N)
                 if coo_mul_nacho_ms is None:
                     tqdm.write(f"nacho COO mul crash at {i}, skipping nacho timing")
-                _, coo_mul_pytorch_ms = pytorch_coo_mul(A_t_coo, B_t_coo)
+                C_coo_mul_pytorch, coo_mul_pytorch_ms = pytorch_coo_mul(A_t_coo, B_t_coo)
+
+                # Correctness check: remove zeros from both results before comparing,
+                # since SuiteSparse matrices can have explicit zeros that produce
+                # zero-valued entries in the mul output.
+                coo_mul_correct = None
+                C_coo_mul_nacho, _ = nacho_coo_mul(A_COO, B_COO)
+                if C_coo_mul_nacho is not None:
+                    # Remove zeros from nacho result
+                    nacho_mask = C_coo_mul_nacho.data != 0
+                    nacho_row = C_coo_mul_nacho.row[nacho_mask]
+                    nacho_col = C_coo_mul_nacho.col[nacho_mask]
+                    nacho_vals = C_coo_mul_nacho.data[nacho_mask]
+                    # PyTorch result already has zeros removed by _remove_zeros_coo
+                    pt = C_coo_mul_pytorch
+                    coo_mul_correct = (torch.equal(pt.indices()[0], nacho_row)
+                                       and torch.equal(pt.indices()[1], nacho_col)
+                                       and torch.equal(pt.values(), nacho_vals))
+                    if not coo_mul_correct:
+                        tqdm.write(f"COO mul mismatch at {i}: {df.iloc[i-1]['name']} x {df.iloc[i]['name']}")
 
                 row.update({
                     "nnz_coo_mul": A_COO.data.numel() + B_COO.data.numel(),
                     "coo_mul_nacho_ms": coo_mul_nacho_ms,
                     "coo_mul_pytorch_ms": coo_mul_pytorch_ms,
+                    "coo_mul_correct": coo_mul_correct,
                 })
             except (RuntimeError, MemoryError) as e:
                 tqdm.write(f"COO mul skip {i}: {e}")
@@ -746,6 +766,13 @@ def _replot_from_csv(csv_name, benchmark):
                      csr["csr_cusparse_ms"].tolist(), csr["csr_pytorch_ms"].tolist(),
                      csv_name.replace("nacho_comparison", "nacho_csr_add"),
                      labels=("Nacho", "cuSPARSE", "PyTorch"))
+                # Nacho vs cuSPARSE only
+                csr2 = rdf.dropna(subset=["nnz_csr", "csr_nacho_ms", "csr_cusparse_ms"])
+                if not csr2.empty:
+                    plot(csr2["nnz_csr"].tolist(), csr2["csr_nacho_ms"].tolist(),
+                         csr2["csr_cusparse_ms"].tolist(), [],
+                         csv_name.replace("nacho_comparison", "nacho_vs_cusparse_csr_add"),
+                         labels=("Nacho", "cuSPARSE", ""))
         if 'nnz_coo' in rdf.columns:
             coo = rdf.dropna(subset=["nnz_coo"])
             if not coo.empty:
