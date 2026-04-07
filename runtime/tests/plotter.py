@@ -102,7 +102,7 @@ def _speedup_stats(baseline, other):
     }
 
 
-def plot(nnz, manual, cusparse, pytorch, name, labels=None, colors=None):
+def plot(nnz, manual, cusparse, pytorch, name, labels=None, colors=None, markers=None):
     if labels is None:
         labels = ("Manual", "cusparse", "pytorch")
     plt.figure(figsize=(8, 6))
@@ -112,11 +112,13 @@ def plot(nnz, manual, cusparse, pytorch, name, labels=None, colors=None):
     c_teal   = "#009E73"
     if colors is None:
         colors = (c_blue, c_orange, c_teal)
-    plt.scatter(nnz, manual, label=labels[0], alpha=0.7, color=colors[0], marker="o", s=5)
+    if markers is None:
+        markers = ("o", "^", "s")
+    plt.scatter(nnz, manual, label=labels[0], alpha=0.4, color=colors[0], marker=markers[0], s=5)
     if len(cusparse) != 0:
-        plt.scatter(nnz, cusparse, label=labels[1], alpha=0.7, color=colors[1], marker="o", s=5)
+        plt.scatter(nnz, cusparse, label=labels[1], alpha=0.4, color=colors[1], marker=markers[1], s=5)
     if len(pytorch) != 0:
-        plt.scatter(nnz, pytorch, label=labels[2], alpha=0.7, color=colors[2], marker="o", s=5)
+        plt.scatter(nnz, pytorch, label=labels[2], alpha=0.4, color=colors[2], marker=markers[2], s=5)
 
     # Compute and display speedup stats
     stat_lines = []
@@ -141,9 +143,12 @@ def plot(nnz, manual, cusparse, pytorch, name, labels=None, colors=None):
     plt.legend(fontsize=12, markerscale=3)
     plt.grid(True)
 
+    # Save version without stats
+    plt.savefig(_path(name + "_clean", "pdf"), bbox_inches="tight")
+
+    # Save version with stats
     if stat_lines:
         plt.figtext(0.5, -0.02, "\n".join(stat_lines), ha="center", fontsize=7, family="monospace")
-
     plt.savefig(_path(name, "pdf"), bbox_inches="tight")
     plt.close()
 

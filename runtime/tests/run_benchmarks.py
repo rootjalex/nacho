@@ -815,7 +815,8 @@ def run_nacho_comparison(start, end, save_and_plot, continue_mode=False, csv_nam
                      csr_rows["csr_nacho_ms"].tolist(),
                      f"nacho_csr_add_{start}-{end}",
                      labels=("PyTorch", "cuSPARSE", "Nacho"),
-                     colors=("#009E73", "#D55E00", "#0072B2"))
+                     colors=("#009E73", "#D55E00", "#0072B2"),
+                     markers=("s", "^", "o"))
         # COO add plot: pytorch > nacho (top to bottom)
         if 'nnz_coo' in rdf.columns:
             coo_rows = rdf.dropna(subset=["nnz_coo"])
@@ -826,7 +827,8 @@ def run_nacho_comparison(start, end, save_and_plot, continue_mode=False, csv_nam
                      coo_rows["coo_nacho_ms"].tolist(),
                      f"nacho_coo_add_{start}-{end}",
                      labels=("PyTorch", "", "Nacho"),
-                     colors=("#009E73", "#D55E00", "#0072B2"))
+                     colors=("#009E73", "#D55E00", "#0072B2"),
+                     markers=("s", "^", "o"))
         # COO mul plot: pytorch > nacho (top to bottom)
         if 'nnz_coo_mul' in rdf.columns:
             coo_mul_rows = rdf.dropna(subset=["nnz_coo_mul"])
@@ -837,7 +839,8 @@ def run_nacho_comparison(start, end, save_and_plot, continue_mode=False, csv_nam
                      coo_mul_rows["coo_mul_nacho_ms"].tolist(),
                      f"nacho_coo_mul_{start}-{end}",
                      labels=("PyTorch", "", "Nacho"),
-                     colors=("#009E73", "#D55E00", "#0072B2"))
+                     colors=("#009E73", "#D55E00", "#0072B2"),
+                     markers=("s", "^", "o"))
         # CSR 3-way add plot: fused nacho vs unfused nacho vs unfused cuSPARSE
         if 'nnz_csr_3way' in rdf.columns:
             csr3_rows = rdf.dropna(subset=["nnz_csr_3way"])
@@ -848,7 +851,8 @@ def run_nacho_comparison(start, end, save_and_plot, continue_mode=False, csv_nam
                      csr3_rows["csr_3way_fused_ms"].tolist(),
                      f"nacho_csr_3way_add_{start}-{end}",
                      labels=("cuSPARSE Unfused", "Nacho Unfused", "Nacho Fused"),
-                     colors=("#D55E00", "#56B4E9", "#0072B2"))
+                     colors=("#D55E00", "#56B4E9", "#0072B2"),
+                     markers=("^", "D", "o"))
 
 
 def _replot_from_csv(csv_name, benchmark):
@@ -886,7 +890,8 @@ def _replot_from_csv(csv_name, benchmark):
                      csr["csr_nacho_ms"].tolist(),
                      csv_name.replace("nacho_comparison", "nacho_csr_add"),
                      labels=("PyTorch", "cuSPARSE", "Nacho"),
-                     colors=("#009E73", "#D55E00", "#0072B2"))
+                     colors=("#009E73", "#D55E00", "#0072B2"),
+                     markers=("s", "^", "o"))
                 # Nacho vs cuSPARSE only
                 csr2 = rdf.dropna(subset=["nnz_csr", "csr_nacho_ms", "csr_cusparse_ms"])
                 if not csr2.empty:
@@ -895,7 +900,8 @@ def _replot_from_csv(csv_name, benchmark):
                          csr2["csr_nacho_ms"].tolist(), [],
                          csv_name.replace("nacho_comparison", "nacho_vs_cusparse_csr_add"),
                          labels=("cuSPARSE", "Nacho", ""),
-                         colors=("#D55E00", "#0072B2", "#009E73"))
+                         colors=("#D55E00", "#0072B2", "#009E73"),
+                         markers=("^", "o", "s"))
         if 'nnz_coo' in rdf.columns:
             coo = rdf.dropna(subset=["nnz_coo"])
             if not coo.empty:
@@ -905,7 +911,8 @@ def _replot_from_csv(csv_name, benchmark):
                      coo["coo_nacho_ms"].tolist(),
                      csv_name.replace("nacho_comparison", "nacho_coo_add"),
                      labels=("PyTorch", "", "Nacho"),
-                     colors=("#009E73", "#D55E00", "#0072B2"))
+                     colors=("#009E73", "#D55E00", "#0072B2"),
+                     markers=("s", "^", "o"))
         if 'nnz_coo_mul' in rdf.columns:
             coo_mul = rdf.dropna(subset=["nnz_coo_mul"])
             if not coo_mul.empty:
@@ -915,7 +922,8 @@ def _replot_from_csv(csv_name, benchmark):
                      coo_mul["coo_mul_nacho_ms"].tolist(),
                      csv_name.replace("nacho_comparison", "nacho_coo_mul"),
                      labels=("PyTorch", "", "Nacho"),
-                     colors=("#009E73", "#D55E00", "#0072B2"))
+                     colors=("#009E73", "#D55E00", "#0072B2"),
+                     markers=("s", "^", "o"))
         if 'nnz_csr_3way' in rdf.columns:
             csr3 = rdf.dropna(subset=["nnz_csr_3way"])
             if not csr3.empty:
@@ -925,7 +933,8 @@ def _replot_from_csv(csv_name, benchmark):
                      csr3["csr_3way_fused_ms"].tolist(),
                      csv_name.replace("nacho_comparison", "nacho_csr_3way_add"),
                      labels=("cuSPARSE Unfused", "Nacho Unfused", "Nacho Fused"),
-                     colors=("#D55E00", "#56B4E9", "#0072B2"))
+                     colors=("#D55E00", "#56B4E9", "#0072B2"),
+                     markers=("^", "D", "o"))
 
 
 BENCHMARKS = {
