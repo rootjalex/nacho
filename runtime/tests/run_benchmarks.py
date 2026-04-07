@@ -288,7 +288,10 @@ def run_csr_add(start, end, save_and_plot, continue_mode=False, csv_name=None):
 
         except (RuntimeError, MemoryError) as e:
             tqdm.write(f"Skipping {i} ({df.iloc[i-1]['name']} x {df.iloc[i]['name']}): {e}")
-            torch.cuda.empty_cache()
+            try:
+                torch.cuda.empty_cache()
+            except Exception:
+                pass
             continue
 
     _save_rows(rows, csv_name)
@@ -358,7 +361,10 @@ def run_coo_add(start, end, save_and_plot, continue_mode=False, csv_name=None):
 
         except (RuntimeError, MemoryError) as e:
             tqdm.write(f"Skipping {i} ({df.iloc[i-1]['name']} x {df.iloc[i]['name']}): {e}")
-            torch.cuda.empty_cache()
+            try:
+                torch.cuda.empty_cache()
+            except Exception:
+                pass
             continue
 
     _save_rows(rows, csv_name)
@@ -453,7 +459,10 @@ def run_spgemm(start, end, save_and_plot, continue_mode=False, csv_name=None):
 
         except (RuntimeError, MemoryError) as e:
             tqdm.write(f"Skipping {i} ({df.iloc[i-1]['name']} x {df.iloc[i]['name']}): {e}")
-            torch.cuda.empty_cache()
+            try:
+                torch.cuda.empty_cache()
+            except Exception:
+                pass
             continue
 
     _save_rows(rows, csv_name)
@@ -519,7 +528,10 @@ def run_sparse_vectors(start, end, save_and_plot, continue_mode=False, csv_name=
         except (RuntimeError, MemoryError) as e:
             import torch
             tqdm.write(f"Skipping {i} ({df.iloc[i]['name']}): {e}")
-            torch.cuda.empty_cache()
+            try:
+                torch.cuda.empty_cache()
+            except Exception:
+                pass
             continue
 
     _save_rows(rows, csv_name)
@@ -647,7 +659,10 @@ def run_nacho_comparison(start, end, save_and_plot, continue_mode=False, csv_nam
                 })
             except (RuntimeError, MemoryError) as e:
                 tqdm.write(f"CSR skip {i}: {e}")
-                torch.cuda.empty_cache()
+                try:
+                    torch.cuda.empty_cache()
+                except Exception:
+                    pass
 
         # --- COO add ---
         if need_coo_add:
@@ -686,7 +701,10 @@ def run_nacho_comparison(start, end, save_and_plot, continue_mode=False, csv_nam
                 })
             except (RuntimeError, MemoryError) as e:
                 tqdm.write(f"COO add skip {i}: {e}")
-                torch.cuda.empty_cache()
+                try:
+                    torch.cuda.empty_cache()
+                except Exception:
+                    pass
 
         # --- COO mul (element-wise) ---
         if need_coo_mul:
@@ -736,7 +754,10 @@ def run_nacho_comparison(start, end, save_and_plot, continue_mode=False, csv_nam
                 })
             except (RuntimeError, MemoryError) as e:
                 tqdm.write(f"COO mul skip {i}: {e}")
-                torch.cuda.empty_cache()
+                try:
+                    torch.cuda.empty_cache()
+                except Exception:
+                    pass
 
         # --- CSR 3-way add (A+B+C) ---
         if need_csr_3way and i + 1 < len(df) and i + 1 not in skip:
@@ -795,7 +816,10 @@ def run_nacho_comparison(start, end, save_and_plot, continue_mode=False, csv_nam
                 })
             except (RuntimeError, MemoryError) as e:
                 tqdm.write(f"CSR 3-way skip {i}: {e}")
-                torch.cuda.empty_cache()
+                try:
+                    torch.cuda.empty_cache()
+                except Exception:
+                    pass
 
         existing[i] = row
         # Save every row — nanobind aborts on large matrices can't be caught
