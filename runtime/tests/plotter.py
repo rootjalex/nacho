@@ -102,19 +102,21 @@ def _speedup_stats(baseline, other):
     }
 
 
-def plot(nnz, manual, cusparse, pytorch, name, labels=None):
+def plot(nnz, manual, cusparse, pytorch, name, labels=None, colors=None):
     if labels is None:
         labels = ("Manual", "cusparse", "pytorch")
     plt.figure(figsize=(8, 6))
-    # Wong's colorblind-safe palette
+    # Wong's colorblind-safe palette (defaults)
     c_blue   = "#0072B2"
     c_orange = "#D55E00"
     c_teal   = "#009E73"
-    plt.scatter(nnz, manual, label=labels[0], alpha=0.7, color=c_blue, marker="o", s=5)
+    if colors is None:
+        colors = (c_blue, c_orange, c_teal)
+    plt.scatter(nnz, manual, label=labels[0], alpha=0.7, color=colors[0], marker="o", s=5)
     if len(cusparse) != 0:
-        plt.scatter(nnz, cusparse, label=labels[1], alpha=0.7, color=c_orange, marker="o", s=5)
+        plt.scatter(nnz, cusparse, label=labels[1], alpha=0.7, color=colors[1], marker="o", s=5)
     if len(pytorch) != 0:
-        plt.scatter(nnz, pytorch, label=labels[2], alpha=0.7, color=c_teal, marker="o", s=5)
+        plt.scatter(nnz, pytorch, label=labels[2], alpha=0.7, color=colors[2], marker="o", s=5)
 
     # Compute and display speedup stats
     stat_lines = []
