@@ -113,6 +113,7 @@ NB_MODULE(nacho_runtime_ext, m) {
     m.def("nacho_dcsr_mul", &nacho_dcsr_mul_nb);
     m.def("nacho_dcsr_add", &nacho_dcsr_add_nb);
     m.def("nacho_csr_add", &nacho_csr_add_nb);
+    m.def("nacho_csr_add_3", &nacho_csr_add_3_nb);
     m.def("nacho_tcsf_add", &nacho_tcsf_add_nb);
     m.def("nacho_coo_add", &nacho_coo_add_nb);
     m.def("nacho_coo_mul", &nacho_coo_mul_nb);

@@ -373,6 +373,17 @@ const std::map<std::string, ExprBuilder> EXPRESSIONS = {
         TensorType csr_f32(csr, dType::Float32);
         return Tensor::make(csr_f32, "A") + Tensor::make(csr_f32, "B");
     }},
+    {"csr_add_3", []() {
+        Format csr = Format::ordered({
+            {"i", LevelFormat::Dense},
+            {"j", LevelFormat::Compressed_unique},
+        });
+        TensorType csr_f32(csr, dType::Float32);
+        Expr A = Tensor::make(csr_f32, "A");
+        Expr B = Tensor::make(csr_f32, "B");
+        Expr C = Tensor::make(csr_f32, "C");
+        return (A + B) + C;
+    }},
     {"tcsf_add", []() {
         Format tcsf = Format::ordered({
             {"i", LevelFormat::Compressed_unique},

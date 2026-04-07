@@ -55,7 +55,7 @@ from tqdm import tqdm
 SAVE_EVERY = 20  # flush CSV every N iterations
 
 
-def _subprocess_nacho_timing(matrix_a, matrix_b, fmt, M, N, timeout=120):
+def _subprocess_nacho_timing(matrix_a, matrix_b, fmt, M, N, timeout=120, matrix_c=None):
     """Run a nacho kernel in a completely separate process.
 
     nanobind calls abort() on unrecoverable errors (e.g. buffer overflow on
@@ -108,6 +108,50 @@ A_COO = nacho_runtime.COO(A_t.indices()[0], A_t.indices()[1], A_t.values(),
 B_COO = nacho_runtime.COO(B_t.indices()[0], B_t.indices()[1], B_t.values(),
                            torch.tensor([M, N], dtype=torch.int32))
 _, ms = nacho_coo_mul(A_COO, B_COO)'''
+    elif fmt == "csr_3":
+        kernel_code = f'''\
+from coo_and_csr import nacho_csr_add_3
+A = parse_matrix("{matrix_a}")
+B = parse_matrix("{matrix_b}")
+C = parse_matrix("{matrix_c}")
+A_t = torch.sparse_csr_tensor(
+    A.crow_indices()[:M+1], A.col_indices()[:A.crow_indices()[M]],
+    A.values()[:A.crow_indices()[M]], (M, N))
+B_t = torch.sparse_csr_tensor(
+    B.crow_indices()[:M+1], B.col_indices()[:B.crow_indices()[M]],
+    B.values()[:B.crow_indices()[M]], (M, N))
+C_t = torch.sparse_csr_tensor(
+    C.crow_indices()[:M+1], C.col_indices()[:C.crow_indices()[M]],
+    C.values()[:C.crow_indices()[M]], (M, N))
+A_CSR = nacho_runtime.CSR(A_t.crow_indices(), A_t.col_indices(), A_t.values(),
+                           torch.tensor([M, N], dtype=torch.int32))
+B_CSR = nacho_runtime.CSR(B_t.crow_indices(), B_t.col_indices(), B_t.values(),
+                           torch.tensor([M, N], dtype=torch.int32))
+C_CSR = nacho_runtime.CSR(C_t.crow_indices(), C_t.col_indices(), C_t.values(),
+                           torch.tensor([M, N], dtype=torch.int32))
+_, ms = nacho_csr_add_3(A_CSR, B_CSR, C_CSR)'''
+    elif fmt == "csr_3_unfused":
+        kernel_code = f'''\
+from coo_and_csr import nacho_csr_add_3_unfused
+A = parse_matrix("{matrix_a}")
+B = parse_matrix("{matrix_b}")
+C = parse_matrix("{matrix_c}")
+A_t = torch.sparse_csr_tensor(
+    A.crow_indices()[:M+1], A.col_indices()[:A.crow_indices()[M]],
+    A.values()[:A.crow_indices()[M]], (M, N))
+B_t = torch.sparse_csr_tensor(
+    B.crow_indices()[:M+1], B.col_indices()[:B.crow_indices()[M]],
+    B.values()[:B.crow_indices()[M]], (M, N))
+C_t = torch.sparse_csr_tensor(
+    C.crow_indices()[:M+1], C.col_indices()[:C.crow_indices()[M]],
+    C.values()[:C.crow_indices()[M]], (M, N))
+A_CSR = nacho_runtime.CSR(A_t.crow_indices(), A_t.col_indices(), A_t.values(),
+                           torch.tensor([M, N], dtype=torch.int32))
+B_CSR = nacho_runtime.CSR(B_t.crow_indices(), B_t.col_indices(), B_t.values(),
+                           torch.tensor([M, N], dtype=torch.int32))
+C_CSR = nacho_runtime.CSR(C_t.crow_indices(), C_t.col_indices(), C_t.values(),
+                           torch.tensor([M, N], dtype=torch.int32))
+_, ms = nacho_csr_add_3_unfused(A_CSR, B_CSR, C_CSR)'''
     else:
         return None
 
@@ -513,7 +557,7 @@ def run_nacho_comparison(start, end, save_and_plot, continue_mode=False, csv_nam
     import torch
     import nacho_runtime
     from parser import matrix_list, parse_matrix
-    from coo_and_csr import csr_add, coo_add, torch_add, nacho_csr_add, nacho_coo_add, nacho_coo_mul, pytorch_coo_mul, _remove_zeros_coo, failure_reason
+    from coo_and_csr import csr_add, coo_add, torch_add, nacho_csr_add, nacho_coo_add, nacho_coo_mul, pytorch_coo_mul, _remove_zeros_coo, failure_reason, csr_add_3_cusparse_unfused
     from plotter import plot
 
     csv_name = csv_name or f"nacho_comparison_{start}-{end}"
@@ -540,8 +584,9 @@ def run_nacho_comparison(start, end, save_and_plot, continue_mode=False, csv_nam
         need_csr = need_csr_nacho or need_csr_baseline
         need_coo_add = not _has_col(prev, 'coo_nacho_ms')
         need_coo_mul = not _has_col(prev, 'coo_mul_nacho_ms')
+        need_csr_3way = not _has_col(prev, 'csr_3way_fused_ms')
 
-        if not need_csr and not need_coo_add and not need_coo_mul:
+        if not need_csr and not need_coo_add and not need_coo_mul and not need_csr_3way:
             continue  # fully done
 
         # Start with existing data so we don't lose already-collected columns
@@ -693,6 +738,65 @@ def run_nacho_comparison(start, end, save_and_plot, continue_mode=False, csv_nam
                 tqdm.write(f"COO mul skip {i}: {e}")
                 torch.cuda.empty_cache()
 
+        # --- CSR 3-way add (A+B+C) ---
+        if need_csr_3way and i + 1 < len(df) and i + 1 not in skip:
+            try:
+                A_csr = parse_matrix(df.iloc[i - 1]['name'])
+                B_csr = parse_matrix(df.iloc[i]['name'])
+                C_csr = parse_matrix(df.iloc[i + 1]['name'])
+                M = min(A_csr.size(0), B_csr.size(0), C_csr.size(0))
+                N = max(A_csr.size(1), B_csr.size(1), C_csr.size(1))
+
+                A_t = torch.sparse_csr_tensor(
+                    A_csr.crow_indices()[:M+1],
+                    A_csr.col_indices()[:A_csr.crow_indices()[M]],
+                    A_csr.values()[:A_csr.crow_indices()[M]], (M, N))
+                B_t = torch.sparse_csr_tensor(
+                    B_csr.crow_indices()[:M+1],
+                    B_csr.col_indices()[:B_csr.crow_indices()[M]],
+                    B_csr.values()[:B_csr.crow_indices()[M]], (M, N))
+                C_t = torch.sparse_csr_tensor(
+                    C_csr.crow_indices()[:M+1],
+                    C_csr.col_indices()[:C_csr.crow_indices()[M]],
+                    C_csr.values()[:C_csr.crow_indices()[M]], (M, N))
+
+                A_CSR = nacho_runtime.CSR(A_t.crow_indices(), A_t.col_indices(), A_t.values(),
+                                           torch.tensor([M, N], dtype=torch.int32))
+                B_CSR = nacho_runtime.CSR(B_t.crow_indices(), B_t.col_indices(), B_t.values(),
+                                           torch.tensor([M, N], dtype=torch.int32))
+                C_CSR = nacho_runtime.CSR(C_t.crow_indices(), C_t.col_indices(), C_t.values(),
+                                           torch.tensor([M, N], dtype=torch.int32))
+
+                # Fused nacho (subprocess for abort-safety)
+                nacho_fused_ms = _subprocess_nacho_timing(
+                    df.iloc[i-1]['name'], df.iloc[i]['name'], 'csr_3', M, N,
+                    matrix_c=df.iloc[i+1]['name'])
+                if nacho_fused_ms is None:
+                    tqdm.write(f"nacho CSR 3-way fused crash at {i}, skipping")
+
+                # Unfused nacho (subprocess for abort-safety)
+                nacho_unfused_ms = _subprocess_nacho_timing(
+                    df.iloc[i-1]['name'], df.iloc[i]['name'], 'csr_3_unfused', M, N,
+                    matrix_c=df.iloc[i+1]['name'])
+                if nacho_unfused_ms is None:
+                    tqdm.write(f"nacho CSR 3-way unfused crash at {i}, skipping")
+
+                # Unfused cuSPARSE (direct call)
+                _, cusparse_unfused_ms = csr_add_3_cusparse_unfused(A_CSR, B_CSR, C_CSR)
+
+                total_nnz = (A_t.crow_indices().max() + B_t.crow_indices().max()
+                             + C_t.crow_indices().max()).item()
+                row.update({
+                    "matrix_c": df.iloc[i + 1]['name'],
+                    "nnz_csr_3way": total_nnz,
+                    "csr_3way_fused_ms": nacho_fused_ms,
+                    "csr_3way_unfused_ms": nacho_unfused_ms,
+                    "csr_3way_cusparse_ms": cusparse_unfused_ms,
+                })
+            except (RuntimeError, MemoryError) as e:
+                tqdm.write(f"CSR 3-way skip {i}: {e}")
+                torch.cuda.empty_cache()
+
         existing[i] = row
         # Save every row — nanobind aborts on large matrices can't be caught
         _save_rows(list(existing.values()), csv_name)
@@ -731,6 +835,16 @@ def run_nacho_comparison(start, end, save_and_plot, continue_mode=False, csv_nam
                      coo_mul_rows["coo_mul_pytorch_ms"].tolist(),
                      f"nacho_coo_mul_{start}-{end}",
                      labels=("Nacho", "", "PyTorch"))
+        # CSR 3-way add plot: fused nacho vs unfused nacho vs unfused cuSPARSE
+        if 'nnz_csr_3way' in rdf.columns:
+            csr3_rows = rdf.dropna(subset=["nnz_csr_3way"])
+            if not csr3_rows.empty:
+                plot(csr3_rows["nnz_csr_3way"].tolist(),
+                     csr3_rows["csr_3way_fused_ms"].tolist(),
+                     csr3_rows["csr_3way_unfused_ms"].tolist(),
+                     csr3_rows["csr_3way_cusparse_ms"].tolist(),
+                     f"nacho_csr_3way_add_{start}-{end}",
+                     labels=("Nacho Fused", "Nacho Unfused", "cuSPARSE Unfused"))
 
 
 def _replot_from_csv(csv_name, benchmark):
@@ -787,6 +901,15 @@ def _replot_from_csv(csv_name, benchmark):
                      [], coo_mul["coo_mul_pytorch_ms"].tolist(),
                      csv_name.replace("nacho_comparison", "nacho_coo_mul"),
                      labels=("Nacho", "", "PyTorch"))
+        if 'nnz_csr_3way' in rdf.columns:
+            csr3 = rdf.dropna(subset=["nnz_csr_3way"])
+            if not csr3.empty:
+                plot(csr3["nnz_csr_3way"].tolist(),
+                     csr3["csr_3way_fused_ms"].tolist(),
+                     csr3["csr_3way_unfused_ms"].tolist(),
+                     csr3["csr_3way_cusparse_ms"].tolist(),
+                     csv_name.replace("nacho_comparison", "nacho_csr_3way_add"),
+                     labels=("Nacho Fused", "Nacho Unfused", "cuSPARSE Unfused"))
 
 
 BENCHMARKS = {

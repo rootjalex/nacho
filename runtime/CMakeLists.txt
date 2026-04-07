@@ -22,6 +22,7 @@ set(NACHO_GENERATED_OPS
   dcsr_mul
   dcsr_add
   csr_add
+  csr_add_3
   tcsf_add
   coo_add
   coo_mul

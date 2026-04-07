@@ -217,6 +217,27 @@ def nacho_csr_add(A_CSR, B_CSR):
         iterations=14, trim=2,
     )
 
+def nacho_csr_add_3(A_CSR, B_CSR, C_CSR):
+    """Time nacho-generated fused CSR 3-way add kernel."""
+    return _time_on_stream(
+        lambda: nacho_runtime.nacho_csr_add_3(A_CSR, B_CSR, C_CSR),
+        iterations=14, trim=2,
+    )
+
+def nacho_csr_add_3_unfused(A_CSR, B_CSR, C_CSR):
+    """Time unfused nacho CSR 3-way add: two sequential nacho_csr_add calls."""
+    def op():
+        AB = nacho_runtime.nacho_csr_add(A_CSR, B_CSR)
+        return nacho_runtime.nacho_csr_add(AB, C_CSR)
+    return _time_on_stream(op, iterations=14, trim=2)
+
+def csr_add_3_cusparse_unfused(A_CSR, B_CSR, C_CSR):
+    """Time unfused cuSPARSE CSR 3-way add: two sequential cuSPARSE calls."""
+    def op():
+        AB = nacho_runtime.gpu_csr_add_f32(A_CSR, B_CSR, True)
+        return nacho_runtime.gpu_csr_add_f32(AB, C_CSR, True)
+    return _time_on_stream(op, iterations=14, trim=2)
+
 def nacho_coo_add(A_COO, B_COO):
     """Time nacho-generated COO add kernel."""
     return _time_on_stream(
