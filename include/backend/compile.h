@@ -20,11 +20,12 @@ namespace backend {
             CIN cin;
             Printer printer;
             TensorLowerer result_tensor;
-            TensorLowerer scatter_reduced_result_tensor;
+            TensorLowerer reduced_result_tensor;
             std::map<std::string, TensorLowerer> operand_tensors;
             std::vector<std::string> loop_order;
             // TODO: For multiple sums (inner-sum) this would be a vector of all reduction loops
-            LoopNum reductionLoop;
+            std::vector<LoopNum> reductionLoops;
+            bool is_scatter_reduction;
             CINLowerer(CIN cin, std::ostream &os);
 
             std::vector<std::string> get_loop_order();

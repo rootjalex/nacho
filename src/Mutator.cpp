@@ -65,7 +65,7 @@ CIN Mutator::visit(const Accumulate *node) {
     if (expr.same_as(node->expr)) {
         return node;
     }
-    return Accumulate::make(node->tensor, node->type, node->accumulate_index, std::move(expr));
+    return Accumulate::make(node->tensor, node->type, node->accumulate_indices, std::move(expr));
 }
 
 CIN Mutator::visit(const Assign *node) {

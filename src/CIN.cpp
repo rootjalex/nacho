@@ -37,14 +37,14 @@ cExpr cTensor::make(TensorType type, std::string name) {
     return node;
 }
 
-CIN Accumulate::make(std::string tensor, TensorType type, std::string accumulate_index, cExpr expr) {
+CIN Accumulate::make(std::string tensor, TensorType type, std::vector<std::string> accumulate_indices, cExpr expr) {
     internal_assert(!tensor.empty()) << "Accumulate with empty tensor";
     internal_assert(expr.defined());
 
     Accumulate *node = new Accumulate;
     node->tensor = std::move(tensor);
     node->type = std::move(type);
-    node->accumulate_index = std::move(accumulate_index);
+    node->accumulate_indices = std::move(accumulate_indices);
     node->expr = std::move(expr);
     return node;
 }

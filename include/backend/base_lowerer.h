@@ -23,7 +23,9 @@ namespace nacho {
             LoopNum previous_sparse_intersection;
             LoopNum current_sparse_intersection;
             LoopNum next_sparse_intersection;
-            LoopNum reduction_loop;
+            std::vector<LoopNum> reduction_loops;
+            bool is_scatter_reduction;
+            TensorLowerer &reduced_result_tensor;
             llir::lType index_t = llir::Generic_t::make("index_t");
             llir::lType value_t = llir::Generic_t::make("value_t");
 
@@ -34,14 +36,15 @@ namespace nacho {
                 std::map<std::string, TensorLowerer> &included_tensors,
                 const std::vector<CIN> &forall_list, 
                 LoopNum previous_sparse_intersection, LoopNum current_sparse_intersection, LoopNum next_sparse_intersection,
-                LoopNum reduction_loop)
+                std::vector<LoopNum> reduction_loops, bool &is_scatter_reduction, TensorLowerer &reduced_result_tensor)
                 : operand_tensors(operand_tensors), result_tensor(result_tensor), included_tensors(included_tensors),
                   forall_list(forall_list), 
                   previous_sparse_intersection(previous_sparse_intersection),
                   current_sparse_intersection(current_sparse_intersection),
                   next_sparse_intersection(next_sparse_intersection),
-                  reduction_loop(reduction_loop) {}
-            
+                  reduction_loops(reduction_loops), is_scatter_reduction(is_scatter_reduction),
+                  reduced_result_tensor(reduced_result_tensor) {}
+
             // This is just a helper function to construct the suffix used in giving unique names to various generated kernels
             // The suffix is just the concatenation of all loop indices that the kernel operates on
             inline std::string get_all_loops_string(LoopNum loop_num) {

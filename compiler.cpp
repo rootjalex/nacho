@@ -18,6 +18,10 @@ void test() {
         {"i", LevelFormat::Dense},
         {"j", LevelFormat::Compressed_unique},
     });
+    Format csc_1 = Format::ordered({
+        {"j", LevelFormat::Dense},
+        {"i", LevelFormat::Compressed_unique},
+    });
     Format csr_2 = Format::ordered({
         {"j", LevelFormat::Dense},
         {"k", LevelFormat::Compressed_unique},
@@ -64,6 +68,7 @@ void test() {
     });
 
     TensorType csr_f32 = TensorType(csr_1, dType::Float32);
+    TensorType csc_f32 = TensorType(csc_1, dType::Float32);
     TensorType csr2_f32 = TensorType(csr_2, dType::Float32);
     TensorType csr3_f32 = TensorType(csr_3, dType::Float32);
     TensorType csf_f32 = TensorType(csf, dType::Float32);
@@ -75,8 +80,8 @@ void test() {
     TensorType d_f32 = TensorType(d, dType::Float32);
 
 
-    Expr a_ij = Tensor::make(csr_f32, "a");
-    Expr b_jk = Tensor::make(csr_f32, "b");
+    Expr a_ji = Tensor::make(csc_f32, "a");
+    Expr b_j = Tensor::make(s_f32, "b");
     Expr c_ij = Tensor::make(dcsr_f32, "c");
     Expr d_ij = Tensor::make(dcsr_f32, "d");
 
@@ -86,22 +91,22 @@ void test() {
     Expr d_i = Tensor::make(d_f32, "d_vec");
 
     //Expr z_ik = Sum::make("j",a_ij * b_jk);
-     Expr z_ij = a_ij+b_jk;
+     
      //Expr z_ij = (a_ik+d_ij)+c_ij;
     // std::cout << z_ij << "\n";
     // std::cout << compile_to_cin(z_ij) << "\n";
     //nacho::backend::CINLowerer(compile_to_cin(z_ij), std::cout).lower_cin();
 
-    a_ij = Tensor::make(csr_f32, "a");
-    b_jk = Tensor::make(csr2_f32, "b");
-    Expr c_ik = Tensor::make(csr3_f32, "c");
+    // a_ij = Tensor::make(coo_f32, "a");
+    // b_jk = Tensor::make(coo_f32, "b");
+    // Expr c_ik = Tensor::make(csr3_f32, "c");
     // c_ij = Tensor::make(dcsr_f32, "c");
     // Expr a_ijk = Tensor::make(csf_f32, "a");
     // Expr b_ijk = Tensor::make(csf_f32, "b");
 
-    Expr z_ijk = Sum::make("j", c_ik*(a_ij * b_jk));
+    Expr z =  Sum::make("j",a_ji * b_j);
     //std::cout << compile_to_cin(z_ijk) << "\n";
-    nacho::backend::CINLowerer(compile_to_cin(z_ijk), std::cout).lower_cin();
+    nacho::backend::CINLowerer(compile_to_cin(z), std::cout).lower_cin();
     // {
     //     Expr z_i = a_i * c_i;
     //     std::cout << z_i << "\n";
