@@ -57,12 +57,6 @@ namespace backend {
                         }
                     }
                 }
-                printf("reductionLoops: ");
-                for(auto loop : reductionLoops) {
-                    printf("%d ", loop.get());
-                }
-                printf("\n");
-                printf("is_scatter_reduction: %d\n", is_scatter_reduction);
                 if(node->expr.as<cAdd>()) {
                     result_tensor = TensorLowerer(node->tensor+"_temp",  node->expr.as<cAdd>()->type, loop_order, true);
                     reduced_result_tensor = TensorLowerer(node->tensor, node->type, loop_order, true);
