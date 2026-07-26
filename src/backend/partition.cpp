@@ -1175,7 +1175,13 @@ namespace backend {
         );
         if(result_tensor.is_sparse(forall_idx)) {
             stmts.emplace_back(
-                llir::Declare::make(index_t, forall_idx, result_tensor.get_indices_field(forall_idx)[result_tensor.is_sparse(forall_idx) ? mid_var+1 : mid_var])
+                llir::Store::make(
+                    mid_var,
+                    mid_var + 1
+                )
+            );
+            stmts.emplace_back(
+                llir::Declare::make(index_t, forall_idx, result_tensor.get_indices_field(forall_idx)[mid_var])
             );
         }
 

@@ -13,10 +13,14 @@
 using namespace nacho;
 
 void test() {
-    std::cout << "Basic tests\n";
+    // std::cout << "Basic tests\n";
     Format csr_1 = Format::ordered({
         {"i", LevelFormat::Dense},
         {"j", LevelFormat::Compressed_unique},
+    });
+    Format csc_1 = Format::ordered({
+        {"j", LevelFormat::Dense},
+        {"i", LevelFormat::Compressed_unique},
     });
     Format csr_2 = Format::ordered({
         {"j", LevelFormat::Dense},
@@ -64,6 +68,7 @@ void test() {
     });
 
     TensorType csr_f32 = TensorType(csr_1, dType::Float32);
+    TensorType csc_f32 = TensorType(csc_1, dType::Float32);
     TensorType csr2_f32 = TensorType(csr_2, dType::Float32);
     TensorType csr3_f32 = TensorType(csr_3, dType::Float32);
     TensorType csf_f32 = TensorType(csf, dType::Float32);
@@ -75,157 +80,64 @@ void test() {
     TensorType d_f32 = TensorType(d, dType::Float32);
 
 
-    Expr a_ij = Tensor::make(csr_f32, "a");
-    Expr b_jk = Tensor::make(csr_f32, "b");
-    Expr c_ij = Tensor::make(dcsr_f32, "c");
-    Expr d_ij = Tensor::make(dcsr_f32, "d");
+    Expr a_csr_ij = Tensor::make(csr_f32, "a");
+    Expr b_csr_ij = Tensor::make(csr_f32, "b");
+    Expr c_csr_ij = Tensor::make(csr_f32, "c");
+    Expr a_dcsr_ij = Tensor::make(dcsr_f32, "a");
+    Expr b_dcsr_ij = Tensor::make(dcsr_f32, "b");
+    Expr a_csc_ji = Tensor::make(csc_f32, "a");
+    Expr b_csc_ji = Tensor::make(csc_f32, "b");
+    Expr a_csr_jk = Tensor::make(csr2_f32, "a");
+    Expr b_csr_jk = Tensor::make(csr2_f32, "b");
+    Expr a_csr_ik = Tensor::make(csr3_f32, "a");
+    Expr b_csr_ik = Tensor::make(csr3_f32, "b");
+    Expr a_csf_ijk = Tensor::make(csf_f32, "a");
+    Expr b_csf_ijk = Tensor::make(csf_f32, "b");
+    Expr a_coo_ij = Tensor::make(coo_f32, "a");
+    Expr b_coo_ij = Tensor::make(coo_f32, "b");
+    Expr a_coo_ijk = Tensor::make(coo3d_f32, "a");
+    Expr b_coo_ijk = Tensor::make(coo3d_f32, "b");
+    Expr c_csr_ik = Tensor::make(csr3_f32, "c");
 
-    Expr a_i = Tensor::make(s_f32, "a_vec");
-    Expr b_k = Tensor::make(s_f32, "b");
-    Expr c_i = Tensor::make(s_f32, "c_vec");
-    Expr d_i = Tensor::make(d_f32, "d_vec");
 
-    //Expr z_ik = Sum::make("j",a_ij * b_jk);
-     Expr z_ij = a_ij+b_jk;
-     //Expr z_ij = (a_ik+d_ij)+c_ij;
-    // std::cout << z_ij << "\n";
-    // std::cout << compile_to_cin(z_ij) << "\n";
-    //nacho::backend::CINLowerer(compile_to_cin(z_ij), std::cout).lower_cin();
 
-    a_ij = Tensor::make(csr_f32, "a");
-    b_jk = Tensor::make(csr2_f32, "b");
-    Expr c_ik = Tensor::make(csr3_f32, "c");
-    // c_ij = Tensor::make(dcsr_f32, "c");
-    // Expr a_ijk = Tensor::make(csf_f32, "a");
-    // Expr b_ijk = Tensor::make(csf_f32, "b");
+    // CSR add
+    // nacho::backend::CINLowerer(compile_to_cin(a_csr_ij + b_csr_ij), std::cout).lower_cin();
 
-    Expr z_ijk = Sum::make("j", c_ik*(a_ij * b_jk));
-    //std::cout << compile_to_cin(z_ijk) << "\n";
-    nacho::backend::CINLowerer(compile_to_cin(z_ijk), std::cout).lower_cin();
-    // {
-    //     Expr z_i = a_i * c_i;
-    //     std::cout << z_i << "\n";
-    //     std::cout << compile_to_cin(z_i) << "\n";
-    //     std::cout << "Debug\n";
-    //     nacho::backend::CINLowerer(compile_to_cin(z_i), std::cout).lower_cin();
-    // }
+    // // CSR + CSR + CSR
+    // nacho::backend::CINLowerer(compile_to_cin(a_csr_ij + b_csr_ij + c_csr_ij), std::cout).lower_cin();
 
-    // a_ij = Tensor::make(dcsr_f32, "a");
-    // b_ij = Tensor::make(dcsr_f32, "b");
+    // // CSR Mul
+    nacho::backend::CINLowerer(compile_to_cin(a_csr_ij * b_csr_ij), std::cout).lower_cin();
 
-    // z_ij = a_ij * b_ij;
-    // Expr z_i = a_i * b_i;
-    // std::cout << z_i << "\n";
-    // std::cout << compile_to_cin(z_i) << "\n";
-    // std::cout << "Debug\n";
-    // nacho::backend::CINLowerer(compile_to_cin(z_ij), std::cout).lower_cin();
-    // Format new_csr = Format::ordered({
-    //     {"j", LevelFormat::Dense},
-    //     {"k", LevelFormat::Compressed},
-    // });
-    // TensorType new_csr_f32 = TensorType(new_csr, dType::Float32);
-    // std::cout<<compile_to_cin(
-    //     Tensor::make(csr_f32,"A") * Tensor::make(new_csr_f32, "B")
-    // )<< "\n";
-    // nacho::backend::CINLowerer(compile_to_cin(
-    //     Tensor::make(csr_f32,"A") * Tensor::make(new_csr_f32, "B")
-    // ), std::cout).lower_cin();
+    // // COO add
+    // nacho::backend::CINLowerer(compile_to_cin(a_coo_ij + b_coo_ij), std::cout).lower_cin();
+
+    // // COO Mul
+    // nacho::backend::CINLowerer(compile_to_cin(a_coo_ij * b_coo_ij), std::cout).lower_cin();
+
+    // // CSR + COO
+    // nacho::backend::CINLowerer(compile_to_cin(a_csr_ij + b_coo_ij), std::cout).lower_cin();
+
+    // // DCSR add
+    // nacho::backend::CINLowerer(compile_to_cin(a_dcsr_ij + b_dcsr_ij), std::cout).lower_cin();
+
+    // // DCSR Mul
+    // nacho::backend::CINLowerer(compile_to_cin(a_dcsr_ij * b_dcsr_ij), std::cout).lower_cin();
+
+    // // CSF add
+    // nacho::backend::CINLowerer(compile_to_cin(a_csf_ijk + b_csf_ijk), std::cout).lower_cin();
+
+    // // Spgemm
+    // nacho::backend::CINLowerer(compile_to_cin(Sum::make("j", a_csr_ij * b_csr_jk)), std::cout).lower_cin();
+
+    // // SSSMM
+    // nacho::backend::CINLowerer(compile_to_cin(Sum::make("j", a_csr_ij * b_csr_jk * c_csr_ik)), std::cout).lower_cin();
+
+    // // Inner Prod
+    // nacho::backend::CINLowerer(compile_to_cin(Sum::make("i", Sum::make("j", Sum::make("k" ,a_csf_ijk * b_csf_ijk)))), std::cout).lower_cin();
+
     return;
-
-//     std::cout << "Debug\n";
-//     z_i = sum("i", z_ij);
-//     std::cout << z_i << "\n";
-//     std::cout << compile_to_cin(z_i) << "\n";
-//     nacho::backend::CINLowerer(compile_to_cin(z_ij), std::cout).lower_cin();
-
-//     z_ij = a_ij * b_ij;
-
-//     std::cout << z_ij << "\n";
-//     std::cout << compile_to_cin(z_ij) << "\n";
-//     nacho::backend::CINLowerer(compile_to_cin(z_ij), std::cout).lower_cin();
-
-//     // z_ij = (a_ij + b_ij) * (c_ij + d_ij);
-//     // std::cout << z_ij << "\n";
-//     // std::cout << compile_to_cin(z_ij) << "\n";
-//     // nacho::backend::CINLowerer(compile_to_cin(z_ij), std::cout).lower_cin();
-//     // std::cout << "\n\n";
-
-//     // Expr z = (a_i + b_i + c_i) * d_i;
-//     // std::cout << z << "\n";
-//     // std::cout << compile_to_cin(z) << "\n";
-//     // nacho::backend::CINLowerer(compile_to_cin(z), std::cout).lower_cin();
-
-//     Format sdssds = Format::ordered({
-//         {"i", LevelFormat::Compressed},
-//         {"j", LevelFormat::Dense},
-//         {"k", LevelFormat::Compressed},
-//         {"l", LevelFormat::Compressed},
-//         {"m", LevelFormat::Dense},
-//         {"n", LevelFormat::Compressed}
-//     });
-
-//     Format ssds = Format::ordered({
-//         {"i", LevelFormat::Compressed},
-//         {"k", LevelFormat::Compressed},
-//         {"l", LevelFormat::Dense},
-//         {"n", LevelFormat::Compressed}
-//     });
-
-//     TensorType ssds_f32 = TensorType(ssds, dType::Float32); 
-//     TensorType sdssds_f32 = TensorType(sdssds, dType::Float32);
-
-//     Expr A_ijklmn = Tensor::make(sdssds_f32, "A");
-//     Expr B_ikln = Tensor::make(ssds_f32, "B");
-
-//     Expr C_ijklmn = A_ijklmn + B_ikln;
-//     std::cout << C_ijklmn << "\n";
-//     std::cout << compile_to_cin(C_ijklmn) << "\n";
-//     nacho::backend::CINLowerer(compile_to_cin(C_ijklmn), std::cout).lower_cin();
-//     std::cout << "\n\n";
-// }
-
-// void test_vec() {
-//     std::cout << "Vector math test\n";
-//     Format dense = Format::ordered({
-//         {"i", LevelFormat::Dense},
-//     });
-//     Format sparse = Format::ordered({
-//         {"i", LevelFormat::Compressed},
-//     });
-
-//     TensorType dense_f32 = TensorType(dense, dType::Float32);
-//     TensorType sparse_f32 = TensorType(sparse, dType::Float32);
-
-//     Expr a_i = Tensor::make(sparse_f32, "a");
-//     Expr b_i = Tensor::make(sparse_f32, "b");
-//     Expr c_i = Tensor::make(dense_f32, "c");
-//     Expr d_i = Tensor::make(dense_f32, "d");
-
-//     Expr e = a_i * b_i;
-//     std::cout << "Expect sparse: " << e.type().format << "\n";
-//     std::cout << compile_to_cin(e) << "\n";
-
-//     e = c_i * d_i;
-//     std::cout << "Expect dense: " << e.type().format << "\n";
-//     std::cout << compile_to_cin(e) << "\n";
-
-//     e = a_i * c_i;
-//     std::cout << "Expect sparse: " << e.type().format << "\n";
-//     std::cout << compile_to_cin(e) << "\n";
-
-//     e = a_i + b_i;
-//     std::cout << "Expect sparse: " << e.type().format << "\n";
-//     std::cout << compile_to_cin(e) << "\n";
-
-//     e = c_i + d_i;
-//     std::cout << "Expect dense: " << e.type().format << "\n";
-//     std::cout << compile_to_cin(e) << "\n";
-
-//     e = a_i + c_i;
-//     std::cout << "Expect dense: " << e.type().format << "\n";
-//     std::cout << compile_to_cin(e) << "\n";
-
-//     std::cout << "\n\n";
 }
 
 void spmspv() {
@@ -594,11 +506,11 @@ void test_locator_optimization() {
 
 // TODO: write a parser.
 int main(int argc, char **argv) {
-    // test();
+    test();
     // test_format_inf();
     // test_vec();
     // spgemm();
-    spmspv();
+    // spmspv();
     // sss_s_s();
     // make_binary_search();
     // make_binary_partition();

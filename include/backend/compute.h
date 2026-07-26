@@ -20,6 +20,7 @@ namespace backend {
         // Memoized lattices, used for both compute and precompute.
         std::map<Seq, Lattice, SeqLessThan> lattices;
         bool need_operand_pos_map;
+        TensorLowerer output_write_tensor;
 
         ComputeKernelLowerer(
             std::map<std::string, TensorLowerer> &operand_tensors,
@@ -27,8 +28,11 @@ namespace backend {
             std::map<std::string, TensorLowerer> &included_tensors,
             const std::vector<CIN> &forall_list, const CIN &cin,
             LoopNum previous_sparse_intersection, LoopNum current_sparse_intersection, LoopNum next_sparse_intersection,
-            LoopNum reduction_loop)
-            : BaseKernelLowerer(operand_tensors, result_tensor, included_tensors, forall_list, previous_sparse_intersection, current_sparse_intersection, next_sparse_intersection, reduction_loop), cin(cin) {}
+            std::vector<LoopNum> reduction_loops, bool &is_scatter_reduction, TensorLowerer &reduced_result_tensor)
+            : BaseKernelLowerer(operand_tensors, result_tensor, included_tensors, forall_list, previous_sparse_intersection, current_sparse_intersection, next_sparse_intersection, reduction_loops, is_scatter_reduction, reduced_result_tensor), cin(cin) {
+                output_write_tensor = next_sparse_intersection.get() == forall_list.size() && reduction_loops.size() > 0 && !is_scatter_reduction 
+                    ? reduced_result_tensor : result_tensor;
+            }
 
         llir::lStmt lower_precompute_function();
 

@@ -60,7 +60,7 @@ llir::lType TensorLowerer::lower_tensor_struct_definition() const {
 llir::lExpr TensorLowerer::get_level_indexing_expression(TensorLevelNum tensor_level,
     bool upper_bound, std::map<TensorLevelNum, llir::lExpr> pos_vars) {
     internal_assert(tensor_level <= end_tensor_level() && tensor_level > BEFORE_FIRST_LEVEL) << "Tensor level " << tensor_level.get() << " does not exist in tensor "<< tensor_name;
-
+    // std::cout << "Getting indexing expression for tensor level " << tensor_level.get() << " tensor " << tensor_name << tensor_level_name(tensor_level) << std::endl;
     bool is_target_sparse = tensor_level < end_tensor_level() && is_sparse(tensor_level);
     TensorLevelNum prev_sparse_level = tensor_type.format.get_prev_sparse_level(tensor_level);
 
@@ -273,7 +273,7 @@ TensorLowerer::lower_work_function(std::vector<std::string> partial_loop_order,
         }
     }
 
-    for(TensorLevelNum i = last_tensor_level_before_target_loop + 1; i < last_tensor_level_in_partial_loop; ++i) {
+    for(TensorLevelNum i = last_tensor_level_before_target_loop + 1; i <= last_tensor_level_in_partial_loop; ++i) {
         pos_vars_start[i] = llir::lConst::make((int64_t)0);
         pos_vars_end[i] = llir::lConst::make((int64_t)0);
     }
@@ -359,7 +359,7 @@ TensorLowerer::lower_work_function(std::vector<std::string> partial_loop_order,
         auto end_var = llir::lVar::make(index_t, "end");
         auto start_var = llir::lVar::make(index_t, "start");
 
-        while (next_sparse_level < last_tensor_level_in_partial_loop) {
+        while (next_sparse_level <= last_tensor_level_in_partial_loop) {
             auto prev_sparse_level = next_sparse_level;
             next_sparse_level =
                 tensor_type.format.get_next_sparse_level(next_sparse_level);

@@ -13,17 +13,18 @@
 namespace nacho {
 namespace backend {
 
-    CINLowerer::CINLowerer(CIN cin, std::ostream &os) : cin(std::move(cin)), printer(os), reductionLoop(BEFORE_FIRST_LOOP) {
+    CINLowerer::CINLowerer(CIN cin, std::ostream &os) : cin(std::move(cin)), printer(os), reductionLoops({}) {
         loop_order = get_loop_order();
         struct TensorVisitor : Visitor {
             std::map<std::string, TensorLowerer> &operand_tensors;
             TensorLowerer &result_tensor;
-            TensorLowerer &scatter_reduced_result_tensor;
+            TensorLowerer &reduced_result_tensor;
             std::vector<std::string> &loop_order;
-            LoopNum &reductionLoop;
-            TensorVisitor(std::map<std::string, TensorLowerer> &operand_tensors, TensorLowerer &result_tensor, TensorLowerer &scatter_reduced_result_tensor, 
-                std::vector<std::string> &loop_order, LoopNum &reductionLoop)
-                : operand_tensors(operand_tensors), result_tensor(result_tensor), scatter_reduced_result_tensor(scatter_reduced_result_tensor), loop_order(loop_order), reductionLoop(reductionLoop) {}
+            std::vector<LoopNum> &reductionLoops;
+            bool &is_scatter_reduction;
+            TensorVisitor(std::map<std::string, TensorLowerer> &operand_tensors, TensorLowerer &result_tensor, TensorLowerer &reduced_result_tensor, 
+                std::vector<std::string> &loop_order, std::vector<LoopNum> &reductionLoops, bool &is_scatter_reduction)
+                : operand_tensors(operand_tensors), result_tensor(result_tensor), reduced_result_tensor(reduced_result_tensor), loop_order(loop_order), reductionLoops(reductionLoops), is_scatter_reduction(is_scatter_reduction) {}
 
             void add_tensor(std::string str, TensorType type) {
                 TensorLowerer lowerer(str, type, loop_order);
@@ -36,18 +37,34 @@ namespace backend {
 
             void visit(const Accumulate *node) override { 
                 result_tensor = TensorLowerer(node->tensor, node->type, loop_order, true);
-                reductionLoop = result_tensor.get_loop_num(node->accumulate_index);
-                // scatter reduction
-                if(reductionLoop < result_tensor.get_loop_num_for_last_sparse_level() ){
-                    if(node->expr.as<cAdd>()) {
-                        result_tensor = TensorLowerer(node->tensor+"_temp",  node->expr.as<cAdd>()->type, loop_order, true);
-                        scatter_reduced_result_tensor = TensorLowerer(node->tensor, node->type, loop_order, true);
-                    } else if(node->expr.as<cMul>()) {
-                        result_tensor = TensorLowerer(node->tensor+"_temp",  node->expr.as<cMul>()->type, loop_order, true);
-                        scatter_reduced_result_tensor = TensorLowerer(node->tensor, node->type, loop_order, true);
-                    } else {
-                        internal_assert(false) << "Expected Accumulate to have cAdd or cMul expr, inner sums are not yet supported";
+                for(const auto& idx : node->accumulate_indices) {
+                    reductionLoops.push_back(result_tensor.get_loop_num(idx));
+                }
+                std::sort(reductionLoops.begin(), reductionLoops.end());
+
+                is_scatter_reduction = false;
+                for(auto loop = BEFORE_FIRST_LOOP+1; loop < result_tensor.end_loop_num(); ++loop) {
+                    if(result_tensor.tensor_level_exists(loop) && result_tensor.is_sparse(loop) && reductionLoops.size()>0) {
+                        int l = -1;
+                        for(; l+1 < reductionLoops.size();l++) {
+                            if(reductionLoops[l+1] > loop) {
+                                break;
+                            }
+                        }
+                        if(l>=0 && reductionLoops[l] != loop) {
+                            is_scatter_reduction = true;
+                            break;
+                        }
                     }
+                }
+                if(node->expr.as<cAdd>()) {
+                    result_tensor = TensorLowerer(node->tensor+"_temp",  node->expr.as<cAdd>()->type, loop_order, true);
+                    reduced_result_tensor = TensorLowerer(node->tensor, node->type, loop_order, true);
+                } else if(node->expr.as<cMul>()) {
+                    result_tensor = TensorLowerer(node->tensor+"_temp",  node->expr.as<cMul>()->type, loop_order, true);
+                    reduced_result_tensor = TensorLowerer(node->tensor, node->type, loop_order, true);
+                } else {
+                    internal_assert(false) << "Expected Accumulate to have cAdd or cMul expr";
                 }
                 node->expr.accept(this); 
             }
@@ -58,7 +75,7 @@ namespace backend {
             }
         };
 
-        TensorVisitor visitor(operand_tensors, result_tensor, scatter_reduced_result_tensor, loop_order, reductionLoop);
+        TensorVisitor visitor(operand_tensors, result_tensor, reduced_result_tensor, loop_order, reductionLoops, is_scatter_reduction);
         this->cin.accept(&visitor);
     }
 
@@ -128,9 +145,8 @@ namespace backend {
             }
 
 
-            PartitionKernelLowerer partition_lowerer(operand_tensors, result_tensor, included_tensors, forall_list, previous_sparse_intersection, current_sparse_intersection, next_sparse_intersection, reductionLoop);
+            PartitionKernelLowerer partition_lowerer(operand_tensors, result_tensor, included_tensors, forall_list, previous_sparse_intersection, current_sparse_intersection, next_sparse_intersection, reductionLoops, is_scatter_reduction, reduced_result_tensor);
 
-            
             printer.print(partition_lowerer.lower_partition_struct_definition());
             printer.print(partition_lowerer.lower_partition_kernel());
 
@@ -142,10 +158,13 @@ namespace backend {
                 included_tensors = get_included_tensors_for_level(next_sparse_intersection);
             }
 
-            ComputeKernelLowerer compute_lowerer(operand_tensors, result_tensor, included_tensors, forall_list, modified_cin, previous_sparse_intersection, current_sparse_intersection, next_sparse_intersection, reductionLoop);
+            ComputeKernelLowerer compute_lowerer(operand_tensors, result_tensor, included_tensors, forall_list, modified_cin, previous_sparse_intersection, current_sparse_intersection, next_sparse_intersection, reductionLoops, is_scatter_reduction, reduced_result_tensor);
             
             // Generate Precompute kernels
-            if(result_tensor.get_loop_num_for_prev_sparse_level(current_sparse_intersection+1) > BEFORE_FIRST_LOOP) {
+            TensorLowerer & output_write_tensor = 
+                i == sparse_intersection_levels.size()-2 && reductionLoops.size() > 0 &&  !is_scatter_reduction 
+                    ? reduced_result_tensor : result_tensor;
+            if(output_write_tensor.get_loop_num_for_prev_sparse_level(current_sparse_intersection+1) > BEFORE_FIRST_LOOP) {
                 printer.print(compute_lowerer.lower_precompute_function());
             }
 
@@ -174,14 +193,15 @@ namespace backend {
             // printer.print(it.second.lower_tensor_index_definition());
         }
         printer.print(result_tensor.lower_tensor_struct_definition());
-        if(reductionLoop<result_tensor.get_loop_num_for_last_sparse_level() && reductionLoop!=BEFORE_FIRST_LOOP) {
-            printer.print(scatter_reduced_result_tensor.lower_tensor_struct_definition());
+        if(reductionLoops.size() > 0) {
+            printer.print(reduced_result_tensor.lower_tensor_struct_definition());
         }
+
 
 
         // Use BaseKernelLowerer to lower the one time struct definitions of result_per_thread_count struct and result_to_operand_pos_map struct
         auto empty_map = std::map<std::string, TensorLowerer>();
-        BaseKernelLowerer BaseLowerer(operand_tensors, result_tensor, empty_map, get_forall_list(), BEFORE_FIRST_LOOP, BEFORE_FIRST_LOOP, BEFORE_FIRST_LOOP, reductionLoop);
+        BaseKernelLowerer BaseLowerer(operand_tensors, result_tensor, empty_map, get_forall_list(), BEFORE_FIRST_LOOP, BEFORE_FIRST_LOOP, BEFORE_FIRST_LOOP, reductionLoops, is_scatter_reduction, reduced_result_tensor);
         // Need to lower this struct only once
         if(!result_tensor.are_all_lvls_dense()) {
             printer.print(BaseLowerer.lower_result_per_thread_count_struct());
@@ -197,7 +217,7 @@ namespace backend {
         std::vector<std::string> generics = {"index_t"};
         std::vector<std::pair<std::string, llir::lType>> fields;
         auto forall_list = get_forall_list(); auto empty_map = std::map<std::string, TensorLowerer>();
-        BaseKernelLowerer BaseLowerer(operand_tensors, result_tensor, empty_map, forall_list, BEFORE_FIRST_LOOP, BEFORE_FIRST_LOOP, BEFORE_FIRST_LOOP, reductionLoop);
+        BaseKernelLowerer BaseLowerer(operand_tensors, result_tensor, empty_map, forall_list, BEFORE_FIRST_LOOP, BEFORE_FIRST_LOOP, BEFORE_FIRST_LOOP, reductionLoops, is_scatter_reduction, reduced_result_tensor);
         for(LoopNum loop=BEFORE_FIRST_LOOP+1; loop<=last_sparse_intersection;++loop) {
             if(loop >= LoopNum(forall_list.size()-1)) {
                 continue;
@@ -224,6 +244,9 @@ namespace backend {
             LoopNum loop_num = BEFORE_FIRST_LOOP;
             bool inside_sparse_intersection = false;
             bool found_sparse_intersection = false;
+            bool all_lower_levels_dense = false;
+            // This is to check if all dims in levels below current level are dense, then this is not a sparse intersection
+            int num_sparse_dims = 0;
             std::vector<LoopNum> sparse_intersection_levels;
 
             void visit(const Intersect * node) override{
@@ -266,6 +289,11 @@ namespace backend {
                 if(inside_sparse_intersection) {
                     found_sparse_intersection = true;
                 }
+
+                if(node->is_sparse) {
+                    num_sparse_dims++;
+                }
+
             }
 
 
@@ -275,6 +303,9 @@ namespace backend {
                 // hence cin is not innermost sparse
                 ++loop_num;
                 found_sparse_intersection = false;
+                num_sparse_dims = 0;
+
+                node->body.accept(this);
 
                 // level should be considered separately as a sparse intersection only if it is a unique level.
                 // TODO : not sure if the unique requirment is entirely correct, need to investigate further.
@@ -283,11 +314,30 @@ namespace backend {
                     //<<" Going inside seq "<<(Seq)node->seq<<std::endl;
                     node->seq.accept(this);
                     if(found_sparse_intersection) {
-                        sparse_intersection_levels.push_back(loop_num);
+                        sparse_intersection_levels.insert(sparse_intersection_levels.begin(), loop_num);
                     }
                 }
+
+                bool current_level_has_sparse_dim = num_sparse_dims > 0;
+
+                if(!node->body.as<Forall>()) {
+                    all_lower_levels_dense = true;
+                }
+
+                if(all_lower_levels_dense && num_sparse_dims == 1) {
+                    // if all lower levels are dense and current level has a single sparse dim, then this level is not a sparse intersection level
+                    // because even if there is skipping in dense, the work can be calculated
+                    //std::cout<<"Level "<<loop_num<<" has sparse dim but all lower levels are dense, hence not a sparse intersection level"<<std::endl;
+                    std::erase_if(sparse_intersection_levels, [this](LoopNum l) { return l == loop_num; });
+                }
+
+                if(current_level_has_sparse_dim) {
+                    all_lower_levels_dense = false;
+                }
+
+                --loop_num;
                 found_sparse_intersection = false;
-                node->body.accept(this);
+                num_sparse_dims = 0;
             }
         };
 
@@ -440,24 +490,33 @@ namespace backend {
 
             std::vector<Seq> locators = get_dense_locators(forall->seq);
 
-            
+
+            // If all levels are dense, then all tensors should be included in work calculation.
+            bool sparse_level_exists = false;
+            for(const auto &it : operand_tensors) {
+                if(it.second.tensor_level_exists(loop_num) && it.second.is_sparse(loop_num)) {
+                    sparse_level_exists = true;
+                    break;
+                }
+            }
 
             // included tensors are the tensors which are included in the work
             // calculation. Non-included tensors are not co-iterated and instead looked up.
             std::map<std::string, TensorLowerer> excluded_tensors;
-                
-            for(const auto &it : operand_tensors) {
-                if (!it.second.tensor_level_exists(loop_num)) {
-                    excluded_tensors[it.second.tensor_name] = it.second;
-                    continue;
-                }
-                for(const auto &loc : locators) {
-                    const auto *index = loc.as<Index>();
-                    if (!index){
-                        internal_assert(false) << "Expected Index node in locator sequence: " << loc;
-                    }
-                    if (it.second.tensor_name == index->tensor) {
+            if(sparse_level_exists){   
+                for(const auto &it : operand_tensors) {
+                    if (!it.second.tensor_level_exists(loop_num)) {
                         excluded_tensors[it.second.tensor_name] = it.second;
+                        continue;
+                    }
+                    for(const auto &loc : locators) {
+                        const auto *index = loc.as<Index>();
+                        if (!index){
+                            internal_assert(false) << "Expected Index node in locator sequence: " << loc;
+                        }
+                        if (it.second.tensor_name == index->tensor) {
+                            excluded_tensors[it.second.tensor_name] = it.second;
+                        }
                     }
                 }
             }

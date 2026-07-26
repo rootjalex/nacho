@@ -70,13 +70,19 @@ CIN compile_to_cin(const Expr &expr, std::string out) {
 
     // TODO: need to support inner_sums for generality.
     // Will use Where statements.
-    internal_assert(!contains_inner_sum(expr));
+    // internal_assert(!contains_inner_sum(expr));
 
     CIN cin;
     std::vector<Level> levels;
 
     if (const Sum *sum = expr.as<Sum>()) {
-        cin = Accumulate::make(out, out_type, sum->index, from_expr(sum->a));
+        std::vector<std::string> accumulate_indices;
+        accumulate_indices.push_back(sum->index);
+        while(sum->a.as<Sum>()) {
+            sum = sum->a.as<Sum>();
+            accumulate_indices.push_back(sum->index);
+        }
+        cin = Accumulate::make(out, out_type, accumulate_indices, from_expr(sum->a));
         // Include sum loop.
         levels = sum->a.type().format.levels;
     } else {

@@ -168,7 +168,7 @@ llir::lStmt ComputeKernelLowerer::
             llir::Generic_t::make(get_partition_struct_name() + "<index_t>"),
         .name = "partitions"});
 
-    if(!result_tensor.are_all_lvls_dense())
+    if(!output_write_tensor.are_all_lvls_dense())
         args.emplace_back(llir::Function::Argument{
             .mutating = true,
             .type = llir::Generic_t::make(get_counts_struct_name() + "<index_t>"),
@@ -215,8 +215,8 @@ llir::lStmt ComputeKernelLowerer::
     // Declare local count variables to be used to calculat the offsets into
     // result. These will be stored in count_offsets at the end.
     for (LoopNum i = BEFORE_FIRST_LOOP+1; i <= current_sparse_intersection; ++i) {
-        auto index = result_tensor.loop_name(i);
-        if (result_tensor.tensor_level_exists(i) && result_tensor.is_sparse(i)) {
+        auto index = output_write_tensor.loop_name(i);
+        if (output_write_tensor.tensor_level_exists(i) && output_write_tensor.is_sparse(i)) {
             stmts.emplace_back(llir::Declare::make(
                 index_t, "count_" + index, llir::lConst::make((int64_t)0)));
         }
@@ -227,8 +227,8 @@ llir::lStmt ComputeKernelLowerer::
     stmts.push_back(lower_loop(cin, defined, /*is_precompute*/ true, BEFORE_FIRST_LOOP+1, nullptr));
 
     for (LoopNum i = BEFORE_FIRST_LOOP+1; i <= current_sparse_intersection; ++i) {
-        auto index = result_tensor.loop_name(i);
-        if (result_tensor.tensor_level_exists(i) && result_tensor.is_sparse(i)) {
+        auto index = output_write_tensor.loop_name(i);
+        if (output_write_tensor.tensor_level_exists(i) && output_write_tensor.is_sparse(i)) {
             stmts.emplace_back(llir::Store::make(
                 llir::lArrayAccess::make(
                     llir::lFieldAccess::make(
@@ -282,7 +282,7 @@ llir::lStmt ComputeKernelLowerer::
             llir::Generic_t::make(get_partition_struct_name() + "<index_t>"),
         .name = "partitions"});
 
-    if(!result_tensor.are_all_lvls_dense())
+    if(!output_write_tensor.are_all_lvls_dense())
         args.emplace_back(llir::Function::Argument{
             .mutating = false,
             .type = llir::Generic_t::make(get_counts_struct_name() + "<index_t>"),
@@ -329,8 +329,8 @@ llir::lStmt ComputeKernelLowerer::
     add_partition_assignments(stmts);
 
     for (LoopNum i = BEFORE_FIRST_LOOP+1; i <= current_sparse_intersection; ++i) {
-        auto index = result_tensor.loop_name(i);
-        if (result_tensor.tensor_level_exists(i) && result_tensor.is_sparse(i)) {
+        auto index = output_write_tensor.loop_name(i);
+        if (output_write_tensor.tensor_level_exists(i) && output_write_tensor.is_sparse(i)) {
             stmts.emplace_back(llir::Declare::make(
                 index_t, "offset_" + index,
                 llir::lArrayAccess::make(
@@ -440,13 +440,13 @@ llir::lStmt ComputeKernelLowerer::lower_assign_statement(
         auto converter = Converter(operand_tensors);
         assign_stmt->expr.accept(&converter);
         return llir::Store::make(
-            result_tensor.get_values_field()[
-                result_tensor.get_level_indexing_expression(
-                    result_tensor.end_tensor_level(),
+            output_write_tensor.get_values_field()[
+                output_write_tensor.get_level_indexing_expression(
+                    output_write_tensor.end_tensor_level(),
                     false,
                     get_iter_vars_result(
-                        result_tensor,
-                        result_tensor.end_tensor_level()
+                        output_write_tensor,
+                        output_write_tensor.end_tensor_level()
                     )
                 )],
             converter.result
@@ -458,8 +458,10 @@ llir::lStmt ComputeKernelLowerer::lower_assign_statement(
         accumulate_stmt->expr.accept(&converter);
 
         // Append reduction case
-        if(result_tensor.get_loop_num_for_last_sparse_level() <= reduction_loop) {
-            if(reduction_loop + 1 == result_tensor.end_loop_num()) {
+        if(!is_scatter_reduction) {
+            // Append case optimization: When reduction is there on one of the innermost loop. Can optimize by not doing an accumulate add directly
+            // instead write to a temporary variable and atomic add that once in a loop that is present in the result.
+            if(reduction_loops.back() + 1 == output_write_tensor.end_loop_num()) {
                 return llir::Accumulate::make(
                     llir::lVar::make(value_t, "value"),
                     converter.result
@@ -469,13 +471,13 @@ llir::lStmt ComputeKernelLowerer::lower_assign_statement(
                 llir::lFunctionCall::make(
                     "atomicAdd",
                     {
-                        llir::lAddress::make(result_tensor.get_values_field()[
-                            result_tensor.get_level_indexing_expression(
-                                result_tensor.end_tensor_level(),
+                        llir::lAddress::make(output_write_tensor.get_values_field()[
+                            output_write_tensor.get_level_indexing_expression(
+                                output_write_tensor.end_tensor_level(),
                                 false,
                                 get_iter_vars_result(
-                                    result_tensor,
-                                    result_tensor.end_tensor_level()
+                                    output_write_tensor,
+                                    output_write_tensor.end_tensor_level()
                                 )
                             )]),
                         converter.result
@@ -485,13 +487,13 @@ llir::lStmt ComputeKernelLowerer::lower_assign_statement(
             }
         } else {
             return llir::Store::make(
-            result_tensor.get_values_field()[
-                result_tensor.get_level_indexing_expression(
-                    result_tensor.end_tensor_level(),
+            output_write_tensor.get_values_field()[
+                output_write_tensor.get_level_indexing_expression(
+                    output_write_tensor.end_tensor_level(),
                     false,
                     get_iter_vars_result(
-                        result_tensor,
-                        result_tensor.end_tensor_level()
+                        output_write_tensor,
+                        output_write_tensor.end_tensor_level()
                     )
                 )],
             converter.result
@@ -618,7 +620,6 @@ llir::lStmt ComputeKernelLowerer::lower_loop(
     // std::cout<<std::endl;
     
     if(is_loop_before_prev_intersection) {
-        internal_assert(result_tensor.tensor_level_exists(loop_num)) << "Yet to suport reductions above any sparse intersections";
         // If this loop is before the previous intersection, then we are going to iterate only over the result tensor index
         forall_iters = std::vector<Seq>{result_tensor.get_index_sequence(result_tensor.loop_num_to_tensor_level(loop_num))};
         has_universe_iter = false; // universe iterator is not needed for loops before the previous intersection since we are only iterating over the result tensor index
@@ -833,23 +834,29 @@ llir::lStmt ComputeKernelLowerer::lower_loop(
         imap[i] = std::move(p);
     }
 
-    // if(result_tensor.is_sparse(forall->idx) && result_tensor.tensor_type.format.get_level_order(forall->idx) > 0) {
-    //     stmts.push_back(llir::Declare::make(
-    //     llir::Generic_t::make("bool"), "atleast_one_iter_" + forall->idx, atleast_one_iter_cond));
-    // }
-
-    if(reduction_loop + 1 == result_tensor.end_loop_num() && loop_num==reduction_loop && !is_precompute) {
-        stmts.push_back(llir::Declare::make(
-            llir::Generic_t::make("value_t"), "value",
-            llir::lConst::make((int64_t)0)
-        ));
+    // Append case optimization: When reduction is there on one of the innermost loop. Can optimize by not doing an accumulate add directly
+    // instead write to a temporary variable and atomic add that once in a loop that is present in the result.
+    if(next_sparse_intersection.get() == forall_list.size() && reduction_loops.size() > 0 && !is_scatter_reduction && reduction_loops.back() + 1 == output_write_tensor.end_loop_num() && !is_precompute) {
+        LoopNum innermost_non_reduce_loop = BEFORE_FIRST_LOOP;
+        for(auto it = output_write_tensor.end_loop_num()-1; it != BEFORE_FIRST_LOOP; --it) {
+            if(std::find(reduction_loops.begin(), reduction_loops.end(), it) == reduction_loops.end()) {
+                innermost_non_reduce_loop = it;
+                break;
+            }
+        }
+        if(loop_num == innermost_non_reduce_loop + 1) {
+            stmts.push_back(llir::Declare::make(
+                llir::Generic_t::make("value_t"), "value",
+                llir::lConst::make((int64_t)0)
+            ));
+        }
     }
 
     auto make_loop = [&](const Seq &s) {
         auto [is, _, has_universe_iter] = partition_iterators_locators(s);
 
         if(is_loop_before_prev_intersection) {
-             internal_assert(result_tensor.tensor_level_exists(loop_num)) << "Yet to support reductions above any sparse intersections";
+             internal_assert(result_tensor.tensor_level_exists(loop_num)) << "Loop num " << loop_num.get() << " does not exist in result tensor";
             // If this loop is before the previous intersection, then we are going to iterate only over the result tensor index
             is = std::vector<Seq>{result_tensor.get_index_sequence(result_tensor.loop_num_to_tensor_level(loop_num))};
             has_universe_iter = false; // universe iterator is not needed for loops before the previous intersection since we are only iterating over the result tensor index
@@ -888,48 +895,48 @@ llir::lStmt ComputeKernelLowerer::lower_loop(
                 return llir::lStmt();
             }
 
-            if(!result_tensor.tensor_level_exists(loop_num)) {
+            if(!output_write_tensor.tensor_level_exists(loop_num)) {
                 return llir::lStmt();
             }
             std::string idx = forall_list[loop_num.get()].as<Forall>()->idx;
 
             std::vector<llir::lStmt> stmts;
 
-            auto current_level = result_tensor.loop_num_to_tensor_level(loop_num);
+            auto current_level = output_write_tensor.loop_num_to_tensor_level(loop_num);
             auto next_level = TensorLevelNum(current_level.get() + 1);
             // If this is not the innermost loop need to wrap the increment statement under a condition
             // also, add the offset calculation statement here
-            if(next_level < result_tensor.end_tensor_level() && result_tensor.tensor_level_to_loop_num(next_level) != current_sparse_intersection+1 && result_tensor.is_sparse(next_level) && result_tensor.is_compressed(next_level)) {
+            if(output_write_tensor.tensor_level_to_loop_num(next_level) != current_sparse_intersection+1 && output_write_tensor.is_sparse(next_level) && output_write_tensor.is_compressed(next_level)) {
                 // offset calculation statement here
                 // eg :- result.dim_j_offsets[offset_i + 1] = offset_j
-                TensorLevelNum level = result_tensor.loop_num_to_tensor_level(loop_num+1);
+                TensorLevelNum level = output_write_tensor.loop_num_to_tensor_level(loop_num+1);
                 if(!is_precompute) {
                         stmts.push_back(llir::Store::make(
-                        result_tensor.get_offsets_field(next_level)[
-                            result_tensor.get_level_indexing_expression(
+                        output_write_tensor.get_offsets_field(next_level)[
+                            output_write_tensor.get_level_indexing_expression(
                                 level, true, 
                                 get_iter_vars_result(
-                                    result_tensor,  
+                                    output_write_tensor,
                                     level)
                                 )],
-                        llir::lVar::make(index_t, "offset_" + result_tensor.tensor_level_name(next_level))));
+                        llir::lVar::make(index_t, "offset_" + output_write_tensor.tensor_level_name(next_level))));
                 }
             }
 
             if(loop_num > previous_sparse_intersection && !is_precompute) {
                 auto offset_var = llir::lVar::make(index_t, "offset_" + idx);
-                if(result_tensor.is_sparse(idx) && result_tensor.is_unique(idx)) {
+                if(output_write_tensor.is_sparse(idx) && output_write_tensor.is_unique(idx)) {
                     stmts.push_back(llir::Store::make(
-                        result_tensor.get_indices_field(idx)[offset_var],
+                        output_write_tensor.get_indices_field(idx)[offset_var],
                         llir::lVar::make(index_t, idx)));
 
                     // also add the index assign statement for any non-unique sparse levels above this level
                     for(TensorLevelNum level  = current_level -1; level > BEFORE_FIRST_LEVEL ; --level) {
-                        if(result_tensor.is_sparse(level) && !result_tensor.is_unique(level)) {
-                            std::string level_idx = forall_list[result_tensor.tensor_level_to_loop_num(level).get()].as<Forall>()->idx;
+                        if(output_write_tensor.is_sparse(level) && !output_write_tensor.is_unique(level)) {
+                            std::string level_idx = forall_list[output_write_tensor.tensor_level_to_loop_num(level).get()].as<Forall>()->idx;
                             auto offset_var = llir::lVar::make(index_t, "offset_" + level_idx);
                             stmts.push_back(llir::Store::make(
-                                result_tensor.get_indices_field(result_tensor.tensor_level_name(level))[offset_var],
+                                output_write_tensor.get_indices_field(output_write_tensor.tensor_level_name(level))[offset_var],
                                 llir::lVar::make(index_t, level_idx)));
                         } else {
                             break;
@@ -938,7 +945,7 @@ llir::lStmt ComputeKernelLowerer::lower_loop(
                 }
             }
 
-            if (result_tensor.is_sparse(idx) && result_tensor.is_unique(idx)) {
+            if (output_write_tensor.is_sparse(idx) && output_write_tensor.is_unique(idx)) {
                 // Count this loop iteration.
                 stmts.push_back(llir::BaseExpr::make(
                     llir::lIncrement::make(llir::lVar::make(
@@ -946,8 +953,8 @@ llir::lStmt ComputeKernelLowerer::lower_loop(
                         (is_precompute ? "count_" : "offset_") + idx))));
                 // also increment the offset for any non-unique sparse levels above this level
                 for(TensorLevelNum level  = current_level -1; level > BEFORE_FIRST_LEVEL ; --level) {
-                    if(result_tensor.is_sparse(level) && !result_tensor.is_unique(level)) {
-                        std::string level_idx = forall_list[result_tensor.tensor_level_to_loop_num(level).get()].as<Forall>()->idx;
+                    if(output_write_tensor.is_sparse(level) && !output_write_tensor.is_unique(level)) {
+                        std::string level_idx = forall_list[output_write_tensor.tensor_level_to_loop_num(level).get()].as<Forall>()->idx;
                         stmts.push_back(llir::BaseExpr::make(
                             llir::lIncrement::make(llir::lVar::make(
                                 index_t,
@@ -960,7 +967,7 @@ llir::lStmt ComputeKernelLowerer::lower_loop(
 
 
             if(stmts.size()>0) {
-                return result_tensor.tensor_level_to_loop_num(next_level) != current_sparse_intersection+1 ? llir::IfElse::make(offset_write_cond, llir::Sequence::make(stmts), nullptr) : llir::Sequence::make(stmts);
+                return output_write_tensor.tensor_level_to_loop_num(next_level) != current_sparse_intersection+1 ? llir::IfElse::make(offset_write_cond, llir::Sequence::make(stmts), nullptr) : llir::Sequence::make(stmts);
             } else {
                 return llir::lStmt();
             }
@@ -1195,7 +1202,7 @@ llir::lStmt ComputeKernelLowerer::lower_loop(
             // auto as = indexes(a);
             auto [as, _, has_universe_iter] = partition_iterators_locators(a);
             if(is_loop_before_prev_intersection) {
-                internal_assert(result_tensor.tensor_level_exists(loop_num)) << "Yet to support reductions above any sparse intersections";
+                internal_assert(result_tensor.tensor_level_exists(loop_num)) << "Loop num " << loop_num.get() << " does not exist in result tensor";
                 // If this loop is before the previous intersection, then we are going to iterate only over the result tensor index
                 as = std::vector<Seq>{result_tensor.get_index_sequence(result_tensor.loop_num_to_tensor_level(loop_num))};
                 has_universe_iter = false; // universe iterator is not needed for loops before the previous intersection since we are only iterating over the result tensor index
@@ -1305,20 +1312,31 @@ llir::lStmt ComputeKernelLowerer::lower_loop(
                 stmts.push_back(std::move(loop));
             }
         }
-        if(reduction_loop + 1 == result_tensor.end_loop_num() && loop_num==reduction_loop && !is_precompute) {
-            // need to add the final store for reduction variable here since reduction variable is not stored in the loop body when there are sparse intersections
+    }
+    // Append case optimization: When reduction is there on one of the innermost loop. Can optimize by not doing an accumulate add directly
+    // instead write to a temporary variable and atomic add that once in a loop that is present in the result.
+    if(next_sparse_intersection.get() == forall_list.size() && reduction_loops.size() > 0 && !is_scatter_reduction && reduction_loops.back() + 1 == output_write_tensor.end_loop_num() && !is_precompute) {
+        LoopNum innermost_non_reduce_loop=BEFORE_FIRST_LOOP;
+        for(auto it = output_write_tensor.end_loop_num()-1; it != BEFORE_FIRST_LOOP; --it) {
+            if(std::find(reduction_loops.begin(), reduction_loops.end(), it) == reduction_loops.end()) {
+                innermost_non_reduce_loop = it;
+                break;
+            }
+        }
+        if(loop_num == innermost_non_reduce_loop+1) {
+                // need to add the final store for reduction variable here since reduction variable is not stored in the loop body when there are sparse intersections
             stmts.push_back(
                 llir::BaseExpr::make(
                 llir::lFunctionCall::make(
                     "atomicAdd",
                     {
-                        llir::lAddress::make(result_tensor.get_values_field()[
-                            result_tensor.get_level_indexing_expression(
-                                result_tensor.end_tensor_level(),
+                        llir::lAddress::make(output_write_tensor.get_values_field()[
+                            output_write_tensor.get_level_indexing_expression(
+                                output_write_tensor.end_tensor_level(),
                                 false,
                                 get_iter_vars_result(
-                                    result_tensor,
-                                    result_tensor.end_tensor_level()
+                                    output_write_tensor,
+                                    output_write_tensor.end_tensor_level()
                                 )
                             )]),
                         llir::lVar::make(value_t, "value")

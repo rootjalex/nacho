@@ -23,8 +23,8 @@ struct PartitionKernelLowerer: public BaseKernelLowerer {
     PartitionKernelLowerer(std::map<std::string, TensorLowerer> &operand_tensors, TensorLowerer& result_tensor, std::map<std::string, TensorLowerer> &included_tensors, 
         const std::vector<CIN> &forall_list, 
         LoopNum previous_sparse_intersection, LoopNum current_sparse_intersection, LoopNum next_sparse_intersection,
-        LoopNum reduction_loop)
-        : BaseKernelLowerer(operand_tensors, result_tensor, included_tensors, forall_list, previous_sparse_intersection, current_sparse_intersection, next_sparse_intersection, reduction_loop) {
+        std::vector<LoopNum> reduction_loops, bool is_scatter_reduction, TensorLowerer &reduced_result_tensor)
+        : BaseKernelLowerer(operand_tensors, result_tensor, included_tensors, forall_list, previous_sparse_intersection, current_sparse_intersection, next_sparse_intersection, reduction_loops, is_scatter_reduction, reduced_result_tensor) {
             for (const auto& it : operand_tensors) {
                 tensor_partitioned_vars[it.second.tensor_name] = llir::lVar::make(llir::Generic_t::make("bool"), "is_" + it.second.tensor_name + "_partitioned");
             }
