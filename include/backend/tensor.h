@@ -487,7 +487,10 @@ namespace nacho {
             std::vector<llir::lStmt> stmts;
             std::map<TensorLevelNum, llir::lExpr> pos_vars;
             for(TensorLevelNum l = BEFORE_FIRST_LEVEL + 1; l < TensorLevelNum(level); ++l) {
-                pos_vars[l] = get_iter(l);
+                if(is_sparse(l) && !is_unique(l))
+                    pos_vars[l] = get_seg_end(l);
+                else
+                    pos_vars[l] = get_iter(l);
             }
             
             auto val = get_coord(level, index_t);
@@ -508,7 +511,10 @@ namespace nacho {
             std::vector<llir::lStmt> stmts;
             std::map<TensorLevelNum, llir::lExpr> pos_vars;
             for(TensorLevelNum l = BEFORE_FIRST_LEVEL + 1; l < TensorLevelNum(level); ++l) {
-                pos_vars[l] = get_iter(l);
+                if(is_sparse(l) && !is_unique(l))
+                    pos_vars[l] = get_seg_end(l);
+                else
+                    pos_vars[l] = get_iter(l);
             }
             internal_assert(is_sparse(level) && !is_unique(level));
 

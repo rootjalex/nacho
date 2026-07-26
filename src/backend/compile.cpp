@@ -193,9 +193,10 @@ namespace backend {
             // printer.print(it.second.lower_tensor_index_definition());
         }
         printer.print(result_tensor.lower_tensor_struct_definition());
-        if(is_scatter_reduction) {
+        if(reductionLoops.size() > 0) {
             printer.print(reduced_result_tensor.lower_tensor_struct_definition());
         }
+
 
 
         // Use BaseKernelLowerer to lower the one time struct definitions of result_per_thread_count struct and result_to_operand_pos_map struct
@@ -243,6 +244,9 @@ namespace backend {
             LoopNum loop_num = BEFORE_FIRST_LOOP;
             bool inside_sparse_intersection = false;
             bool found_sparse_intersection = false;
+            bool all_lower_levels_dense = false;
+            // This is to check if all dims in levels below current level are dense, then this is not a sparse intersection
+            int num_sparse_dims = 0;
             std::vector<LoopNum> sparse_intersection_levels;
 
             void visit(const Intersect * node) override{
@@ -285,6 +289,11 @@ namespace backend {
                 if(inside_sparse_intersection) {
                     found_sparse_intersection = true;
                 }
+
+                if(node->is_sparse) {
+                    num_sparse_dims++;
+                }
+
             }
 
 
@@ -294,6 +303,9 @@ namespace backend {
                 // hence cin is not innermost sparse
                 ++loop_num;
                 found_sparse_intersection = false;
+                num_sparse_dims = 0;
+
+                node->body.accept(this);
 
                 // level should be considered separately as a sparse intersection only if it is a unique level.
                 // TODO : not sure if the unique requirment is entirely correct, need to investigate further.
@@ -302,11 +314,30 @@ namespace backend {
                     //<<" Going inside seq "<<(Seq)node->seq<<std::endl;
                     node->seq.accept(this);
                     if(found_sparse_intersection) {
-                        sparse_intersection_levels.push_back(loop_num);
+                        sparse_intersection_levels.insert(sparse_intersection_levels.begin(), loop_num);
                     }
                 }
+
+                bool current_level_has_sparse_dim = num_sparse_dims > 0;
+
+                if(!node->body.as<Forall>()) {
+                    all_lower_levels_dense = true;
+                }
+
+                if(all_lower_levels_dense && num_sparse_dims == 1) {
+                    // if all lower levels are dense and current level has a single sparse dim, then this level is not a sparse intersection level
+                    // because even if there is skipping in dense, the work can be calculated
+                    //std::cout<<"Level "<<loop_num<<" has sparse dim but all lower levels are dense, hence not a sparse intersection level"<<std::endl;
+                    std::erase_if(sparse_intersection_levels, [this](LoopNum l) { return l == loop_num; });
+                }
+
+                if(current_level_has_sparse_dim) {
+                    all_lower_levels_dense = false;
+                }
+
+                --loop_num;
                 found_sparse_intersection = false;
-                node->body.accept(this);
+                num_sparse_dims = 0;
             }
         };
 
@@ -459,24 +490,33 @@ namespace backend {
 
             std::vector<Seq> locators = get_dense_locators(forall->seq);
 
-            
+
+            // If all levels are dense, then all tensors should be included in work calculation.
+            bool sparse_level_exists = false;
+            for(const auto &it : operand_tensors) {
+                if(it.second.tensor_level_exists(loop_num) && it.second.is_sparse(loop_num)) {
+                    sparse_level_exists = true;
+                    break;
+                }
+            }
 
             // included tensors are the tensors which are included in the work
             // calculation. Non-included tensors are not co-iterated and instead looked up.
             std::map<std::string, TensorLowerer> excluded_tensors;
-                
-            for(const auto &it : operand_tensors) {
-                if (!it.second.tensor_level_exists(loop_num)) {
-                    excluded_tensors[it.second.tensor_name] = it.second;
-                    continue;
-                }
-                for(const auto &loc : locators) {
-                    const auto *index = loc.as<Index>();
-                    if (!index){
-                        internal_assert(false) << "Expected Index node in locator sequence: " << loc;
-                    }
-                    if (it.second.tensor_name == index->tensor) {
+            if(sparse_level_exists){   
+                for(const auto &it : operand_tensors) {
+                    if (!it.second.tensor_level_exists(loop_num)) {
                         excluded_tensors[it.second.tensor_name] = it.second;
+                        continue;
+                    }
+                    for(const auto &loc : locators) {
+                        const auto *index = loc.as<Index>();
+                        if (!index){
+                            internal_assert(false) << "Expected Index node in locator sequence: " << loc;
+                        }
+                        if (it.second.tensor_name == index->tensor) {
+                            excluded_tensors[it.second.tensor_name] = it.second;
+                        }
                     }
                 }
             }
