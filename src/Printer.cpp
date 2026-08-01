@@ -135,7 +135,7 @@ std::ostream &operator<<(std::ostream &os, const llir::lStmt &lstmt) {
     return os;
 }
 
-std::ostream &operator<<(std::ostream &os, llir::lType &ltype) {
+std::ostream &operator<<(std::ostream &os, const llir::lType &ltype) {
     if (ltype.defined()) {
         Printer printer(os);
         printer.print(ltype);
@@ -365,7 +365,7 @@ void Printer::visit(const llir::Float_t *node) {
 
 void Printer::visit(const llir::Ptr_t *node) {
     node->type.accept(this);
-    os << "*";
+    os << "*__restrict__";
 }
 
 void Printer::visit(const llir::Tuple_t *node) {

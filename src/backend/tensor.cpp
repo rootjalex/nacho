@@ -159,8 +159,8 @@ TensorLowerer::lower_work_function(std::vector<std::string> partial_loop_order,
     std::vector<std::string> generics = {"index_t", "value_t"};
 
     std::vector<llir::Function::Attribute> attributes = {
-        llir::Function::device, llir::Function::inline_};
-
+        // llir::Function::device, llir::Function::inline_};
+        llir::Function::runnable};
 
     // Check what is the last level in the partial loop order that is present inside this tensor
     LoopNum last_level_loop_num_in_partial_loop = BEFORE_FIRST_LOOP;

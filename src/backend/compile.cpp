@@ -111,76 +111,129 @@ namespace backend {
         return forall_list;
     }
 
-    void CINLowerer::lower_cin() {
+    std::vector<llir::lStmt> CINLowerer::lower_cin() {
+        std::vector<llir::lStmt> rets;
+
+        const auto save_args = [&](const llir::lStmt &stmt,
+                                   const std::string &func_name) {
+            const llir::Function *func = stmt.as<llir::Function>();
+            internal_assert(func)
+                << func_name << "did not return an llir::Function: " << stmt;
+            rets.push_back(stmt);
+        };
+
         auto forall_list = get_forall_list();
 
-        std::vector<LoopNum> sparse_intersection_levels = get_all_sparse_intersection_levels(cin);
+        std::vector<LoopNum> sparse_intersection_levels =
+            get_all_sparse_intersection_levels(cin);
 
-        sparse_intersection_levels.insert(sparse_intersection_levels.begin(), BEFORE_FIRST_LOOP);
-        if(sparse_intersection_levels.back()!=LoopNum(loop_order.size()-1)) {
-            sparse_intersection_levels.push_back(LoopNum(loop_order.size()-1));
+        sparse_intersection_levels.insert(sparse_intersection_levels.begin(),
+                                          BEFORE_FIRST_LOOP);
+        if (sparse_intersection_levels.back() !=
+            LoopNum(loop_order.size() - 1)) {
+            sparse_intersection_levels.push_back(
+                LoopNum(loop_order.size() - 1));
         }
 
         this->lower_binary_search_function(true);
         this->lower_binary_search_function(false);
-        this->lower_struct_definitions(sparse_intersection_levels[sparse_intersection_levels.size()-2]);
+        this->lower_struct_definitions(
+            sparse_intersection_levels[sparse_intersection_levels.size() - 2]);
 
-        for(int i=0; i< sparse_intersection_levels.size()-1;i++) {
-            LoopNum previous_sparse_intersection = sparse_intersection_levels[i];
-            LoopNum current_sparse_intersection = sparse_intersection_levels[i+1];
-            LoopNum next_sparse_intersection = i!=sparse_intersection_levels.size()-2 ? sparse_intersection_levels[i+2] : LoopNum(forall_list.size());
+        for (int i = 0; i < sparse_intersection_levels.size() - 1; i++) {
+            LoopNum previous_sparse_intersection =
+                sparse_intersection_levels[i];
+            LoopNum current_sparse_intersection =
+                sparse_intersection_levels[i + 1];
+            LoopNum next_sparse_intersection =
+                i != sparse_intersection_levels.size() - 2
+                    ? sparse_intersection_levels[i + 2]
+                    : LoopNum(forall_list.size());
 
-            auto previous_loop_order = std::vector<std::string>(loop_order.begin(), loop_order.begin() + previous_sparse_intersection.get() + 1);
-            auto current_loop_order = std::vector<std::string>(loop_order.begin(), loop_order.begin() + current_sparse_intersection.get() + 1);
+            auto previous_loop_order = std::vector<std::string>(
+                loop_order.begin(),
+                loop_order.begin() + previous_sparse_intersection.get() + 1);
+            auto current_loop_order = std::vector<std::string>(
+                loop_order.begin(),
+                loop_order.begin() + current_sparse_intersection.get() + 1);
 
             // Generate work functions for partition kernel
-            for(LoopNum loop=BEFORE_FIRST_LOOP+1; loop<=previous_sparse_intersection;++loop) {
-                printer.print(result_tensor.lower_work_function(previous_loop_order, loop));
+            for (LoopNum loop = BEFORE_FIRST_LOOP + 1;
+                 loop <= previous_sparse_intersection; ++loop) {
+                printer.print(result_tensor.lower_work_function(
+                    previous_loop_order, loop));
             }
-            auto included_tensors = get_included_tensors_for_level(current_sparse_intersection);
-            for(LoopNum level = previous_sparse_intersection + 1; level <= current_sparse_intersection; ++level) {
+            auto included_tensors =
+                get_included_tensors_for_level(current_sparse_intersection);
+            for (LoopNum level = previous_sparse_intersection + 1;
+                 level <= current_sparse_intersection; ++level) {
                 for (auto it : included_tensors) {
-                    printer.print(it.second.lower_work_function(current_loop_order, level));
+                    printer.print(it.second.lower_work_function(
+                        current_loop_order, level));
                 }
             }
 
+            PartitionKernelLowerer partition_lowerer(
+                operand_tensors, result_tensor, included_tensors, forall_list,
+                previous_sparse_intersection, current_sparse_intersection,
+                next_sparse_intersection, reductionLoops, is_scatter_reduction,
+                reduced_result_tensor);
 
-            PartitionKernelLowerer partition_lowerer(operand_tensors, result_tensor, included_tensors, forall_list, previous_sparse_intersection, current_sparse_intersection, next_sparse_intersection, reductionLoops, is_scatter_reduction, reduced_result_tensor);
+            printer.print(
+                partition_lowerer.lower_partition_struct_definition());
+            auto pkernel = partition_lowerer.lower_partition_kernel();
+            printer.print(pkernel);
 
-            printer.print(partition_lowerer.lower_partition_struct_definition());
-            printer.print(partition_lowerer.lower_partition_kernel());
+            save_args(pkernel, "lower_partition_kernel");
 
-            // Get the modified CIN 
+            // Get the modified CIN
             CIN modified_cin = cin;
-            
-            if(i!=sparse_intersection_levels.size()-2){
-                modified_cin = get_modified_cin_for_sparse_intersection(current_sparse_intersection, cin);
-                included_tensors = get_included_tensors_for_level(next_sparse_intersection);
+
+            if (i != sparse_intersection_levels.size() - 2) {
+                modified_cin = get_modified_cin_for_sparse_intersection(
+                    current_sparse_intersection, cin);
+                included_tensors =
+                    get_included_tensors_for_level(next_sparse_intersection);
             }
 
-            ComputeKernelLowerer compute_lowerer(operand_tensors, result_tensor, included_tensors, forall_list, modified_cin, previous_sparse_intersection, current_sparse_intersection, next_sparse_intersection, reductionLoops, is_scatter_reduction, reduced_result_tensor);
-            
+            ComputeKernelLowerer compute_lowerer(
+                operand_tensors, result_tensor, included_tensors, forall_list,
+                modified_cin, previous_sparse_intersection,
+                current_sparse_intersection, next_sparse_intersection,
+                reductionLoops, is_scatter_reduction, reduced_result_tensor);
+
             // Generate Precompute kernels
-            TensorLowerer & output_write_tensor = 
-                i == sparse_intersection_levels.size()-2 && reductionLoops.size() > 0 &&  !is_scatter_reduction 
-                    ? reduced_result_tensor : result_tensor;
-            if(output_write_tensor.get_loop_num_for_prev_sparse_level(current_sparse_intersection+1) > BEFORE_FIRST_LOOP) {
-                printer.print(compute_lowerer.lower_precompute_function());
+            TensorLowerer &output_write_tensor =
+                i == sparse_intersection_levels.size() - 2 &&
+                        reductionLoops.size() > 0 && !is_scatter_reduction
+                    ? reduced_result_tensor
+                    : result_tensor;
+            if (output_write_tensor.get_loop_num_for_prev_sparse_level(
+                    current_sparse_intersection + 1) > BEFORE_FIRST_LOOP) {
+                auto pc_kernel = compute_lowerer.lower_precompute_function();
+                printer.print(pc_kernel);
+                save_args(pc_kernel, "lower_precompute_function");
             }
 
             // Generate Compute kernel
-            // We need to lower an extra work function for compute kernel if this not innermost sparse intersect
-            // The target_dim value is fixed for this work function.
-            if(i!=sparse_intersection_levels.size()-2){
+            // We need to lower an extra work function for compute kernel if
+            // this not innermost sparse intersect The target_dim value is fixed
+            // for this work function.
+            if (i != sparse_intersection_levels.size() - 2) {
                 for (auto it : included_tensors) {
-                    auto next_loop_order = std::vector<std::string>(loop_order.begin(), loop_order.begin() + next_sparse_intersection.get() + 1);
-                    printer.print(it.second.lower_work_function(next_loop_order, current_sparse_intersection, true));
+                    auto next_loop_order = std::vector<std::string>(
+                        loop_order.begin(), loop_order.begin() +
+                                                next_sparse_intersection.get() +
+                                                1);
+                    printer.print(it.second.lower_work_function(
+                        next_loop_order, current_sparse_intersection, true));
                 }
             }
-            printer.print(compute_lowerer.lower_compute_function());
-
+            auto c_kernel = compute_lowerer.lower_compute_function();
+            printer.print(c_kernel);
+            save_args(c_kernel, "lower_compute_function");
         }
-        
+        return rets;
     }
 
     // lower_struct_definitions loweres all the initial struct definitions for the program
@@ -348,7 +401,8 @@ namespace backend {
         std::vector<std::string> generics = {"index_t"};
 
         std::vector<llir::Function::Attribute> attributes = {
-            llir::Function::device, llir::Function::inline_};
+            // llir::Function::device, llir::Function::inline_};
+            llir::Function::runnable};
 
         std::vector<llir::Function::Argument> args;
         llir::lType ret_type;
@@ -488,7 +542,5 @@ namespace backend {
             //std::cout<<" At level "<< level << " included tensors: "<< included_tensors.size() << "\n";
             return included_tensors;
     }
-
-
 }
 } // namespace nacho

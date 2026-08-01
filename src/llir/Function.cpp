@@ -58,6 +58,10 @@ void Printer::visit(const llir::Function *node) {
                 os << "__host__ ";
                 break;
             }
+            case llir::Function::runnable: {
+                os << "__runnable__ ";
+                break;
+            }
         }
     }
 
@@ -78,9 +82,9 @@ void Printer::visit(const llir::Function *node) {
             os << "const ";
         }
         arg.type.accept(this);
-        if (!arg.mutating && arg.type.is<llir::Ptr_t>()) {
-            os << " __restrict__";
-        }
+        // if (!arg.mutating && arg.type.is<llir::Ptr_t>()) {
+        //     os << " __restrict__";
+        // }
         os << " " << arg.name;
     }
 

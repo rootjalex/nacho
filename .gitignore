@@ -36,6 +36,7 @@ build-dbg
 cmake-build-*
 .idea
 .vscode
+generated
 
 # Assembly files
 *.asm

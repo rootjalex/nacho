@@ -17,7 +17,7 @@ std::ostream &operator<<(std::ostream &os, const CIN &cin);
 
 std::ostream &operator<<(std::ostream &os, const llir::lExpr &lexpr);
 std::ostream &operator<<(std::ostream &os, const llir::lStmt &lstmt);
-std::ostream &operator<<(std::ostream &os, llir::lType &ltype);
+std::ostream &operator<<(std::ostream &os, const llir::lType &ltype);
 
 struct Printer : public Visitor {
     explicit Printer(std::ostream &os) : os(os) {}

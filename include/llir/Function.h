@@ -17,6 +17,7 @@ struct Function : lStmtNode<Function> {
         device,
         inline_,
         host,
+        runnable,
     };
 
     std::vector<Attribute> attributes;

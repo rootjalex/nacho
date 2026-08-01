@@ -86,8 +86,13 @@ namespace nacho {
         std::vector<std::string> all_loop_indices;
         bool is_result_tensor;
         TensorLowerer() = default;
-        TensorLowerer(std::string tensor_name, TensorType tensor_type, std::vector<std::string>& all_loop_indices, bool is_result_tensor=false)
-            : tensor_type(std::move(tensor_type)), tensor_name(std::move(tensor_name)), all_loop_indices(all_loop_indices), is_result_tensor(is_result_tensor) {}
+        TensorLowerer(std::string tensor_name, TensorType tensor_type,
+                      const std::vector<std::string> &all_loop_indices,
+                      bool is_result_tensor = false)
+            : tensor_type(std::move(tensor_type)),
+              tensor_name(std::move(tensor_name)),
+              all_loop_indices(all_loop_indices),
+              is_result_tensor(is_result_tensor) {}
         llir::lType index_t = llir::Generic_t::make("index_t");
 
 

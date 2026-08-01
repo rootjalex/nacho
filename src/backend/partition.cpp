@@ -61,7 +61,8 @@ namespace backend {
         std::vector<std::string> generics = {"index_t", "value_t"};
 
         std::vector<llir::Function::Attribute> attributes = {
-            llir::Function::global};
+            // llir::Function::global
+            llir::Function::runnable};
 
         std::vector<llir::Function::Argument> args;
         llir::lType ret_type;
@@ -124,17 +125,22 @@ namespace backend {
             });
         }
 
+        static const llir::lType i32 = llir::Int_t::make(32);
+        args.emplace_back(llir::Function::Argument{
+            .mutating = false, .type = i32, .name = "thread_id"});
+
         std::vector<llir::lStmt> stmts;
 
         // int thread_id = blockIdx.x * blockDim.x + threadIdx.x;
-        stmts.emplace_back(
-            llir::Declare::make(
-                llir::Int_t::make(32),
-                "thread_id",
-                (llir::lVar::make(index_t, "blockIdx.x") * llir::lVar::make(index_t, "blockDim.x")) + llir::lVar::make(index_t, "threadIdx.x")
-            )
-        );
-        
+        // stmts.emplace_back(
+        //     llir::Declare::make(
+        //         llir::Int_t::make(32),
+        //         "thread_id",
+        //         (llir::lVar::make(index_t, "blockIdx.x") *
+        //         llir::lVar::make(index_t, "blockDim.x")) +
+        //         llir::lVar::make(index_t, "threadIdx.x")
+        //     )
+        // );
 
         // index_t count = thread_id * per_thread_work;
         stmts.emplace_back(

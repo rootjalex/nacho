@@ -13,19 +13,20 @@ void ComputeKernelLowerer::add_partition_assignments(
     std::vector<llir::lStmt> &stmts) {
     // int thread_id = blockIdx.x * blockDim.x + threadIdx.x;
     const llir::lType i32 = llir::Int_t::make(32);
-    stmts.emplace_back(llir::Declare::make(
-        i32, "thread_id",
-        llir::lVar::make(index_t, "blockIdx.x") * llir::lVar::make(index_t, "blockDim.x") + llir::lVar::make(index_t, "threadIdx.x")
-    ));
+    // stmts.emplace_back(llir::Declare::make(
+    //     i32, "thread_id",
+    //     llir::lVar::make(index_t, "blockIdx.x") * llir::lVar::make(index_t,
+    //     "blockDim.x") + llir::lVar::make(index_t, "threadIdx.x")
+    // ));
 
     llir::lExpr thread_id_var = llir::lVar::make(i32, "thread_id");
 
     // TODO: make this const!
-    stmts.emplace_back(
-        llir::Declare::make(i32, "max_thread_id",
-                            llir::lVar::make(index_t, "gridDim.x") *
-                                    llir::lVar::make(index_t, "blockDim.x") -
-                                llir::lConst::make(1)));
+    // stmts.emplace_back(
+    //     llir::Declare::make(i32, "max_thread_id",
+    //                         llir::lVar::make(index_t, "gridDim.x") *
+    //                                 llir::lVar::make(index_t, "blockDim.x") -
+    //                             llir::lConst::make(1)));
 
     llir::lExpr max_thread_id_var = llir::lVar::make(i32, "max_thread_id");
 
@@ -142,7 +143,8 @@ llir::lStmt ComputeKernelLowerer::
     std::vector<std::string> generics = {"index_t", "value_t"};
 
     std::vector<llir::Function::Attribute> attributes = {
-        llir::Function::global};
+        // llir::Function::global
+        llir::Function::runnable};
 
     std::vector<llir::Function::Argument> args;
     llir::lType ret_type;
@@ -202,6 +204,12 @@ llir::lStmt ComputeKernelLowerer::
         });
     }
 
+    static const llir::lType i32 = llir::Int_t::make(32);
+    args.emplace_back(llir::Function::Argument{
+        .mutating = false, .type = i32, .name = "thread_id"});
+    args.emplace_back(llir::Function::Argument{
+        .mutating = false, .type = i32, .name = "max_thread_id"});
+
     std::vector<llir::lStmt> stmts;
 
     // Add common initialization statements
@@ -256,7 +264,8 @@ llir::lStmt ComputeKernelLowerer::
     std::vector<std::string> generics = {"index_t", "value_t"};
 
     std::vector<llir::Function::Attribute> attributes = {
-        llir::Function::global};
+        // llir::Function::global
+        llir::Function::runnable};
 
     std::vector<llir::Function::Argument> args;
     llir::lType ret_type;
@@ -322,6 +331,12 @@ llir::lStmt ComputeKernelLowerer::
             .name = get_result_to_operand_pos_map_var_name()
         });
     }
+
+    static const llir::lType i32 = llir::Int_t::make(32);
+    args.emplace_back(llir::Function::Argument{
+        .mutating = false, .type = i32, .name = "thread_id"});
+    args.emplace_back(llir::Function::Argument{
+        .mutating = false, .type = i32, .name = "max_thread_id"});
 
     std::vector<llir::lStmt> stmts;
 
