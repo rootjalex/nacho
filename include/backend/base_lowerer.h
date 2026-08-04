@@ -48,10 +48,10 @@ namespace nacho {
             // This is just a helper function to construct the suffix used in giving unique names to various generated kernels
             // The suffix is just the concatenation of all loop indices that the kernel operates on
             inline std::string get_all_loops_string(LoopNum loop_num) {
-                std::string all_loops_string = "";
+                std::string all_loop_indices_string = "";
                 for(LoopNum i=BEFORE_FIRST_LOOP+1;i<=loop_num;++i)
-                    all_loops_string += forall_list[i.get()].as<Forall>()->idx;
-                return all_loops_string;
+                    all_loop_indices_string += forall_list[i.get()].as<Forall>()->idx.str();
+                return all_loop_indices_string;
             }
 
             TensorLowerer get_tensor(std::string tensor_name) {
@@ -88,8 +88,8 @@ namespace nacho {
                 return "result_per_thread_count";
             }
 
-            inline std::string get_counts_field_name(const std::string &index) {
-                return "dim_" + index + "_count";
+            inline std::string get_counts_field_name(const TensorIndex &index) {
+                return "dim_" + index.str() + "_count";
             }
 
             inline std::string get_precompute_function_name() {

@@ -8,6 +8,11 @@
 
 namespace nacho {
 
+std::ostream &operator<<(std::ostream &os, const TensorIndex &idx) {
+    os << idx.str();
+    return os;
+}
+
 std::ostream &operator<<(std::ostream &os, const Level &lvl) {
     os << lvl.index << " : ";
     switch (lvl.format) {
@@ -29,6 +34,10 @@ std::ostream &operator<<(std::ostream &os, const Level &lvl) {
     }
     case LevelFormat::Singleton_unique: {
         os << "S(U)";
+        break;
+    }
+    case LevelFormat::MergedCoordinate: {
+        os << "MC";
         break;
     }
     }
@@ -369,7 +378,7 @@ void Printer::visit(const llir::Ptr_t *node) {
 }
 
 void Printer::visit(const llir::Tuple_t *node) {
-    os << "tuple<";
+    os << "cuda::std::tuple<";
     for (size_t i = 0, e = node->types.size(); i < e; i++) {
         if (i > 0) {
             os << ", ";

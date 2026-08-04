@@ -153,10 +153,10 @@ struct cTensor : cExprNode<cTensor> {
 struct Accumulate : CINNode<Accumulate> {
     std::string tensor;
     TensorType type;
-    std::vector<std::string> accumulate_indices; // the indices we are accumulating over.
+    std::vector<TensorIndex> accumulate_indices; // the indices we are accumulating over.
     cExpr expr;
 
-    static CIN make(std::string tensor, TensorType type, std::vector<std::string> accumulate_indices, cExpr expr);
+    static CIN make(std::string tensor, TensorType type, std::vector<TensorIndex> accumulate_indices, cExpr expr);
 
     static const CINEnum node_type = CINEnum::Accumulate;
 };
@@ -172,11 +172,11 @@ struct Assign : CINNode<Assign> {
 };
 
 struct Forall : CINNode<Forall> {
-    std::string idx;
+    TensorIndex idx;
     Seq seq;
     CIN body;
 
-    static CIN make(std::string idx, Seq seq, CIN body);
+    static CIN make(TensorIndex idx, Seq seq, CIN body);
 
     static const CINEnum node_type = CINEnum::Forall;
 };

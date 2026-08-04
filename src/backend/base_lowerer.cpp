@@ -10,7 +10,7 @@ llir::lType BaseKernelLowerer::lower_result_per_thread_count_struct() {
 
     for (LoopNum i = BEFORE_FIRST_LOOP + 1; i < result_tensor.end_loop_num(); ++i) {
         if (result_tensor.tensor_level_exists(i) && result_tensor.is_sparse(i)) {
-            fields.emplace_back(get_counts_field_name(result_tensor.loop_name(i)),
+            fields.emplace_back(get_counts_field_name(result_tensor.loop_index(i)),
                                 llir::Ptr_t::make(index_t));
         }
     }
@@ -22,7 +22,7 @@ llir::lType BaseKernelLowerer::lower_result_per_thread_count_struct() {
 
 //  check whether result_to_operand_pos_map contains a field to lookup pos for this operand_tensor at current forall sparse intersection
 bool BaseKernelLowerer::exists_field_in_result_to_operand_pos_map(const Forall* forall, TensorLowerer& op_tensor) {
-    std::string index = forall->idx;
+    TensorIndex index = forall->idx;
     if(!op_tensor.tensor_level_exists(index)) {
         return false;
     }
@@ -80,7 +80,7 @@ llir::lExpr BaseKernelLowerer::get_partition_initializer_expr_for_boundary_cases
     internal_assert(tensor.tensor_level_exists(forall_loop_num)) << "Expected level exists in tensor " << forall_loop_num;
 
 
-    std::string forall_idx = tensor.loop_name(forall_loop_num);
+    TensorIndex forall_idx = tensor.loop_index(forall_loop_num);
 
     if(!tensor.is_sparse(forall_loop_num)) {
         return is_last_thread ? tensor.get_size_field(forall_idx) : llir::lConst::make((int64_t)0) 
@@ -121,7 +121,7 @@ llir::lExpr BaseKernelLowerer::get_partition_initializer_expr_for_boundary_cases
         if(prev_sparse_level_loop_num != BEFORE_FIRST_LOOP && prev_sparse_level_loop_num<=previous_sparse_intersection)
         {
             const Forall* forall_j = forall_list[prev_sparse_level_loop_num.get()].as<Forall>();
-            std::string forall_j_idx = forall_j->idx;
+            TensorIndex forall_j_idx = forall_j->idx;
             check_expr = map_result_pos_to_operand_pos(
                     forall_j, tensor, 
                     llir::lConst::make((int64_t)0)
@@ -137,7 +137,7 @@ llir::lExpr BaseKernelLowerer::get_partition_initializer_expr_for_boundary_cases
 
         for(TensorLevelNum j=std::max(BEFORE_FIRST_LEVEL+1, prev_sparse_tensor_level);j<=tensor.loop_num_to_tensor_level(forall_loop_num)-1;++j) {
             const Forall * forall_j = forall_list[tensor.tensor_level_to_loop_num(j).get()].as<Forall>();
-            std::string forall_j_idx = tensor.tensor_level_name(j);
+            TensorIndex forall_j_idx = tensor.tensor_level_index(j);
             if(!tensor.tensor_level_exists(forall_j_idx)) {
                 // if level does not exist the value does not matter, push nullptr
                 pos_vars_for_offset_expression[j] = llir::lVar::make(index_t, "invalid-var");

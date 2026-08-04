@@ -83,6 +83,8 @@ struct Empty : SeqNode<Empty> {
     static const SeqEnum node_type = SeqEnum::Empty;
 };
 
+// TODO : Probably need to dedup with TensorIndex as logically
+// both are the same thing
 struct Index : SeqNode<Index> {
     std::string tensor;
     TensorType type;
@@ -110,14 +112,14 @@ struct Union : SeqNode<Union> {
 };
 
 struct Universe : SeqNode<Universe> {
-    std::string idx;
+    TensorIndex idx;
 
     // List of tensors on which this universe represents a broadcast over
     // stored the name, type and the last level before this universe level
     // for the tensor.
     std::vector<std::tuple<std::string, TensorType, size_t>> tensors;
 
-    static Seq make(std::string idx, std::vector<std::tuple<std::string, TensorType, size_t>> tensors);
+    static Seq make(TensorIndex idx, std::vector<std::tuple<std::string, TensorType, size_t>> tensors);
 
     static const SeqEnum node_type = SeqEnum::Universe;
 };
@@ -126,7 +128,7 @@ struct Universe : SeqNode<Universe> {
 std::vector<std::string> get_tensors_in_seq(const Seq &seq);
 
 
-Seq build_seq(const std::string &index, std::vector<std::string> &index_list, const Expr &expr);
+Seq build_seq(const TensorIndex &index, std::vector<TensorIndex> &index_list, const Expr &expr);
 
 bool is_dense(const Seq &seq);
 

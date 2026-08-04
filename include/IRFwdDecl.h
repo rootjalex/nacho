@@ -2,6 +2,7 @@
 
 namespace nacho {
 
+struct TensorIndex;
 struct Level;
 struct Format;
 struct TensorType;

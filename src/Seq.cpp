@@ -65,7 +65,7 @@ Seq Union::make(Seq a, Seq b) {
     return node;
 }
 
-Seq Universe::make(std::string idx, std::vector<std::tuple<std::string, TensorType, size_t>> tensors) {
+Seq Universe::make(TensorIndex idx, std::vector<std::tuple<std::string, TensorType, size_t>> tensors) {
     internal_assert(!idx.empty()) << "Universe with empty idx";
     internal_assert(!tensors.empty()) << "Universe should represent a broadcast on atleast 1 tensor";
     Universe *node = new Universe;
@@ -84,12 +84,12 @@ Seq Universe::make(std::string idx, std::vector<std::tuple<std::string, TensorTy
 struct BuildSeq : public Visitor {
     Seq seq;
 
-    const std::string &index;
-    std::vector<std::string> &index_list;
+    const TensorIndex &index;
+    std::vector<TensorIndex> &index_list;
     bool is_under_bc = false;
     std::vector<std::tuple<std::string, TensorType, size_t>>  bc_tensors;
 
-    BuildSeq(const std::string &index, std::vector<std::string> &index_list)
+    BuildSeq(const TensorIndex &index, std::vector<TensorIndex> &index_list)
         : index(index), index_list(index_list) {}
 
     template <typename S, typename T>
@@ -127,12 +127,12 @@ struct BuildSeq : public Visitor {
     void visit(const Tensor *node) {
         if(is_under_bc) {
             auto it = std::find_if(index_list.begin(), index_list.end(),
-                         [&](const std::string &idx) { return idx == index; });
+                         [&](const TensorIndex &idx) { return idx == index; });
             internal_assert(it != index_list.end())
             << "Index: " << index << " not found";
             int loop_num = std::distance(index_list.begin(), it);
             // Find the last level before this universe level for this tensor.
-            std::string prev_level_idx;
+            TensorIndex prev_level_idx;
             for(int prev_level = loop_num - 1; prev_level >= 0; prev_level--) {
                 if(node->type.format.level_exists(index_list[prev_level])) {
                     prev_level_idx = index_list[prev_level];
@@ -203,7 +203,7 @@ bool is_dense(const Seq &seq) {
 }
 
 
-Seq build_seq(const std::string &index, std::vector<std::string> &index_list, const Expr &expr) {
+Seq build_seq(const TensorIndex &index, std::vector<TensorIndex> &index_list, const Expr &expr) {
     BuildSeq builder(index, index_list);
     expr.accept(&builder);
     // TODO: break this out into a simplify or optimize pass?
