@@ -77,6 +77,9 @@ target_sources(
     src/backend/tensor.cpp
     src/backend/compute.cpp
     src/backend/base_lowerer.cpp
+    src/backend/stitch_and_generate.cpp
+    src/backend/stitch_and_generate_cpu.cpp
+    src/backend/stitch_and_generate_gpu.cpp
 )
 
 target_sources(

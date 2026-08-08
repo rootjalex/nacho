@@ -107,8 +107,9 @@ void test() {
     // // CSR + CSR + CSR
     // nacho::backend::CINLowerer(compile_to_cin(a_csr_ij + b_csr_ij + c_csr_ij), std::cout).lower_cin();
 
-    // // CSR Mul
-    nacho::backend::CINLowerer(compile_to_cin(a_csr_ij * b_csr_ij), std::cout).lower_cin();
+    // CSR Mul
+    nacho::backend::CINLowerer(compile_to_cin(a_csr_ij * b_csr_ij), "csr_mul").lower_cin();
+    nacho::backend::CINLowerer(compile_to_cin(a_csr_ij * b_csr_ij), "csr_mul", true).lower_cin();
 
     // // COO add
     // nacho::backend::CINLowerer(compile_to_cin(a_coo_ij + b_coo_ij), std::cout).lower_cin();
@@ -122,8 +123,9 @@ void test() {
     // // DCSR add
     // nacho::backend::CINLowerer(compile_to_cin(a_dcsr_ij + b_dcsr_ij), std::cout).lower_cin();
 
-    // // DCSR Mul
-    // nacho::backend::CINLowerer(compile_to_cin(a_dcsr_ij * b_dcsr_ij), std::cout).lower_cin();
+    // DCSR Mul
+    nacho::backend::CINLowerer(compile_to_cin(a_dcsr_ij * b_dcsr_ij), "dcsr_mul").lower_cin();
+    nacho::backend::CINLowerer(compile_to_cin(a_dcsr_ij * b_dcsr_ij), "dcsr_mul", true).lower_cin();
 
     // // CSF add
     // nacho::backend::CINLowerer(compile_to_cin(a_csf_ijk + b_csf_ijk), std::cout).lower_cin();
@@ -167,7 +169,7 @@ void spmspv() {
 
     CIN cin = compile_to_cin(z_i);
     std::cout << cin << "\n";
-    nacho::backend::CINLowerer(compile_to_cin(z_i), std::cout).lower_cin();
+    nacho::backend::CINLowerer(compile_to_cin(z_i), "spmspv").lower_cin();
     std::cout << "\n\n";
 }
 
@@ -196,7 +198,7 @@ void spgemm() {
     std::cout << "Expect CSR: " << z_ik.type().format << "\n";
 
     CIN cin = compile_to_cin(z_ik);
-    nacho::backend::CINLowerer(compile_to_cin(z_ik), std::cout).lower_cin();
+    nacho::backend::CINLowerer(compile_to_cin(z_ik), "spgemm").lower_cin();
     std::cout << cin << "\n";
     std::cout << "\n\n";
 
@@ -233,7 +235,7 @@ void sss_s_s(){
     CIN cin = compile_to_cin(z_ijk);
     std::cout << cin << "\n";
     std::cout << "\n\n";
-    nacho::backend::CINLowerer(compile_to_cin(z_ijk), std::cout).lower_cin();
+    nacho::backend::CINLowerer(compile_to_cin(z_ijk), "sssmm").lower_cin();
 }
 
 void test_format_inf() {

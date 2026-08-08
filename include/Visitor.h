@@ -52,6 +52,9 @@ struct Visitor {
     virtual void visit(const llir::lFunctionCall *);
     virtual void visit(const llir::lIncrement *);
     virtual void visit(const llir::lAddress *);
+    virtual void visit(const llir::RawExpr *);
+    virtual void visit(const llir::lLambda *);
+    virtual void visit(const llir::Cast *);
     virtual void visit(const llir::Declare *);
     virtual void visit(const llir::IfElse *);
     virtual void visit(const llir::Return *);
@@ -63,6 +66,7 @@ struct Visitor {
     virtual void visit(const llir::Break *node);
     virtual void visit(const llir::For *node);
     virtual void visit(const llir::Accumulate *node);
+    virtual void visit(const llir::RawStmt *node);
 };
 
 #define RESTRICT_VISITOR(IRNODE)                                               \

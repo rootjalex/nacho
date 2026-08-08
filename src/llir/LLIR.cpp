@@ -252,6 +252,31 @@ lExpr lAddress::make(lExpr var) {
     return node;
 }
 
+lExpr RawExpr::make(std::string code) {
+    internal_assert(!code.empty()) << "Cannot make RawExpr with empty code.";
+    RawExpr *node = new RawExpr;
+    node->code = std::move(code);
+    return node;
+}
+
+lExpr lLambda::make(std::string capture, std::vector<std::pair<lType, std::string>> params, lStmt body) {
+    internal_assert(body.defined()) << "Cannot make lLambda with undefined body";
+    lLambda *node = new lLambda;
+    node->capture = std::move(capture);
+    node->params = std::move(params);
+    node->body = std::move(body);
+    return node;
+}
+
+lExpr Cast::make(lType type, lExpr expr) {
+    internal_assert(type.defined()) << "Cannot make Cast with undefined type.";
+    internal_assert(expr.defined()) << "Cannot make Cast with undefined expr.";
+    Cast *node = new Cast;
+    node->type = std::move(type);
+    node->expr = std::move(expr);
+    return node;
+}
+
 
 lStmt Declare::make(lType type, std::string name, lExpr init) {
     internal_assert(!name.empty()) << "Cannot make Declare with empty name.";
@@ -270,6 +295,13 @@ lStmt Declare::make(lType type, std::string name) {
     node->type = std::move(type);
     node->name = std::move(name);
     node->init = nullptr;
+    return node;
+}
+
+lStmt RawStmt::make(std::string code) {
+    internal_assert(!code.empty()) << "Cannot make RawStmt with empty code.";
+    RawStmt *node = new RawStmt;
+    node->code = std::move(code);
     return node;
 }
 

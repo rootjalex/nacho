@@ -144,7 +144,7 @@ std::ostream &operator<<(std::ostream &os, const llir::lStmt &lstmt) {
     return os;
 }
 
-std::ostream &operator<<(std::ostream &os, llir::lType &ltype) {
+std::ostream &operator<<(std::ostream &os, const llir::lType &ltype) {
     if (ltype.defined()) {
         Printer printer(os);
         printer.print(ltype);
@@ -374,7 +374,7 @@ void Printer::visit(const llir::Float_t *node) {
 
 void Printer::visit(const llir::Ptr_t *node) {
     node->type.accept(this);
-    os << "*";
+    os << "*__restrict__";
 }
 
 void Printer::visit(const llir::Tuple_t *node) {
@@ -612,6 +612,33 @@ void Printer::visit(const llir::lAddress *node) {
     print_no_parens(node->var);
 }
 
+void Printer::visit(const llir::RawExpr *node) { os << node->code; }
+
+void Printer::visit(const llir::Cast *node) {
+    os << "(";
+    print(node->type);
+    os << ")(";
+    print_no_parens(node->expr);
+    os << ")";
+}
+
+void Printer::visit(const llir::lLambda *node) {
+    os << "[" << node->capture << "](";
+    for (size_t i = 0, e = node->params.size(); i < e; i++) {
+        if (i != 0) {
+            os << ", ";
+        }
+        node->params[i].first.accept(this);
+        os << " " << node->params[i].second;
+    }
+    os << ") {\n";
+    indent();
+    node->body.accept(this);
+    dedent();
+    print_indent();
+    os << "}";
+}
+
 void Printer::print(const llir::lStmt &lstmt) { lstmt.accept(this); }
 
 void Printer::visit(const llir::Declare *node) {
@@ -728,6 +755,11 @@ void Printer::visit(const llir::Accumulate *node) {
     os << " += ";
     print(node->value);
     os << ";\n";
+}
+
+void Printer::visit(const llir::RawStmt *node) {
+    print_indent();
+    os << node->code << "\n";
 }
 
 } // namespace nacho

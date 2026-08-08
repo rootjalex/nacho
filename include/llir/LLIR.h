@@ -34,6 +34,9 @@ enum class lExprEnum {
     lFunctionCall,
     lIncrement,
     lAddress,
+    RawExpr,
+    lLambda,
+    Cast,
 };
 
 // Statements
@@ -48,7 +51,8 @@ enum class lStmtEnum {
     BaseExpr,
     Break,
     For,
-    Accumulate
+    Accumulate,
+    RawStmt
 };
 
 using IRlTypeNode = IRNode<lType, lTypeEnum>;
@@ -359,6 +363,39 @@ struct lAddress : lExprNode<lAddress> {
     static const lExprEnum node_type = lExprEnum::lAddress;
 };
 
+// An expression holding a single verbatim fragment of target code, printed
+// as-is with no added parens/punctuation. Escape hatch for expressions
+// (e.g. `sizeof(int)`) that don't have a dedicated LLIR node.
+struct RawExpr : lExprNode<RawExpr> {
+    std::string code;
+
+    static lExpr make(std::string code);
+
+    static const lExprEnum node_type = lExprEnum::RawExpr;
+};
+
+// A C++ lambda expression, e.g. `[&](int thread_id) { ... }`.
+// `capture` is the raw text inside the `[]` (e.g. "&", "=", "&x, y").
+struct lLambda : lExprNode<lLambda> {
+    std::string capture;
+    std::vector<std::pair<lType, std::string>> params;
+    lStmt body;
+
+    static lExpr make(std::string capture, std::vector<std::pair<lType, std::string>> params, lStmt body);
+
+    static const lExprEnum node_type = lExprEnum::lLambda;
+};
+
+// A C-style cast, e.g. `(float*)expr`.
+struct Cast : lExprNode<Cast> {
+    lType type;
+    lExpr expr;
+
+    static lExpr make(lType type, lExpr expr);
+
+    static const lExprEnum node_type = lExprEnum::Cast;
+};
+
 struct Declare : lStmtNode<Declare> {
     lType type;
     std::string name;
@@ -368,6 +405,17 @@ struct Declare : lStmtNode<Declare> {
     static lStmt make(lType type, std::string name);
 
     static const lStmtEnum node_type = lStmtEnum::Declare;
+};
+
+// A statement holding a single verbatim line of target code, printed as-is
+// (including its own terminating semicolon). Escape hatch for constructs
+// (e.g. `using` aliases) that don't have a dedicated LLIR node.
+struct RawStmt : lStmtNode<RawStmt> {
+    std::string code;
+
+    static lStmt make(std::string code);
+
+    static const lStmtEnum node_type = lStmtEnum::RawStmt;
 };
 
 struct IfElse : lStmtNode<IfElse> {
