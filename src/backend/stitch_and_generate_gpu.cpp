@@ -10,7 +10,8 @@ namespace backend {
         std::vector<CIN> forall_list,
         TensorLowerer &reduced_result_tensor)
         : StitchAndGenerate(name, operand_tensors, result_tensor, std::move(forall_list), reduced_result_tensor) {
-            open_files("_gpu.h", "_gpu.cu", "inline");
+            // Worker kernels are only ever called from the __global__ wrappers.
+            open_files("_gpu.h", "_gpu.cu", "__device__ inline");
             main_func.name = name + "_gpu_i32_f32";
 
             add_tensor_args();
@@ -47,8 +48,20 @@ namespace backend {
     llir::lStmt StitchAndGenerateGPU::generate_single_memory_allocation_statement(llir::lExpr address, llir::lType pointer_type, llir::lExpr size, bool register_for_free) {
         return llir::BaseExpr::make(
             llir::lFunctionCall::make("cudaMallocAsync", {
-                llir::lAddress::make(address),
+                // cudaMallocAsync takes void**; the typed fields need an explicit cast.
+                llir::Cast::make(llir::Generic_t::make("void**"), llir::lAddress::make(address)),
                 size,
+                cuda_stream_var
+            })
+        );
+    }
+
+    llir::lStmt StitchAndGenerateGPU::generate_zero_leading_offset_statement(llir::lExpr offsets_field) {
+        return llir::BaseExpr::make(
+            llir::lFunctionCall::make("cudaMemsetAsync", {
+                offsets_field,
+                llir::lConst::make(0),
+                llir::lVar::make(sizet_type, "sizeof(index_t)"),
                 cuda_stream_var
             })
         );
@@ -58,6 +71,12 @@ namespace backend {
         llir::lType partition_struct, LoopNum previous_sparse_intersection, LoopNum current_sparse_intersection,
         bool precompute_kernel_defined, bool compute_kernel_defined
     ) {
+        // CUB deduces its iterator types from the arguments even when d_temp_storage is null
+        // and it only reports the temp-storage size, so the sizing queries below pass a typed
+        // null pointer matching the buffers the real scans operate on.
+        llir::lExpr null_scan_iterator =
+            llir::Cast::make(llir::Generic_t::make("int32_t*"), llir::lConst::make(0));
+
         llir::lExpr size_expr = llir::lConst::make(0);
         if(compute_kernel_defined) {
             if(operand_pos_map_struct_def.defined()) {
@@ -78,10 +97,10 @@ namespace backend {
 
         main_func.body.emplace_back(
             llir::BaseExpr::make(
-                llir::lFunctionCall::make("cub::DeviceScan::ExclusiveScan", {
+                llir::lFunctionCall::make("cub::DeviceScan::ExclusiveSum", {
                     llir::lConst::make(0),
                     llir::lVar::make(sizet_type, "cub_bytes"),
-                    llir::lConst::make(0), llir::lConst::make(0),
+                    null_scan_iterator, null_scan_iterator,
                     num_threads_var,
                     cuda_stream_var
                 })
@@ -98,7 +117,7 @@ namespace backend {
                     llir::lFunctionCall::make("cub::DeviceScan::InclusiveSum", {
                         llir::lConst::make(0),
                         llir::lVar::make(sizet_type, work_offsets_scan_bytes_name),
-                        llir::lConst::make(0), llir::lConst::make(0),
+                        null_scan_iterator, null_scan_iterator,
                         result_tensor.get_length_field(result_tensor.loop_index(previous_sparse_intersection)),
                         cuda_stream_var
                     })
@@ -146,10 +165,16 @@ namespace backend {
         );
         std::string mem_block_base_name = "mem_block_base_" + get_all_loops_string(current_sparse_intersection);
         main_func.body.emplace_back(
-            llir::Declare::make(llir::Generic_t::make("char*"), mem_block_base_name, llir::lVar::make(llir::Generic_t::make("char*"), mem_block_name))
+            llir::Declare::make(llir::Generic_t::make("char*"), mem_block_base_name,
+                llir::Cast::make(llir::Generic_t::make("char*"), llir::lVar::make(llir::Generic_t::make("void*"), mem_block_name)))
         );
         auto offset_var = llir::lVar::make(llir::Int_t::make(32), "offset_" + get_all_loops_string(current_sparse_intersection));
         auto mem_block_base_var = llir::lVar::make(llir::Generic_t::make("char*"), mem_block_base_name);
+
+        // Byte-addressed slice of the shared block, cast back to the field's pointer type.
+        auto mem_block_slice = [&](llir::lType pointer_type) {
+            return llir::Cast::make(pointer_type, mem_block_base_var + offset_var);
+        };
 
         if(compute_kernel_defined) {
             if(operand_pos_map_struct_def.defined()) {
@@ -166,7 +191,7 @@ namespace backend {
                         main_func.body.emplace_back(
                             llir::Store::make(
                                 llir::lFieldAccess::make(llir::lVar::make(operand_pos_map_struct_def, get_operand_pos_map_var_name()), field->first),
-                                mem_block_base_var + offset_var
+                                mem_block_slice(field->second)
                             )
                         );
                         main_func.body.emplace_back(
@@ -179,7 +204,7 @@ namespace backend {
             main_func.body.emplace_back(
                 llir::Store::make(
                     work_offsets_var,
-                    mem_block_base_var + offset_var
+                    mem_block_slice(llir::Ptr_t::make(llir::Int_t::make(32)))
                 )
             );
             main_func.body.emplace_back(
@@ -198,7 +223,7 @@ namespace backend {
             main_func.body.emplace_back(
                 llir::Store::make(
                     llir::lFieldAccess::make(partitions_var, field.first),
-                    mem_block_base_var + offset_var
+                    mem_block_slice(field.second)
                 )
             );
             main_func.body.emplace_back(
@@ -215,7 +240,7 @@ namespace backend {
                     main_func.body.emplace_back(
                         llir::Store::make(
                             get_count_offsets_field(loop, current_sparse_intersection),
-                            mem_block_base_var + offset_var
+                            mem_block_slice(llir::Ptr_t::make(llir::Int_t::make(32)))
                         )
                     );
                     main_func.body.emplace_back(
@@ -226,7 +251,8 @@ namespace backend {
         }
 
         main_func.body.emplace_back(
-            llir::Declare::make(llir::Generic_t::make("void*"), "cub_temp_storage_" + get_all_loops_string(current_sparse_intersection), mem_block_base_var + offset_var)
+            llir::Declare::make(llir::Generic_t::make("void*"), "cub_temp_storage_" + get_all_loops_string(current_sparse_intersection),
+                mem_block_slice(llir::Generic_t::make("void*")))
         );
     }
 
@@ -283,6 +309,7 @@ namespace backend {
                             llir::lAddress::make(llir::lVar::make(llir::Int_t::make(32), "temp_last_value_" + get_all_loops_string(current_sparse_intersection) + "_" +std::to_string(loop.get()))),
                             get_count_offsets_field(loop, current_sparse_intersection) + (num_threads_var - 1),
                             llir::lVar::make(sizet_type, "sizeof(int32_t)"),
+                            device_to_host,
                             cuda_stream_var
                         })
                     )
@@ -294,7 +321,7 @@ namespace backend {
             if (result_tensor.tensor_level_exists(loop) && result_tensor.is_sparse(loop)) {
                 main_func.body.emplace_back(
                     llir::BaseExpr::make(
-                        llir::lFunctionCall::make("cub::DeviceScan::ExclusiveScan", {
+                        llir::lFunctionCall::make("cub::DeviceScan::ExclusiveSum", {
                             llir::lVar::make(void_type, "cub_temp_storage_" + get_all_loops_string(current_sparse_intersection)),
                             llir::lVar::make(sizet_type, "cub_bytes"),
                             get_count_offsets_field(loop, current_sparse_intersection),
@@ -315,6 +342,7 @@ namespace backend {
                             llir::lAddress::make(result_tensor.get_length_field(result_tensor.loop_index(loop))),
                             get_count_offsets_field(loop, current_sparse_intersection) + (num_threads_var - 1),
                             llir::lVar::make(sizet_type, "sizeof(int32_t)"),
+                            device_to_host,
                             cuda_stream_var
                         })
                     )
@@ -382,6 +410,7 @@ namespace backend {
                 llir::lAddress::make(llir::lVar::make(llir::Int_t::make(32), "total_work")),
                 work_offsets_var + index_expr,
                 llir::lVar::make(sizet_type, "sizeof(int32_t)"),
+                device_to_host,
                 cuda_stream_var
             })
         );

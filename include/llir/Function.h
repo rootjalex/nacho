@@ -38,6 +38,9 @@ struct Function : lStmtNode<Function> {
 
     static lStmt make(std::vector<std::string> generics, std::vector<Attribute> attributes, std::vector<Argument> args, lType ret_type, std::string name, lStmt body);
 
+    // A prototype: same signature, no body. Printed as `ret name(args);`.
+    static lStmt declaration(std::vector<Argument> args, lType ret_type, std::string name);
+
     static const lStmtEnum node_type = lStmtEnum::Function;
 };
 

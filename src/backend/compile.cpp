@@ -405,8 +405,9 @@ namespace backend {
     void CINLowerer::lower_binary_search_function(bool is_upper_bound) {
         std::vector<std::string> generics = {"index_t"};
 
+        // Only ever called from the loop bodies, which are themselves __runnable__.
         std::vector<llir::Function::Attribute> attributes = {
-            llir::Function::inline_};
+            llir::Function::runnable};
 
         std::vector<llir::Function::Argument> args;
         llir::lType ret_type;

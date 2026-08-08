@@ -10,7 +10,8 @@ namespace backend {
         std::vector<CIN> forall_list,
         TensorLowerer &reduced_result_tensor)
         : StitchAndGenerate(name, operand_tensors, result_tensor, std::move(forall_list), reduced_result_tensor) {
-            open_files("_cpu.h", "_cpu.cpp", "__device__ inline");
+            // Worker kernels run on the host inside tbb::parallel_for lambdas.
+            open_files("_cpu.h", "_cpu.cpp", "inline");
             main_func.name = name + "_cpu_i32_f32";
 
             source_file << "#include \"tbb/parallel_for.h\"\n";
@@ -36,6 +37,13 @@ namespace backend {
         return llir::Store::make (
             address,
             llir::Cast::make(pointer_type, llir::lFunctionCall::make("malloc", {size}))
+        );
+    }
+
+    llir::lStmt StitchAndGenerateCPU::generate_zero_leading_offset_statement(llir::lExpr offsets_field) {
+        return llir::Store::make(
+            llir::lArrayAccess::make(offsets_field, llir::lConst::make(0)),
+            llir::lConst::make(0)
         );
     }
 
@@ -69,11 +77,15 @@ namespace backend {
                 }
             }
 
+            // Indexed by position in the previous level of the result, plus a terminator:
+            // generate_work_offsets_scan() prefix-sums [1, length] and reads [length].
             main_func.body.emplace_back(
                 generate_single_memory_allocation_statement(
                     work_offsets_var,
                     llir::Ptr_t::make(llir::Int_t::make(32)),
-                    llir::lVar::make(sizet_type, "sizeof(int32_t)") * num_threads_var,
+                    llir::lVar::make(sizet_type, "sizeof(int32_t)")
+                        * (result_tensor.get_length_field(result_tensor.loop_index(previous_sparse_intersection))
+                           + llir::lConst::make(1)),
                     true
                 )
             );
@@ -183,7 +195,7 @@ namespace backend {
                 main_func.body.emplace_back(
                     llir::Store::make(
                         result_tensor.get_length_field(result_tensor.loop_index(loop)),
-                        llir::lVar::make(llir::Int_t::make(32), "prefix_sum_" + get_all_loops_string(loop) + "_" + std::to_string(loop.get()))
+                        llir::lVar::make(llir::Int_t::make(32), "prefix_sum_" + get_all_loops_string(current_sparse_intersection) + "_" + std::to_string(loop.get()))
                     )
                 );
             }

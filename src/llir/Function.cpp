@@ -25,6 +25,17 @@ lStmt Function::make(std::vector<std::string> generics,
     node->body = std::move(body);
     return node;
 }
+
+lStmt Function::declaration(std::vector<Argument> args, lType ret_type, std::string name) {
+    internal_assert(!name.empty())
+        << "Cannot make Function declaration with empty name";
+    Function *node = new Function;
+    node->args = std::move(args);
+    node->ret_type = std::move(ret_type);
+    node->name = std::move(name);
+    // body left undefined — that is what marks this a declaration.
+    return node;
+}
 } // namespace llir
 
 void Printer::visit(const llir::Function *node) {
@@ -86,6 +97,11 @@ void Printer::visit(const llir::Function *node) {
         //     os << " __restrict__";
         // }
         os << " " << arg.name;
+    }
+
+    if (!node->body.defined()) {
+        os << ");\n";
+        return;
     }
 
     os << ") {\n";

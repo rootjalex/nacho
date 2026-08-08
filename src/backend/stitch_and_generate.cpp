@@ -1,5 +1,7 @@
 #include "backend/stitch_and_generate.h"
 
+#include "backend/output.h"
+
 namespace nacho {
 namespace backend {
 
@@ -173,7 +175,7 @@ namespace backend {
         }
 
         early_termination_stmts.emplace_back(
-            llir::Return::make()
+            llir::Return::make(get_result_var())
         );
 
         main_func.body.emplace_back(
@@ -186,17 +188,26 @@ namespace backend {
     }
 
     void StitchAndGenerate::open_files(const std::string &header_suffix, const std::string &source_suffix, const std::string &runnable_macro) {
-        header_file.open("generated/" + name + header_suffix);
-        source_file.open("generated/" + name + source_suffix);
+        const std::string header_name = name + header_suffix;
+        header_file.open(output_directory() + "/" + header_name);
+        source_file.open(output_directory() + "/" + name + source_suffix);
+        internal_assert(header_file.is_open() && source_file.is_open())
+            << "Could not open generated files for '" << name << "' in '" << output_directory() << "'";
 
-        header_file << "#include \"utils.h\"\n\n";
+        header_file << "#pragma once\n\n";
+        header_file << "#include \"nacho_kernel_utils.h\"\n\n";
         header_file << "namespace " << name << " {\n\n";
-        header_file << "#define __runnable__ " << runnable_macro << "\n";
+        header_file << "#define __runnable__ " << runnable_macro << "\n\n";
+        // Namespace scope, because the entry point names them in its signature. Inside the
+        // templated kernels they are shadowed by the template parameters of the same name.
+        header_file << "using index_t = int32_t;\n";
+        header_file << "using value_t = float;\n\n";
 
-        main_func.ret_type = llir::Generic_t::make("void");
+        source_file << "#include \"" << header_name << "\"\n";
+    }
 
-        source_file << "#include \"" + name + header_suffix + "\"\n";
-        source_file << "using namespace " << name << ";\n";
+    llir::lType StitchAndGenerate::get_result_struct_type() const {
+        return llir::Generic_t::make(result_tensor.get_struct_name() + "<index_t, value_t>");
     }
 
     void StitchAndGenerate::add_tensor_args() {
@@ -207,27 +218,41 @@ namespace backend {
                 .name = tensor_name});
         }
 
-        main_func.args.emplace_back(llir::Function::Argument{
-            .mutating = true,
-            .type = llir::Generic_t::make(result_tensor.get_struct_name() + "<index_t, value_t>"),
-            .name = result_tensor.tensor_name});
+        // Arguments are emitted by value, so the result is returned rather than passed in:
+        // the body writes lengths into it and allocates its buffers.
+        main_func.ret_type = get_result_struct_type();
+    }
+
+    llir::lExpr StitchAndGenerate::get_result_var() const {
+        return llir::lVar::make(get_result_struct_type(), result_tensor.tensor_name);
     }
 
     void StitchAndGenerate::close_files() {
+        // Prototype in the header, so callers (e.g. the generated bindings) get the
+        // signature by including it.
+        Printer header_printer(header_file);
+        header_file << "\n";
+        header_printer.print(llir::Function::declaration(main_func.args, main_func.ret_type, main_func.name));
         header_file << "\n#undef __runnable__\n";
         header_file << "} // namespace " << name << std::endl;
         header_file.close();
 
+        main_func.body.emplace_back(llir::Return::make(get_result_var()));
+
+        source_file << "\nnamespace " << name << " {\n";
         Printer printer(source_file);
         printer.print(llir::Function::make(main_func.generics, main_func.attributes, main_func.args,
                                             main_func.ret_type, main_func.name,
                                             llir::Sequence::make(main_func.body)));
+        source_file << "} // namespace " << name << std::endl;
         source_file.close();
     }
 
     void StitchAndGenerate::decalare_and_initialize_common_variables() {
-        main_func.body.emplace_back(llir::RawStmt::make("using index_t = int32_t;"));
-        main_func.body.emplace_back(llir::RawStmt::make("using value_t = float;"));
+        // Zero-initialized so the pointer fields are null on paths that return before
+        // reaching the allocations (e.g. the empty-result early exit).
+        main_func.body.emplace_back(llir::RawStmt::make(
+            result_tensor.get_struct_name() + "<index_t, value_t> " + result_tensor.tensor_name + " = {};"));
 
         main_func.body.emplace_back(
             llir::Declare::make(
@@ -294,6 +319,11 @@ namespace backend {
                                     index_t_ptr,
                                     index_t_size * (is_dummy_allocation ? llir::lConst::make(1) : prev_level_len+1),
                                     false
+                                )
+                            );
+                            stmts.emplace_back(
+                                this->generate_zero_leading_offset_statement(
+                                    result_tensor.get_offsets_field(tensor_level)
                                 )
                             );
                         }

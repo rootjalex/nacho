@@ -452,7 +452,7 @@ llir::lStmt TensorLowerer::lower_func_read_tuple_for_merged_index() const {
         if(is_merged_level(i)) {
             auto merged_idx = tensor_level_index(i);
             std::vector<std::string> generics = {"index_t"};
-            std::vector<llir::Function::Attribute> attributes = {llir::Function::device, llir::Function::inline_};
+            std::vector<llir::Function::Attribute> attributes = {llir::Function::runnable};
         
             std::vector<llir::Function::Argument> args;
             llir::lType ret_type = llir::Tuple_t::make(std::vector<llir::lType>(merged_idx.indices.size(), index_t));;
@@ -482,7 +482,7 @@ llir::lStmt TensorLowerer::lower_func_read_tuple_for_merged_index() const {
             }
             body = llir::Return::make(
                 llir::lFunctionCall::make(
-                    "cuda::std::make_tuple",
+                    "nacho_std::make_tuple",
                     std::vector<llir::lExpr>(make_tuple_args)
                 )
             );
@@ -511,7 +511,7 @@ llir::lStmt TensorLowerer::lower_func_write_tuple_for_merged_index() const {
         if(is_merged_level(i)) {
             auto merged_idx = tensor_level_index(i);
             std::vector<std::string> generics = {"index_t"};
-            std::vector<llir::Function::Attribute> attributes = {llir::Function::device, llir::Function::inline_};
+            std::vector<llir::Function::Attribute> attributes = {llir::Function::runnable};
         
             std::vector<llir::Function::Argument> args;
             llir::lType ret_type = llir::Generic_t::make("void");
@@ -550,7 +550,7 @@ llir::lStmt TensorLowerer::lower_func_write_tuple_for_merged_index() const {
                             llir::lVar::make(index_t, get_iterator_suffix(merged_idx))
                         ],
                         llir::lFunctionCall::make(
-                            "cuda::std::get<" + std::to_string(idx_num) + ">",
+                            "nacho_std::get<" + std::to_string(idx_num) + ">",
                             std::vector<llir::lExpr>{
                                 llir::lVar::make(tuple_type, "tuple")
                             }

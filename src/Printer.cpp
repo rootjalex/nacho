@@ -378,7 +378,7 @@ void Printer::visit(const llir::Ptr_t *node) {
 }
 
 void Printer::visit(const llir::Tuple_t *node) {
-    os << "cuda::std::tuple<";
+    os << "nacho_std::tuple<";
     for (size_t i = 0, e = node->types.size(); i < e; i++) {
         if (i > 0) {
             os << ", ";

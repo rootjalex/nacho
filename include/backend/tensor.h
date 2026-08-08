@@ -69,9 +69,12 @@ namespace nacho {
     // tensor-access or manipulation code.
     struct TensorLowerer {
 
-        private: 
+        private:
         TensorType tensor_type;
 
+        public:
+        // Named alongside the other field-name helpers below; the offsets field itself is
+        // only present on compressed levels that have a parent.
         inline std::string
         get_offsets_field_name(const TensorIndex &index) const {
             return "dim_" + index.str() + "_offsets";
@@ -81,7 +84,6 @@ namespace nacho {
             return get_offsets_field_name(tensor_level_index(level));
         }
 
-        public:
         std::string tensor_name;
         std::vector<TensorIndex> all_loop_indices;
         bool is_result_tensor;
@@ -138,6 +140,10 @@ namespace nacho {
 
         inline std::string get_struct_name() const {
             return tensor_name + "_tensor_format";
+        }
+
+        inline const TensorType &type() const {
+            return tensor_type;
         }
 
         inline std::string get_values_field_name() const {
