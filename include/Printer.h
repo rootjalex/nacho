@@ -6,6 +6,7 @@
 
 namespace nacho {
 
+std::ostream &operator<<(std::ostream &os, const TensorIndex &idx);
 std::ostream &operator<<(std::ostream &os, const Level &lvl);
 std::ostream &operator<<(std::ostream &os, const Format &format);
 

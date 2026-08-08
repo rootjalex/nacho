@@ -18,12 +18,17 @@ llir::lType TensorLowerer::lower_tensor_struct_definition() const {
     data_fields.emplace_back("nnz", index_t);
     data_fields.emplace_back(get_values_field_name(), llir::Ptr_t::make(value_t));
     for (TensorLevelNum i = tensor_type.format.get_end_level()-1; i > BEFORE_FIRST_LEVEL; --i) {
-        auto index = tensor_level_name(i);
+        auto index = tensor_level_index(i);
 
         // only dimensions with sparse format need separate fields for index and
         // offsets
         // TODO: This only handles compressed dimensions as of now
-        if (is_sparse(i)) {
+        if(is_merged_level(i)) {
+            for(auto it = index.indices.rbegin(); it != index.indices.rend(); ++it) {
+                data_fields.emplace_back(get_indices_field_name(TensorIndex(*it)), llir::Ptr_t::make(index_t));
+                data_fields.emplace_back(get_length_field_name(TensorIndex(*it)), index_t);
+            }
+        } else if (is_sparse(i)) {
             data_fields.emplace_back(get_indices_field_name(index),
                                      llir::Ptr_t::make(index_t));
             data_fields.emplace_back(get_length_field_name(index), index_t);
@@ -36,9 +41,15 @@ llir::lType TensorLowerer::lower_tensor_struct_definition() const {
     }
 
     std::vector<std::pair<std::string, llir::lType>> size_fields;
-    for (int i = 0; i < tensor_type.format.levels.size(); i++) {
-        auto index = tensor_type.format.levels[i].index;
-        size_fields.emplace_back(get_size_field_name(index), index_t);
+    for (auto i = BEFORE_FIRST_LEVEL+1; i < tensor_type.format.get_end_level(); ++i) {
+         auto index = tensor_level_index(i);
+        if(is_merged_level(i)) {
+             for(auto idx : index.indices) {
+                size_fields.emplace_back(get_size_field_name(TensorIndex(idx)), index_t);
+            }
+        } else {
+            size_fields.emplace_back(get_size_field_name(index), index_t);
+        }
     }
 
     std::vector<std::pair<std::string, llir::lType>> fields;
@@ -60,7 +71,7 @@ llir::lType TensorLowerer::lower_tensor_struct_definition() const {
 llir::lExpr TensorLowerer::get_level_indexing_expression(TensorLevelNum tensor_level,
     bool upper_bound, std::map<TensorLevelNum, llir::lExpr> pos_vars) {
     internal_assert(tensor_level <= end_tensor_level() && tensor_level > BEFORE_FIRST_LEVEL) << "Tensor level " << tensor_level.get() << " does not exist in tensor "<< tensor_name;
-    // std::cout << "Getting indexing expression for tensor level " << tensor_level.get() << " tensor " << tensor_name << tensor_level_name(tensor_level) << std::endl;
+    // std::cout << "Getting indexing expression for tensor level " << tensor_level.get() << " tensor " << tensor_name << tensor_level_index(tensor_level) << std::endl;
     bool is_target_sparse = tensor_level < end_tensor_level() && is_sparse(tensor_level);
     TensorLevelNum prev_sparse_level = tensor_type.format.get_prev_sparse_level(tensor_level);
 
@@ -69,7 +80,7 @@ llir::lExpr TensorLowerer::get_level_indexing_expression(TensorLevelNum tensor_l
         internal_assert(pos_vars.find(prev_sparse_level) != pos_vars.end()) << "Position variable for level " << prev_sparse_level << " not found. Tensor " << tensor_name;
         expr = pos_vars[prev_sparse_level];
         for(TensorLevelNum i = prev_sparse_level + 1; i < tensor_level; ++i) {
-            expr = expr * get_size_field(tensor_level_name(i));
+            expr = expr * get_size_field(tensor_level_index(i));
         }
         if (upper_bound && prev_sparse_level + 1 == tensor_level) {
             expr = expr + 1;
@@ -80,7 +91,7 @@ llir::lExpr TensorLowerer::get_level_indexing_expression(TensorLevelNum tensor_l
         internal_assert(pos_vars.find(i) != pos_vars.end()) << "Position variable for level " << i << " not found";
         llir::lExpr sub_expr = pos_vars[i];
         for(TensorLevelNum j = i + 1; j < tensor_level; ++j) {
-            sub_expr = sub_expr * get_size_field(tensor_level_name(j));
+            sub_expr = sub_expr * get_size_field(tensor_level_index(j));
         }
         expr = expr + sub_expr;
 
@@ -103,7 +114,7 @@ llir::lExpr TensorLowerer::get_bound(TensorLevelNum tensor_level,
 
     if (!is_sparse(tensor_level)) {
         if (upper_bound) {
-            return get_size_field(tensor_level_name(tensor_level)) - 1;
+            return get_size_field(tensor_level_index(tensor_level)) - 1;
         } else {
             return llir::lConst::make(0);
         }
@@ -121,7 +132,7 @@ llir::lExpr TensorLowerer::get_bound(TensorLevelNum tensor_level,
     llir::lExpr offset = get_level_indexing_expression(tensor_level, upper_bound, pos_vars);
     if (is_compressed(tensor_level)) {
         llir::lExpr offset = get_level_indexing_expression(tensor_level, upper_bound, pos_vars);
-        llir::lExpr array = get_offsets_field(tensor_level_name(tensor_level));
+        llir::lExpr array = get_offsets_field(tensor_level_index(tensor_level));
         return upper_bound ? array[offset] - 1 : array[offset];
     } else if (is_singleton(tensor_level)) {
         llir::lExpr offset = get_level_indexing_expression(tensor_level, upper_bound, pos_vars);
@@ -149,7 +160,7 @@ llir::lExpr TensorLowerer::get_bound(TensorLevelNum tensor_level,
 // with is_target_dim_value_fixed = true then the generated work function will calculate
 // work for i=12, j=12, k=54, 0 <= l <= |L|.
 llir::lStmt
-TensorLowerer::lower_work_function(std::vector<std::string> partial_loop_order,
+TensorLowerer::lower_work_function(std::vector<TensorIndex> partial_loop_order,
                                    LoopNum target_loop_num, bool is_target_loop_value_fixed) {
 
     internal_assert(target_loop_num < LoopNum(partial_loop_order.size())) << "Target dimension has to be less than loop order size";
@@ -174,7 +185,7 @@ TensorLowerer::lower_work_function(std::vector<std::string> partial_loop_order,
     TensorLevelNum last_tensor_level_in_partial_loop = loop_num_to_tensor_level(last_level_loop_num_in_partial_loop);
 
     // checks the partial loop order is consistent with the global loop order
-    auto violates_order = [&](const std::vector<std::string> &partial_loop_order) {
+    auto violates_order = [&](const std::vector<TensorIndex> &partial_loop_order) {
         for (size_t i = 0; i + 1 < partial_loop_order.size(); ++i) {
             if(partial_loop_order[i] != all_loop_indices[i])
                 return true;
@@ -201,7 +212,7 @@ TensorLowerer::lower_work_function(std::vector<std::string> partial_loop_order,
         if (tensor_level_exists(i)) {
             // sparse dimensions are iterated by positions while dense are
             // iterated by coordinates hence args are named accordingly
-            std::string name = loop_name(i);
+            std::string name = loop_index(i).str();
             if (is_sparse(i)) {
                 // sparse dimensions are iterated by positions while dense are
                 // iterated by coordinates
@@ -220,7 +231,7 @@ TensorLowerer::lower_work_function(std::vector<std::string> partial_loop_order,
         args.emplace_back(
             llir::Function::Argument{.mutating = false,
                                      .type = index_t,
-                                     .name = loop_name(target_loop_num)});
+                                     .name = loop_index(target_loop_num).str()});
     }
 
     // broadcast Sizes of all broadcast dimensions coming after target_dim need
@@ -231,7 +242,7 @@ TensorLowerer::lower_work_function(std::vector<std::string> partial_loop_order,
             args.emplace_back(
                 llir::Function::Argument{.mutating = false,
                                          .type = index_t,
-                                         .name = "bc_size_" + loop_name(i)});
+                                         .name = "bc_size_" + loop_index(i).str()});
         }
     }
 
@@ -243,21 +254,21 @@ TensorLowerer::lower_work_function(std::vector<std::string> partial_loop_order,
     }
 
     llir::lType ret_type = llir::Generic_t::make("index_t");
-    std::string all_loops_string = std::accumulate(partial_loop_order.begin(), partial_loop_order.end(), std::string(""),
-            [](const std::string &acc, const std::string &c) {
-                return acc + c;
+    std::string all_loop_indices_string = std::accumulate(partial_loop_order.begin(), partial_loop_order.end(), std::string(""),
+            [](const std::string &acc, const TensorIndex &c) {
+                return acc + c.str();
             });
-    std::string name = get_work_function_name(all_loops_string, partial_loop_order[target_loop_num.get()]);
+    std::string name = get_work_function_name(all_loop_indices_string, partial_loop_order[target_loop_num.get()]);
 
     // Create position variables map for each tensor level, used for get_sparse_level_indexing_expression
     std::map<TensorLevelNum, llir::lExpr> pos_vars_start, pos_vars_end;
     for(TensorLevelNum i = BEFORE_FIRST_LEVEL + 1; i <= last_tensor_level_before_target_loop; ++i) {
         if(is_sparse(i)) {
-            pos_vars_start[i] = llir::lVar::make(index_t, loop_name(tensor_level_to_loop_num(i)) + "_p");
-            pos_vars_end[i] = llir::lVar::make(index_t, loop_name(tensor_level_to_loop_num(i)) + "_p");
+            pos_vars_start[i] = llir::lVar::make(index_t, loop_index(tensor_level_to_loop_num(i)).str() + "_p");
+            pos_vars_end[i] = llir::lVar::make(index_t, loop_index(tensor_level_to_loop_num(i)).str() + "_p");
         } else {
-            pos_vars_start[i] = llir::lVar::make(index_t, loop_name(tensor_level_to_loop_num(i)));
-            pos_vars_end[i] = llir::lVar::make(index_t, loop_name(tensor_level_to_loop_num(i)));
+            pos_vars_start[i] = llir::lVar::make(index_t, loop_index(tensor_level_to_loop_num(i)).str());
+            pos_vars_end[i] = llir::lVar::make(index_t, loop_index(tensor_level_to_loop_num(i)).str());
         }
     }
 
@@ -407,7 +418,7 @@ TensorLowerer::lower_work_function(std::vector<std::string> partial_loop_order,
     // if target_dim is a broad cast level need to multiple by the arg of
     // target_dim
     if (!tensor_level_exists(target_loop_num) && !is_target_loop_value_fixed) {
-        work_expr = work_expr * (llir::lVar::make(index_t, loop_name(target_loop_num))+1);
+        work_expr = work_expr * (llir::lVar::make(index_t, loop_index(target_loop_num).str())+1);
     }
 
     // Multiply by the required broadcast levels
@@ -415,7 +426,7 @@ TensorLowerer::lower_work_function(std::vector<std::string> partial_loop_order,
     // last level in the tensor
     for (auto i = target_loop_num + 1; i <= last_level_loop_num_in_partial_loop; ++i) {
         if (!tensor_level_exists(i)) {
-            work_expr = work_expr * llir::lVar::make(index_t, "bc_size_" + loop_name(i));
+            work_expr = work_expr * llir::lVar::make(index_t, "bc_size_" + loop_index(i).str());
         }
     }
 
@@ -428,6 +439,142 @@ TensorLowerer::lower_work_function(std::vector<std::string> partial_loop_order,
                                 std::move(body));
 }
 
+
+
+// lower the function get_tuple_<tensor_name>_<merged_index>
+// This function is a helper used to generate a tuple for the
+// merged index that is present in the tensor
+llir::lStmt TensorLowerer::lower_func_read_tuple_for_merged_index() const {
+
+    std::vector<llir::lStmt> stmts;
+
+    for (auto i = BEFORE_FIRST_LEVEL+1; i < tensor_type.format.get_end_level(); ++i) {
+        if(is_merged_level(i)) {
+            auto merged_idx = tensor_level_index(i);
+            std::vector<std::string> generics = {"index_t"};
+            std::vector<llir::Function::Attribute> attributes = {llir::Function::device, llir::Function::inline_};
+        
+            std::vector<llir::Function::Argument> args;
+            llir::lType ret_type = llir::Tuple_t::make(std::vector<llir::lType>(merged_idx.indices.size(), index_t));;
+            std::string name = get_func_name_for_read_tuple_for_merged_index(merged_idx);
+            llir::lStmt body;
+
+            args.emplace_back(
+                llir::Function::Argument{
+                    .mutating = false,
+                    .type = llir::Generic_t::make(get_struct_name() +
+                                                "<index_t, value_t>"),
+                    .name = tensor_name
+                });
+
+            args.emplace_back(
+                llir::Function::Argument{
+                    .mutating = false,
+                    .type = index_t,
+                    .name = get_iterator_suffix(merged_idx)
+                });
+
+            std::vector<llir::lExpr> make_tuple_args;
+            for (auto idx : merged_idx.indices) {
+                make_tuple_args.emplace_back(get_indices_field(TensorIndex(idx))[
+                    llir::lVar::make(index_t, get_iterator_suffix(merged_idx))
+                ]);
+            }
+            body = llir::Return::make(
+                llir::lFunctionCall::make(
+                    "cuda::std::make_tuple",
+                    std::vector<llir::lExpr>(make_tuple_args)
+                )
+            );
+
+            stmts.emplace_back(
+                llir::Function::make(
+                    std::move(generics),
+                    std::move(attributes),
+                    std::move(args),
+                    std::move(ret_type),
+                    std::move(name),
+                    std::move(body)
+                )
+            );
+        }
+    }
+
+    return  stmts.size() > 0 ? llir::Sequence::make(std::move(stmts)) : llir::lStmt();
+}
+
+llir::lStmt TensorLowerer::lower_func_write_tuple_for_merged_index() const {
+
+    std::vector<llir::lStmt> stmts;
+
+    for (auto i = BEFORE_FIRST_LEVEL+1; i < tensor_type.format.get_end_level(); ++i) {
+        if(is_merged_level(i)) {
+            auto merged_idx = tensor_level_index(i);
+            std::vector<std::string> generics = {"index_t"};
+            std::vector<llir::Function::Attribute> attributes = {llir::Function::device, llir::Function::inline_};
+        
+            std::vector<llir::Function::Argument> args;
+            llir::lType ret_type = llir::Generic_t::make("void");
+            std::string name = get_func_name_for_write_tuple_for_merged_index(merged_idx);
+            llir::lStmt body;
+
+            args.emplace_back(
+                llir::Function::Argument{
+                    .mutating = false,
+                    .type = llir::Generic_t::make(get_struct_name() +
+                                                "<index_t, value_t>"),
+                    .name = tensor_name
+                });
+
+            args.emplace_back(
+                llir::Function::Argument{
+                    .mutating = false,
+                    .type = index_t,
+                    .name = get_iterator_suffix(merged_idx)
+                });
+
+            auto tuple_type = llir::Tuple_t::make(std::vector<llir::lType>(merged_idx.indices.size(), index_t));
+            args.emplace_back(
+                llir::Function::Argument{
+                    .mutating = false,
+                    .type = tuple_type,
+                    .name = "tuple"
+                });
+
+            std::vector<llir::lStmt> write_stmts;
+            for (size_t idx_num=0; idx_num<merged_idx.indices.size(); ++idx_num) {
+                std::string idx = merged_idx.indices[idx_num];
+                write_stmts.emplace_back(
+                    llir::Store::make(
+                        get_indices_field(TensorIndex(idx))[
+                            llir::lVar::make(index_t, get_iterator_suffix(merged_idx))
+                        ],
+                        llir::lFunctionCall::make(
+                            "cuda::std::get<" + std::to_string(idx_num) + ">",
+                            std::vector<llir::lExpr>{
+                                llir::lVar::make(tuple_type, "tuple")
+                            }
+                        )
+                    )
+                );
+            }
+            body = llir::Sequence::make(std::move(write_stmts));
+
+            stmts.emplace_back(
+                llir::Function::make(
+                    std::move(generics),
+                    std::move(attributes),
+                    std::move(args),
+                    std::move(ret_type),
+                    std::move(name),
+                    std::move(body)
+                )
+            );
+        }
+    }
+
+    return stmts.size() > 0 ? llir::Sequence::make(std::move(stmts)) : llir::lStmt();
+}
 
 } // namespace backend
 } // namespace nacho

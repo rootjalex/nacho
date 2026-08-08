@@ -18,7 +18,7 @@ bool compatible_and_broadcast(Expr &a, Expr &b) {
     auto b_levels = b.type().format.get_all_levels();
 
     auto to_index_set = [](const std::set<Level> &lvls) {
-        std::set<std::string> s;
+        std::set<TensorIndex> s;
         for (auto &lvl : lvls)
             s.insert(lvl.index);
         return s;
@@ -28,8 +28,8 @@ bool compatible_and_broadcast(Expr &a, Expr &b) {
     auto b_idx = to_index_set(b_levels);
 
     if (a_idx != b_idx) {
-        std::vector<std::string> a_missing;
-        std::vector<std::string> b_missing;
+        std::vector<TensorIndex> a_missing;
+        std::vector<TensorIndex> b_missing;
 
         // TODO: custom equality?
         std::set_difference(b_idx.begin(), b_idx.end(), a_idx.begin(),
@@ -40,13 +40,13 @@ bool compatible_and_broadcast(Expr &a, Expr &b) {
                             b_idx.end(), std::back_inserter(b_missing));
 
         // For each level in a - b, do:
-        for (const auto &lvl : a_missing) {
-            a = Bc::make(lvl, a);
+        for (const auto &idx : a_missing) {
+            a = Bc::make(idx, a);
         }
 
         // For each level in b - a, do:
-        for (const auto &lvl : b_missing) {
-            b = Bc::make(lvl, b);
+        for (const auto &idx : b_missing) {
+            b = Bc::make(idx, b);
         }
     }
 
@@ -69,7 +69,7 @@ Expr Add::make(Expr a, Expr b) {
     return node;
 }
 
-Expr Bc::make(std::string index, Expr a) {
+Expr Bc::make(TensorIndex index, Expr a) {
     internal_assert(a.defined()) << "Bc of undefined: " << a;
     // Broadcast index dimension.
     Format f = a.type().format; // copy
@@ -107,6 +107,10 @@ Expr Mul::make(Expr a, Expr b) {
 }
 
 Expr Sum::make(std::string index, Expr a) {
+    return Sum::make(TensorIndex(std::move(index)), std::move(a));
+}
+
+Expr Sum::make(TensorIndex index, Expr a) {
     internal_assert(a.defined()) << "Sum of undefined: " << a;
     // Remove index dimension.
     Format f = a.type().format; // copy
@@ -117,10 +121,10 @@ Expr Sum::make(std::string index, Expr a) {
     });
 
     if (it == all.end()) {
-        throw std::runtime_error("Sum error: level '" + index +
+        throw std::runtime_error("Sum error: level '" + index.str() +
                                  "' does not exist in tensor format");
     }
-    // TODO: only one of these should do any erasing
+    // Erase the level where it exists, as we are summing over it.
     std::size_t n_erased = std::erase_if(
         f.bc_levels, [&](const Level &lvl) { return lvl.index == index; });
 
@@ -162,11 +166,11 @@ Expr operator+(Expr a, Expr b) { return Add::make(std::move(a), std::move(b)); }
 Expr operator*(Expr a, Expr b) { return Mul::make(std::move(a), std::move(b)); }
 
 Expr bc(std::string idx, Expr a) {
-    return Bc::make(std::move(idx), std::move(a));
+    return Bc::make(TensorIndex(std::move(idx)), std::move(a));
 }
 
 Expr sum(std::string idx, Expr a) {
-    return Sum::make(std::move(idx), std::move(a));
+    return Sum::make(TensorIndex(std::move(idx)), std::move(a));
 }
 
 } // namespace nacho

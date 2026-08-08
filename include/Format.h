@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cassert>
+#include <numeric>
 #include <ostream>
 #include <set>
 #include <string>
@@ -15,7 +17,7 @@ enum class LevelFormat {
     Compressed_unique,
     Singleton_non_unique,
     Singleton_unique,
-    // TODO: Coordinate, Hash, etc (Change below function too when adding more sparse types)
+    MergedCoordinate,
 };
 
 class TensorLevelNum {
@@ -90,12 +92,81 @@ inline bool is_singleton_format(const LevelFormat lvl_fmt) {
 
 inline bool is_unique_format(const LevelFormat lvl_fmt) {
     internal_assert(is_sparse_format(lvl_fmt)) << "Level format " << static_cast<int>(lvl_fmt) << " is not a sparse format.";
-    return lvl_fmt == LevelFormat::Compressed_unique || lvl_fmt == LevelFormat::Singleton_unique;
+    return lvl_fmt == LevelFormat::Compressed_unique || lvl_fmt == LevelFormat::Singleton_unique || lvl_fmt == LevelFormat::MergedCoordinate;
 }
 
+inline bool is_merged_format(const LevelFormat lvl_fmt) {
+    return lvl_fmt == LevelFormat::MergedCoordinate;
+}
+
+
+
+// A Tensor index represents the index associated with a specific dimension in a tensor
+// It can be either a single index or a merged index (for merged levels)
+// eg: in a tensor index expression A_ijk , i and j and k are individual Tensor index
+// representing different dimensions. 
+// As a special case for COO format, sometimes multiple indices could be merged 
+// into single tensor index. This is to enable optimization where all the levels in 
+// a COO are considered as a flat single level.
+// TODO : Probably need to dedup with Index(Seq.h) as logically
+// both are the same thing
+struct TensorIndex {
+    std::vector<std::string> indices;
+
+    TensorIndex() = default;
+    explicit TensorIndex(std::string s) : indices{std::move(s)} {}
+
+    bool is_merged_index() const {
+        return indices.size() > 1;
+    }
+
+    bool empty() const {
+        return indices.empty();
+    }
+
+    std::string str(size_t i) const {
+       assert(i < indices.size());
+       return indices[i];
+    }
+
+    std::string str() const {
+       return std::accumulate(indices.begin(), indices.end(), std::string(""));
+    }
+
+    // Needed for std::set
+    bool operator<(const TensorIndex &other) const {
+        return str() < other.str();
+    }
+
+    // Needed for std::set_difference
+    bool operator==(const TensorIndex &other) const {
+        return str() == other.str();
+    }
+};
+
+} // namespace nacho
+
+namespace std {
+template <>
+struct hash<nacho::TensorIndex> {
+    size_t operator()(const nacho::TensorIndex &idx) const noexcept {
+        return std::hash<std::string>()(idx.str());
+    }
+};
+} // namespace std
+
+namespace nacho {
+
+// A Level represents a specific level in a tensor format hierarchy.
+// It is a TensorIndex with a concrete Level format which
+// defines the layout and organization of the tensor data at that level.
 struct Level {
-    std::string index;
+    TensorIndex index;
     LevelFormat format;
+
+    Level() = default;
+    Level(TensorIndex index, LevelFormat format) : index(std::move(index)), format(format) {}
+    Level(std::string idx, LevelFormat format) : index(TensorIndex(std::move(idx))), format(format) {}
 
     // Needed for std::set
     bool operator<(const Level &other) const {
@@ -108,8 +179,10 @@ struct Level {
         return index == other.index && format == other.format;
     }
 };
-using OrderMap = std::unordered_map<std::string, size_t>;
+using OrderMap = std::unordered_map<TensorIndex, size_t>;
 OrderMap index_order_map(const std::vector<Level> &levels);
+
+// Format represents the layout and organization data for a specific tensor.
 struct Format {
     std::vector<Level> levels;
     std::set<Level> bc_levels;
@@ -120,6 +193,20 @@ struct Format {
     }
     static Format unordered(std::set<Level> lvls) {
         return Format{.bc_levels = std::move(lvls)};
+    }
+
+    bool is_coo() const {
+        if (levels.size() < 2)
+            return false;
+        if(levels[0].format != LevelFormat::Compressed_non_unique)
+            return false;
+        if(levels[levels.size() - 1].format != LevelFormat::Singleton_unique)
+            return false;
+        for(int i = 1; i < levels.size() - 1; i++) {
+            if(levels[i].format != LevelFormat::Singleton_non_unique)
+                return false;
+        }
+        return true;
     }
 
     std::set<Level> get_all_levels() const {
@@ -134,15 +221,15 @@ struct Format {
     TensorLevelNum get_prev_sparse_level(TensorLevelNum curr_level) const;
     TensorLevelNum get_next_sparse_level(TensorLevelNum curr_level) const;
     TensorLevelNum get_last_sparse_level() const;
-    TensorLevelNum get_level_order(const std::string &idx) const;
+    TensorLevelNum get_level_order(const TensorIndex &idx) const;
     TensorLevelNum get_end_level() const {
         return TensorLevelNum(static_cast<int>(levels.size()));
     }
 
-    LevelFormat lvlfmt_of(const std::string &idx) const;
-    bool is_sparse(const std::string &idx) const;
-    bool level_exists(const std::string &idx) const;
-    bool is_bc_lvl(const std::string &idx) const;
+    LevelFormat lvlfmt_of(const TensorIndex &idx) const;
+    bool is_sparse(const TensorIndex &idx) const;
+    bool level_exists(const TensorIndex &idx) const;
+    bool is_bc_lvl(const TensorIndex &idx) const;
     bool are_all_lvls_dense() const;
 
 };

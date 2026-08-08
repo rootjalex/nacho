@@ -50,8 +50,8 @@ struct PartitionKernelLowerer: public BaseKernelLowerer {
 
     llir::lStmt get_statements_to_find_sparse_position(LoopNum loop_num, TensorLowerer& tensor, llir::lExpr index_value, bool need_to_exclude_tensors_at_runtime, bool is_upper_bound_search,  bool add_seg_end_search);
 
-    llir::lExpr get_sparse_dim_start_expr(TensorLowerer& tensor, const std::string& forall_idx);
-    llir::lExpr get_sparse_dim_end_expr(TensorLowerer& tensor, const std::string& forall_idx);
+    llir::lExpr get_sparse_dim_start_expr(TensorLowerer& tensor, const TensorIndex& forall_idx);
+    llir::lExpr get_sparse_dim_end_expr(TensorLowerer& tensor, const TensorIndex& forall_idx);
 
 };
 

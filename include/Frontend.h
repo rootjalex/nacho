@@ -80,10 +80,10 @@ struct Add : ExprNode<Add> {
 
 // Broadcast
 struct Bc : ExprNode<Bc> {
-    std::string index; // TODO: not a string?
+    TensorIndex index;
     Expr a;
 
-    static Expr make(std::string index, Expr a);
+    static Expr make(TensorIndex index, Expr a);
 
     static const ExprEnum node_type = ExprEnum::Bc;
 };
@@ -97,9 +97,10 @@ struct Mul : ExprNode<Mul> {
 };
 
 struct Sum : ExprNode<Sum> {
-    std::string index; // TODO: not a string?
+    TensorIndex index;
     Expr a;
 
+    static Expr make(TensorIndex index, Expr a);
     static Expr make(std::string index, Expr a);
 
     static const ExprEnum node_type = ExprEnum::Sum;

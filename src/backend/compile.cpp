@@ -19,11 +19,11 @@ namespace backend {
             std::map<std::string, TensorLowerer> &operand_tensors;
             TensorLowerer &result_tensor;
             TensorLowerer &reduced_result_tensor;
-            std::vector<std::string> &loop_order;
+            std::vector<TensorIndex> &loop_order;
             std::vector<LoopNum> &reductionLoops;
             bool &is_scatter_reduction;
-            TensorVisitor(std::map<std::string, TensorLowerer> &operand_tensors, TensorLowerer &result_tensor, TensorLowerer &reduced_result_tensor, 
-                std::vector<std::string> &loop_order, std::vector<LoopNum> &reductionLoops, bool &is_scatter_reduction)
+            TensorVisitor(std::map<std::string, TensorLowerer> &operand_tensors, TensorLowerer &result_tensor, TensorLowerer &reduced_result_tensor,
+                std::vector<TensorIndex> &loop_order, std::vector<LoopNum> &reductionLoops, bool &is_scatter_reduction)
                 : operand_tensors(operand_tensors), result_tensor(result_tensor), reduced_result_tensor(reduced_result_tensor), loop_order(loop_order), reductionLoops(reductionLoops), is_scatter_reduction(is_scatter_reduction) {}
 
             void add_tensor(std::string str, TensorType type) {
@@ -79,11 +79,11 @@ namespace backend {
         this->cin.accept(&visitor);
     }
 
-    std::vector<std::string> CINLowerer::get_loop_order() {
-        std::vector<std::string> loop_order;
+    std::vector<TensorIndex> CINLowerer::get_loop_order() {
+        std::vector<TensorIndex> loop_order;
         struct ForallVisitor : Visitor {
-            std::vector<std::string> &loop_order;
-            ForallVisitor(std::vector<std::string> &loop_order) : loop_order(loop_order) {}
+            std::vector<TensorIndex> &loop_order;
+            ForallVisitor(std::vector<TensorIndex> &loop_order) : loop_order(loop_order) {}
 
             void visit(const Forall *node) override {
                 loop_order.push_back(node->idx);
@@ -130,8 +130,8 @@ namespace backend {
             LoopNum current_sparse_intersection = sparse_intersection_levels[i+1];
             LoopNum next_sparse_intersection = i!=sparse_intersection_levels.size()-2 ? sparse_intersection_levels[i+2] : LoopNum(forall_list.size());
 
-            auto previous_loop_order = std::vector<std::string>(loop_order.begin(), loop_order.begin() + previous_sparse_intersection.get() + 1);
-            auto current_loop_order = std::vector<std::string>(loop_order.begin(), loop_order.begin() + current_sparse_intersection.get() + 1);
+            auto previous_loop_order = std::vector<TensorIndex>(loop_order.begin(), loop_order.begin() + previous_sparse_intersection.get() + 1);
+            auto current_loop_order = std::vector<TensorIndex>(loop_order.begin(), loop_order.begin() + current_sparse_intersection.get() + 1);
 
             // Generate work functions for partition kernel
             for(LoopNum loop=BEFORE_FIRST_LOOP+1; loop<=previous_sparse_intersection;++loop) {
@@ -173,7 +173,7 @@ namespace backend {
             // The target_dim value is fixed for this work function.
             if(i!=sparse_intersection_levels.size()-2){
                 for (auto it : included_tensors) {
-                    auto next_loop_order = std::vector<std::string>(loop_order.begin(), loop_order.begin() + next_sparse_intersection.get() + 1);
+                    auto next_loop_order = std::vector<TensorIndex>(loop_order.begin(), loop_order.begin() + next_sparse_intersection.get() + 1);
                     printer.print(it.second.lower_work_function(next_loop_order, current_sparse_intersection, true));
                 }
             }
@@ -190,7 +190,12 @@ namespace backend {
     void CINLowerer::lower_struct_definitions(LoopNum last_sparse_intersection) {
         for (auto it : operand_tensors) {
             printer.print(it.second.lower_tensor_struct_definition());
-            // printer.print(it.second.lower_tensor_index_definition());
+            if (llir::lStmt stmt = it.second.lower_func_read_tuple_for_merged_index(); stmt.defined()) {
+                printer.print(stmt);
+            }
+            if (llir::lStmt stmt = it.second.lower_func_write_tuple_for_merged_index(); stmt.defined()) {
+                printer.print(stmt);
+            }
         }
         printer.print(result_tensor.lower_tensor_struct_definition());
         if(reductionLoops.size() > 0) {
@@ -223,7 +228,7 @@ namespace backend {
                 continue;
             }
             const Forall* forall = forall_list[loop.get()].as<Forall>();
-            std::string forall_idx = forall->idx;
+            TensorIndex forall_idx = forall->idx;
 
             for(auto& [name, tensor] : operand_tensors) {
                 if(BaseLowerer.exists_field_in_result_to_operand_pos_map(forall, tensor)) {
@@ -373,7 +378,6 @@ namespace backend {
         };
         return Modifier(target_loop).mutate(cin);
     }
-
 
     void CINLowerer::lower_binary_search_function(bool is_upper_bound) {
         std::vector<std::string> generics = {"index_t"};

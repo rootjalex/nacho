@@ -37,7 +37,7 @@ cExpr cTensor::make(TensorType type, std::string name) {
     return node;
 }
 
-CIN Accumulate::make(std::string tensor, TensorType type, std::vector<std::string> accumulate_indices, cExpr expr) {
+CIN Accumulate::make(std::string tensor, TensorType type, std::vector<TensorIndex> accumulate_indices, cExpr expr) {
     internal_assert(!tensor.empty()) << "Accumulate with empty tensor";
     internal_assert(expr.defined());
 
@@ -60,7 +60,7 @@ CIN Assign::make(std::string tensor, TensorType type, cExpr expr) {
     return node;
 }
 
-CIN Forall::make(std::string idx, Seq seq, CIN body) {
+CIN Forall::make(TensorIndex idx, Seq seq, CIN body) {
     internal_assert(!idx.empty()) << "Forall with empty index";
     internal_assert(seq.defined())
         << "Forall with undef seq for index: " << idx;

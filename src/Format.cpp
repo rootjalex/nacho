@@ -22,8 +22,8 @@ namespace {
 
 
 
-std::set<std::string> extract_indices(const std::set<Level> &S) {
-    std::set<std::string> out;
+std::set<TensorIndex> extract_indices(const std::set<Level> &S) {
+    std::set<TensorIndex> out;
     for (auto &lvl : S)
         out.insert(lvl.index);
     return out;
@@ -89,12 +89,12 @@ make_format(const Format &a, const Format &b,
     auto all = extract_indices(a.get_all_levels());
 
     // Topological merge of ordering constraints
-    std::set<std::string> remaining(all.begin(), all.end());
-    std::vector<std::string> merged;
+    std::set<TensorIndex> remaining(all.begin(), all.end());
+    std::vector<TensorIndex> merged;
     merged.reserve(all.size());
-    std::set<std::string> broadcasts;
+    std::set<TensorIndex> broadcasts;
 
-    auto precedes = [&](const std::string &x, const std::string &y) {
+    auto precedes = [&](const TensorIndex &x, const TensorIndex &y) {
         bool inA = A.count(x) && A.count(y) && A.at(x) < A.at(y);
         bool inB = B.count(x) && B.count(y) && B.at(x) < B.at(y);
         return inA || inB;
@@ -104,7 +104,7 @@ make_format(const Format &a, const Format &b,
         bool progress = false;
 
         for (auto it = remaining.begin(); it != remaining.end(); ++it) {
-            const std::string &idx = *it;
+            const TensorIndex &idx = *it;
 
             bool has_pred = false;
             for (auto &other : remaining) {
@@ -182,7 +182,7 @@ TensorLevelNum Format::get_last_sparse_level() const {
     return BEFORE_FIRST_LEVEL;
 }
 
-TensorLevelNum Format::get_level_order(const std::string &idx) const {
+TensorLevelNum Format::get_level_order(const TensorIndex &idx) const {
     for (size_t i = 0; i < levels.size(); ++i) {
         if (levels[i].index == idx) {
             return TensorLevelNum(static_cast<int>(i));
@@ -191,7 +191,7 @@ TensorLevelNum Format::get_level_order(const std::string &idx) const {
     return BEFORE_FIRST_LEVEL;
 }
 
-LevelFormat Format::lvlfmt_of(const std::string &idx) const {
+LevelFormat Format::lvlfmt_of(const TensorIndex &idx) const {
     auto all = get_all_levels();
     auto it = std::find_if(all.begin(), all.end(),
                            [&](const Level &lv) { return lv.index == idx; });
@@ -199,16 +199,16 @@ LevelFormat Format::lvlfmt_of(const std::string &idx) const {
     return it->format;
 }
 
-bool Format::is_sparse(const std::string &idx) const {
+bool Format::is_sparse(const TensorIndex &idx) const {
     return is_sparse_format(lvlfmt_of(idx));
 }
 
-bool Format::level_exists(const std::string &idx) const {
+bool Format::level_exists(const TensorIndex &idx) const {
     return std::any_of(levels.begin(), levels.end(),
                        [&](const Level &lvl) { return lvl.index == idx; });
 }
 
-bool Format::is_bc_lvl(const std::string &idx) const {
+bool Format::is_bc_lvl(const TensorIndex &idx) const {
     return std::any_of(bc_levels.begin(), bc_levels.end(),
                        [&](const Level &lvl) { return lvl.index == idx; });
 }
@@ -223,6 +223,12 @@ Format add_formats(const Format &a, const Format &b) {
     // Any index that is sparse in *both* a and b must be sparse in z.
 
     return make_format(a, b, [](LevelFormat fa, LevelFormat fb) {
+        // MergedFormat Special Handling
+        if(is_merged_format(fa) || is_merged_format(fb)) {
+            internal_assert(is_merged_format(fa) && is_merged_format(fb)) << "Merged format is only compatible with itself: " << static_cast<int>(fa) << " vs " << static_cast<int>(fb);
+            return LevelFormat::MergedCoordinate;
+        }
+
         // Dense if either is dense
         if (!is_sparse_format(fa) || !is_sparse_format(fb))
             return LevelFormat::Dense;
@@ -268,6 +274,12 @@ Format mul_formats(const Format &a, const Format &b) {
     // Any index that is dense in *both* a and b must be dense in z.
 
     return make_format(a, b, [](LevelFormat fa, LevelFormat fb) {
+        // MergedFormat Special Handling
+        if(is_merged_format(fa) || is_merged_format(fb)) {
+            internal_assert(is_merged_format(fa) && is_merged_format(fb)) << "Merged format is only compatible with itself: " << static_cast<int>(fa) << " vs " << static_cast<int>(fb);
+            return LevelFormat::MergedCoordinate;
+        }
+
         // Sparse if either is sparse
         if (is_sparse_format(fa) || is_sparse_format(fb)) {
             if(!is_sparse_format(fa)){
