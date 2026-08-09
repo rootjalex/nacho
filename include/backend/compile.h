@@ -6,6 +6,7 @@
 #include "Printer.h"
 #include "Type.h"
 #include "backend/tensor.h"
+#include "backend/stitch_and_generate.h"
 #include <string>
 #include <map>
 
@@ -18,7 +19,7 @@ namespace backend {
             llir::lType index_t  = llir::Generic_t::make("index_t");
 
             CIN cin;
-            Printer printer;
+            std::string name;
             TensorLowerer result_tensor;
             TensorLowerer reduced_result_tensor;
             std::map<std::string, TensorLowerer> operand_tensors;
@@ -26,7 +27,10 @@ namespace backend {
             // TODO: For multiple sums (inner-sum) this would be a vector of all reduction loops
             std::vector<LoopNum> reductionLoops;
             bool is_scatter_reduction = false;
-            CINLowerer(CIN cin, std::ostream &os);
+
+            StitchAndGenerate* stitch_and_generate;
+
+            CINLowerer(CIN cin, std::string name, bool is_cpu = false);
 
             std::vector<TensorIndex> get_loop_order();
             std::vector<CIN> get_forall_list();

@@ -151,6 +151,20 @@ void Visitor::visit(const llir::lAddress *node) {
     node->var.accept(this);
 }
 
+void Visitor::visit(const llir::RawExpr *node) { (void)node; }
+
+void Visitor::visit(const llir::lLambda *node) {
+    for (const auto &param : node->params) {
+        param.first.accept(this);
+    }
+    node->body.accept(this);
+}
+
+void Visitor::visit(const llir::Cast *node) {
+    node->type.accept(this);
+    node->expr.accept(this);
+}
+
 void Visitor::visit(const llir::Declare *node) { if(node->init.defined())node->init.accept(this); }
 
 void Visitor::visit(const llir::IfElse *node) {
@@ -209,5 +223,7 @@ void Visitor::visit(const llir::Accumulate *node) {
     node->var.accept(this);
     node->value.accept(this);
 }
+
+void Visitor::visit(const llir::RawStmt *node) { (void)node; }
 
 } // namespace nacho

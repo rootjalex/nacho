@@ -13,7 +13,7 @@
 namespace nacho {
 namespace backend {
 
-    CINLowerer::CINLowerer(CIN cin, std::ostream &os) : cin(std::move(cin)), printer(os), reductionLoops({}) {
+    CINLowerer::CINLowerer(CIN cin, std::string name, bool is_cpu) : cin(std::move(cin)), name(std::move(name)), reductionLoops({}) {
         loop_order = get_loop_order();
         struct TensorVisitor : Visitor {
             std::map<std::string, TensorLowerer> &operand_tensors;
@@ -77,6 +77,12 @@ namespace backend {
 
         TensorVisitor visitor(operand_tensors, result_tensor, reduced_result_tensor, loop_order, reductionLoops, is_scatter_reduction);
         this->cin.accept(&visitor);
+
+        if(is_cpu) {
+            stitch_and_generate = new StitchAndGenerateCPU(this->name, operand_tensors, result_tensor, get_forall_list(), reduced_result_tensor);
+        } else {
+            stitch_and_generate = new StitchAndGenerateGPU(this->name, operand_tensors, result_tensor, get_forall_list(), reduced_result_tensor);
+        }
     }
 
     std::vector<TensorIndex> CINLowerer::get_loop_order() {
@@ -112,6 +118,7 @@ namespace backend {
     }
 
     void CINLowerer::lower_cin() {
+
         auto forall_list = get_forall_list();
 
         std::vector<LoopNum> sparse_intersection_levels = get_all_sparse_intersection_levels(cin);
@@ -125,6 +132,11 @@ namespace backend {
         this->lower_binary_search_function(false);
         this->lower_struct_definitions(sparse_intersection_levels[sparse_intersection_levels.size()-2]);
 
+        std::map<std::string, nacho::backend::TensorLowerer> included_tensors_current;
+        llir::lType partition_struct;
+        llir::lStmt partition_kernel;
+        llir::lStmt precompute_kernel;
+        llir::lStmt compute_kernel;
         for(int i=0; i< sparse_intersection_levels.size()-1;i++) {
             LoopNum previous_sparse_intersection = sparse_intersection_levels[i];
             LoopNum current_sparse_intersection = sparse_intersection_levels[i+1];
@@ -135,52 +147,60 @@ namespace backend {
 
             // Generate work functions for partition kernel
             for(LoopNum loop=BEFORE_FIRST_LOOP+1; loop<=previous_sparse_intersection;++loop) {
-                printer.print(result_tensor.lower_work_function(previous_loop_order, loop));
+                stitch_and_generate->add_to_header_file(result_tensor.lower_work_function(previous_loop_order, loop));
             }
-            auto included_tensors = get_included_tensors_for_level(current_sparse_intersection);
+            included_tensors_current = get_included_tensors_for_level(current_sparse_intersection);
             for(LoopNum level = previous_sparse_intersection + 1; level <= current_sparse_intersection; ++level) {
-                for (auto it : included_tensors) {
-                    printer.print(it.second.lower_work_function(current_loop_order, level));
+                for (auto it : included_tensors_current) {
+                    stitch_and_generate->add_to_header_file(it.second.lower_work_function(current_loop_order, level));
                 }
             }
 
+            PartitionKernelLowerer partition_lowerer(operand_tensors, result_tensor, included_tensors_current, forall_list, previous_sparse_intersection, current_sparse_intersection, next_sparse_intersection, reductionLoops, is_scatter_reduction, reduced_result_tensor);
 
-            PartitionKernelLowerer partition_lowerer(operand_tensors, result_tensor, included_tensors, forall_list, previous_sparse_intersection, current_sparse_intersection, next_sparse_intersection, reductionLoops, is_scatter_reduction, reduced_result_tensor);
-
-            printer.print(partition_lowerer.lower_partition_struct_definition());
-            printer.print(partition_lowerer.lower_partition_kernel());
+            partition_struct = partition_lowerer.lower_partition_struct_definition();
+            partition_kernel = partition_lowerer.lower_partition_kernel();
 
             // Get the modified CIN 
             CIN modified_cin = cin;
-            
+            std::map<std::string, nacho::backend::TensorLowerer> included_tensors_next;
             if(i!=sparse_intersection_levels.size()-2){
                 modified_cin = get_modified_cin_for_sparse_intersection(current_sparse_intersection, cin);
-                included_tensors = get_included_tensors_for_level(next_sparse_intersection);
+                included_tensors_next = get_included_tensors_for_level(next_sparse_intersection);
             }
 
-            ComputeKernelLowerer compute_lowerer(operand_tensors, result_tensor, included_tensors, forall_list, modified_cin, previous_sparse_intersection, current_sparse_intersection, next_sparse_intersection, reductionLoops, is_scatter_reduction, reduced_result_tensor);
+            ComputeKernelLowerer compute_lowerer(operand_tensors, result_tensor, included_tensors_next, forall_list, modified_cin, previous_sparse_intersection, current_sparse_intersection, next_sparse_intersection, reductionLoops, is_scatter_reduction, reduced_result_tensor);
             
             // Generate Precompute kernels
+            precompute_kernel = nullptr;
             TensorLowerer & output_write_tensor = 
                 i == sparse_intersection_levels.size()-2 && reductionLoops.size() > 0 &&  !is_scatter_reduction 
                     ? reduced_result_tensor : result_tensor;
             if(output_write_tensor.get_loop_num_for_prev_sparse_level(current_sparse_intersection+1) > BEFORE_FIRST_LOOP) {
-                printer.print(compute_lowerer.lower_precompute_function());
+                precompute_kernel = compute_lowerer.lower_precompute_function();
             }
+
+            stitch_and_generate->stitch_kernels(compute_kernel, partition_struct, partition_kernel, precompute_kernel,
+                                                i==0 ? BEFORE_FIRST_LOOP : sparse_intersection_levels[i-1],
+                                                previous_sparse_intersection, current_sparse_intersection,
+                                                included_tensors_current);
+
 
             // Generate Compute kernel
             // We need to lower an extra work function for compute kernel if this not innermost sparse intersect
             // The target_dim value is fixed for this work function.
             if(i!=sparse_intersection_levels.size()-2){
-                for (auto it : included_tensors) {
+                for (auto it : included_tensors_next) {
                     auto next_loop_order = std::vector<TensorIndex>(loop_order.begin(), loop_order.begin() + next_sparse_intersection.get() + 1);
-                    printer.print(it.second.lower_work_function(next_loop_order, current_sparse_intersection, true));
+                    stitch_and_generate->add_to_header_file(it.second.lower_work_function(next_loop_order, current_sparse_intersection, true));
                 }
             }
-            printer.print(compute_lowerer.lower_compute_function());
 
+            compute_kernel = compute_lowerer.lower_compute_function();
         }
-        
+        stitch_and_generate->stitch_final_compute_kernel(compute_kernel, included_tensors_current, 
+            sparse_intersection_levels[sparse_intersection_levels.size()-2] ,is_scatter_reduction);
+        stitch_and_generate->close_files();
     }
 
     // lower_struct_definitions loweres all the initial struct definitions for the program
@@ -189,17 +209,20 @@ namespace backend {
     // which might be required by the intermediate kernels.
     void CINLowerer::lower_struct_definitions(LoopNum last_sparse_intersection) {
         for (auto it : operand_tensors) {
-            printer.print(it.second.lower_tensor_struct_definition());
+            stitch_and_generate->stitch_tensor_def(it.second.lower_tensor_struct_definition());
             if (llir::lStmt stmt = it.second.lower_func_read_tuple_for_merged_index(); stmt.defined()) {
-                printer.print(stmt);
+                stitch_and_generate->add_to_header_file(stmt);
             }
             if (llir::lStmt stmt = it.second.lower_func_write_tuple_for_merged_index(); stmt.defined()) {
-                printer.print(stmt);
+                stitch_and_generate->add_to_header_file(stmt);
             }
         }
-        printer.print(result_tensor.lower_tensor_struct_definition());
+        
         if(reductionLoops.size() > 0) {
-            printer.print(reduced_result_tensor.lower_tensor_struct_definition());
+            stitch_and_generate->stitch_result_tensor_def(reduced_result_tensor.lower_tensor_struct_definition());
+            stitch_and_generate->stitch_temp_result_tensor_def(result_tensor.lower_tensor_struct_definition());
+        } else {
+            stitch_and_generate->stitch_result_tensor_def(result_tensor.lower_tensor_struct_definition());
         }
 
 
@@ -209,12 +232,12 @@ namespace backend {
         BaseKernelLowerer BaseLowerer(operand_tensors, result_tensor, empty_map, get_forall_list(), BEFORE_FIRST_LOOP, BEFORE_FIRST_LOOP, BEFORE_FIRST_LOOP, reductionLoops, is_scatter_reduction, reduced_result_tensor);
         // Need to lower this struct only once
         if(!result_tensor.are_all_lvls_dense()) {
-            printer.print(BaseLowerer.lower_result_per_thread_count_struct());
+            stitch_and_generate->stitch_count_offset_struct_def(BaseLowerer.lower_result_per_thread_count_struct());
         }
 
         auto result_operand_pos_map = lower_result_pos_to_operand_pos_map_struct(last_sparse_intersection);
         if(result_operand_pos_map.get() != nullptr) {
-            printer.print(result_operand_pos_map);
+            stitch_and_generate->stitch_operand_pos_map_struct_def(result_operand_pos_map);
         }
     }
 
@@ -383,7 +406,7 @@ namespace backend {
         std::vector<std::string> generics = {"index_t"};
 
         std::vector<llir::Function::Attribute> attributes = {
-            llir::Function::device, llir::Function::inline_};
+            llir::Function::inline_};
 
         std::vector<llir::Function::Argument> args;
         llir::lType ret_type;
@@ -469,7 +492,7 @@ namespace backend {
         );
         body = llir::Sequence::make(std::move(stmts));
 
-        printer.print(llir::Function::make(std::move(generics), std::move(attributes), std::move(args), std::move(ret_type), name, std::move(body)));
+        stitch_and_generate->add_to_header_file(llir::Function::make(std::move(generics), std::move(attributes), std::move(args), std::move(ret_type), name, std::move(body)));
     }
 
     std::map<std::string, TensorLowerer> CINLowerer::get_included_tensors_for_level(LoopNum loop_num) {

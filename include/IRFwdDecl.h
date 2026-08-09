@@ -58,6 +58,9 @@ struct lVar;
 struct lFunctionCall;
 struct lIncrement;
 struct lAddress;
+struct RawExpr;
+struct lLambda;
+struct Cast;
 
 struct lStmt;
 struct Declare;
@@ -71,6 +74,7 @@ struct Function;
 struct BaseExpr;
 struct Break;
 struct Accumulate;
+struct RawStmt;
 
 } // namespace llir
 
