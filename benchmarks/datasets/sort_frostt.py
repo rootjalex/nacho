@@ -24,6 +24,19 @@ import pandas as pd
 
 import config
 
+# Tensors whose modes are permuted on the way out, as the new order of the original modes.
+# fb-m is (23344784, 23344784, 166): with the short mode innermost, a level tree spends two
+# levels of 23M coordinates before reaching anything that fans out. Leading with it gives
+# 166 outer coordinates instead.
+MODE_ORDER = {
+    "fb-m": (2, 0, 1),
+}
+
+
+def permutation_tag(modes):
+    """The mode order as letters, e.g. (2, 0, 1) -> 'kij', for the output file name."""
+    return "".join("ijk"[mode] for mode in modes)
+
 
 def read_tns(path):
     """(coordinates, values) from a whitespace-separated `i j k value` file."""
@@ -70,11 +83,20 @@ def process(directory, stem):
         print(f"{stem}: {source} not found, skipped")
         return False
 
-    target = directory / f"{stem}_sorted.tns"
+    modes = MODE_ORDER.get(stem)
+    suffix = "_sorted" if modes is None else f"_sorted_{permutation_tag(modes)}"
+    target = directory / f"{stem}{suffix}.tns"
     print(f"{stem}:")
     coordinates, values = read_tns(source)
+    if modes is not None:
+        # Permute before sorting, so the lexicographic order below is over the new modes.
+        print(f"  reordering modes to {permutation_tag(modes)}", flush=True)
+        coordinates = coordinates[:, list(modes)]
     coordinates, values = sort_and_coalesce(coordinates, values)
     write_tns(target, coordinates, values)
+    if modes is not None:
+        print(f"  dimensions are permuted: FROSTT_TENSORS must list them in "
+              f"{permutation_tag(modes)} order", flush=True)
     return True
 
 
@@ -93,7 +115,7 @@ def main():
     stems = args.tensors
     if args.all:
         stems = sorted(path.stem for path in args.dir.glob("*.tns")
-                       if not path.stem.endswith("_sorted"))
+                       if "_sorted" not in path.stem)
     if not stems:
         parser.error("name at least one tensor stem, or pass --all")
 

@@ -31,16 +31,17 @@ SUITESPARSE_DIR = _path("SUITESPARSE_DIR", Path("/scratch/atharva/suitesparse/")
 STATS_CSV = _path("STATS_CSV", BENCHMARKS_DIR / "suitesparse_stats.csv")
 
 # Directory holding the FROSTT .tns tensors.
-FROSTT_DIR = _path("FROSTT_DIR", Path("/scratch/frostt/"))
+FROSTT_DIR = _path("FROSTT_DIR", Path("/scratch/atharva/frostt/"))
 
 # FROSTT tensors to benchmark: (name, file stem, (I, J, K)). Coordinates must already be
 # sorted lexicographically and free of duplicates, which is what the *_sorted stems are:
 # datasets/sort_frostt.py writes them from the downloaded files.
 FROSTT_TENSORS = [
-    # ("nell-2", "nell-2_sorted", (12092, 9184, 28818)),
+    ("nell-2", "nell-2_sorted", (12092, 9184, 28818)),
     ("nell-1", "nell-1_sorted", (2902330, 2143368, 25495389)),
-    # ("darpa", "1998DARPA_sorted", (22476, 22476, 23776223)),
-    # ("fb-m", "fb-m_sorted", (23344784, 23344784, 166)),
+    ("darpa", "1998DARPA_sorted", (22476, 22476, 23776223)),
+    # Modes permuted to kij by sort_frostt.py, so the short mode leads: see MODE_ORDER.
+    ("fb-m", "fb-m_sorted_kij", (166, 23344784, 23344784)),
 ]
 
 # Where .npz result files and plots are written.
