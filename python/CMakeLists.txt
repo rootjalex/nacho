@@ -67,7 +67,13 @@ set(NACHO_RUNTIME_SRC
     "${NACHO_RUNTIME_DIR}/cuda_utils/cuda_utils.cu"
 )
 
-set(NACHO_BASELINE_SRC)
+# Hand-written comparison kernels. Independent of generated/, so they build whatever
+# subset of kernels the compiler last emitted.
+set(NACHO_BASELINE_SRC
+    "${NACHO_BASELINES_DIR}/csr_add/csr_add_baselines_nb.cpp"
+    "${NACHO_BASELINES_DIR}/csr_add/csr_add_taco.cu"
+    "${NACHO_BASELINES_DIR}/csr_add/csr_add_cusparse.cu"
+)
 
 nanobind_add_module(
   nacho_ext

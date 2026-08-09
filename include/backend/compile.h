@@ -28,6 +28,10 @@ namespace backend {
             std::vector<LoopNum> reductionLoops;
             bool is_scatter_reduction = false;
 
+        // When false, the kernel partitions work once over the whole loop nest instead of
+        // re-partitioning at every sparse intersection level. Set before lower_cin().
+        bool recursive_partitioning = true;
+
             StitchAndGenerate* stitch_and_generate;
 
             CINLowerer(CIN cin, std::string name, bool is_cpu = false);

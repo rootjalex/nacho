@@ -121,7 +121,13 @@ namespace backend {
 
         auto forall_list = get_forall_list();
 
-        std::vector<LoopNum> sparse_intersection_levels = get_all_sparse_intersection_levels(cin);
+        // Without recursive partitioning the list collapses to a single span covering the
+        // whole loop nest, so one partition/precompute/compute phase is emitted rather
+        // than one per sparse intersection.
+        std::vector<LoopNum> sparse_intersection_levels;
+        if (recursive_partitioning) {
+            sparse_intersection_levels = get_all_sparse_intersection_levels(cin);
+        }
 
         sparse_intersection_levels.insert(sparse_intersection_levels.begin(), BEFORE_FIRST_LOOP);
         if(sparse_intersection_levels.back()!=LoopNum(loop_order.size()-1)) {

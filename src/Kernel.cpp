@@ -83,6 +83,11 @@ Kernel &Kernel::bindings(bool enabled) {
     return *this;
 }
 
+Kernel &Kernel::recursive_partitioning(bool enabled) {
+    recursive_partitioning_ = enabled;
+    return *this;
+}
+
 std::string Kernel::python_name_for(Target target) const {
     for (const auto &[override_target, override_name] : python_names_) {
         if (override_target == target) {
@@ -101,6 +106,7 @@ void Kernel::emit() {
     for (Target target : targets_) {
         const bool is_cpu = target == Target::CPU;
         backend::CINLowerer lowerer(compile_to_cin(expr_, result_name_), name_, is_cpu);
+        lowerer.recursive_partitioning = recursive_partitioning_;
         lowerer.lower_cin();
 
         if (bindings_) {

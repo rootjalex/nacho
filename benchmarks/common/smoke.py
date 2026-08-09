@@ -2,13 +2,18 @@
 
 Run this after rebuilding the extension and before any timing work:
 
-    python benchmarks/smoke.py
+    python benchmarks/common/smoke.py
 
 Kernels absent from the build are reported as skipped rather than failing, so this works
 whatever subset `./build/compiler --kernels ...` last emitted.
 """
 
 import sys
+from pathlib import Path
+
+# Entry-point scripts sit in benchmarks/, so that directory is already importable for
+# them. This one runs from inside common/, so it puts benchmarks/ on the path itself.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import numpy as np
 import scipy.sparse as sp
@@ -17,7 +22,7 @@ import torch
 import nacho
 
 import config
-import parser
+from common import parser
 
 RNG = np.random.default_rng(0)
 ROWS, COLS, DENSITY = 200, 180, 0.05
@@ -153,6 +158,13 @@ def case_dcsr_mul(device):
     return from_dcsr_result(result, a.shape), a.multiply(b)
 
 
+def case_dcsr_mul_without_recursive_partitioning(device):
+    a, b = random_csr(), random_csr()
+    result = kernel("dcsr_mul_without_recursive_partitioning", device)(
+        parser.to_dcsr(as_torch_csr(a), device), parser.to_dcsr(as_torch_csr(b), device))
+    return from_dcsr_result(result, a.shape), a.multiply(b)
+
+
 def case_coo_add(device):
     a, b = random_csr(), random_csr()
     to_coo = lambda m: parser.to_coo(as_torch_csr(m).to_sparse_coo(), device)
@@ -187,6 +199,8 @@ CASES = [
     ("csr_mul", case_csr_mul),
     ("dcsr_add", case_dcsr_add),
     ("dcsr_mul", case_dcsr_mul),
+    ("dcsr_mul_without_recursive_partitioning",
+     case_dcsr_mul_without_recursive_partitioning),
     ("coo_add", case_coo_add),
     ("coo_mul", case_coo_mul),
     ("csf_add", case_csf_add),

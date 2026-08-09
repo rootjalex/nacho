@@ -1,6 +1,13 @@
 #include "register_runtime.h"
 
+#include "baseline_types.h"
 #include "io/parse.h"
+
+namespace nacho {
+namespace baselines {
+void register_csr_add_baselines(nb::module_ &m);
+} // namespace baselines
+} // namespace nacho
 
 namespace nacho {
 namespace runtime {
@@ -33,6 +40,8 @@ void register_io(nb::module_ &m) {
 
 void register_runtime(nb::module_ &m) {
     register_io(m);
+    baselines::register_baseline_types(m);
+    baselines::register_csr_add_baselines(m);
 }
 
 } // namespace runtime

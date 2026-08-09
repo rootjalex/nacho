@@ -70,16 +70,28 @@ c = nacho.gpu_csr_mul_f32(a, b)          # nacho.CSR_gpu, launch geometry option
 
 # Testing
 
-`benchmarks/smoke.py` checks each generated kernel on both devices against scipy on small
-random inputs; run it after rebuilding and before any timing work. Kernels missing from the
-current build are skipped rather than failing.
+`benchmarks/common/smoke.py` checks each generated kernel on both devices against scipy on
+small random inputs; run it after rebuilding and before any timing work. Kernels missing
+from the current build are skipped rather than failing.
 
 ```bash
-python benchmarks/smoke.py
+python benchmarks/common/smoke.py
 ```
 
-Per-machine paths (matrix directory, results directory) live in `benchmarks/config.py`
-and can be overridden with `NACHO_`-prefixed environment variables.
+# Benchmarks
+
+Each script directly in `benchmarks/` is a standalone entry point:
+
+```bash
+python benchmarks/csr_add.py   --device cpu --start 0 --end 1600   # vs PyTorch
+python benchmarks/csr_mul.py   --device cpu --start 0 --end 1600   # vs PyTorch
+python benchmarks/csr_add_3.py --device cpu --start 0 --end 1600   # fused vs unfused
+python benchmarks/dcsr_lb_comparison.py --device cpu               # partitioning schemes
+```
+
+Shared helpers — matrix loading, plotting, the smoke test — live in `benchmarks/common/`.
+Per-machine paths and iteration counts live in `benchmarks/config.py` and can be
+overridden with `NACHO_`-prefixed environment variables.
 
 ### Acknowledgements
 

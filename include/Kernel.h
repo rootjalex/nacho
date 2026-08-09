@@ -45,6 +45,11 @@ public:
     // Whether to generate nanobind bindings alongside the kernel. Defaults to true.
     Kernel &bindings(bool enabled);
 
+    // When disabled, work is partitioned once over the whole loop nest instead of being
+    // re-partitioned at every sparse intersection level. Defaults to enabled; turning it
+    // off gives a comparison point for what the recursive scheme buys.
+    Kernel &recursive_partitioning(bool enabled);
+
     // Generates the kernel for each target. A no-op if this kernel was excluded by
     // set_selected_kernels().
     void emit();
@@ -58,6 +63,7 @@ private:
     std::string result_name_ = "Z";
     std::vector<std::pair<Target, std::string>> python_names_;
     bool bindings_ = true;
+    bool recursive_partitioning_ = true;
 };
 
 // Restricts which kernels emit(). An empty list means "all", which is the default.
