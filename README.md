@@ -97,19 +97,16 @@ export NACHO_FROSTT_DIR=/path/to/frostt             # .tns files, frostt_tensors
 ### Fetching the datasets
 
 `benchmarks/datasets/` holds the scripts that populate those two directories. They write
-to the paths above, so export the variables first. Both downloaders skip what is already
-on disk and can be re-run after an interrupted transfer.
+to the paths above, so export the variables first.
 
 ### SuiteSparse dataset
 
 ```bash
-python benchmarks/datasets/download_suitesparse.py
-```
-
-```bash
 cd "$NACHO_SUITESPARSE_DIR"
+bash <nacho>/benchmarks/datasets/download_suitesparse_reals.sh
 find . -name '*.tar.gz' -print0 | xargs -0 -P 8 -n 1 tar -xzf
 ```
+
 ### Frostt Tensor Dataset
 
 ```bash
@@ -117,7 +114,8 @@ python benchmarks/datasets/download_frostt.py --all
 python benchmarks/datasets/sort_frostt.py --all
 ```
 
-The second script is dedups and sorts the downloaded frostt tensor
+The second script dedups and sorts the downloaded frostt tensors, which the kernels
+require.
 
 ### Running
 
