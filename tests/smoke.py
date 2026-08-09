@@ -2,18 +2,13 @@
 
 Run this after rebuilding the extension and before any timing work:
 
-    python benchmarks/common/smoke.py
+    python tests/smoke.py
 
 Kernels absent from the build are reported as skipped rather than failing, so this works
 whatever subset `./build/compiler --kernels ...` last emitted.
 """
 
 import sys
-from pathlib import Path
-
-# Entry-point scripts sit in benchmarks/, so that directory is already importable for
-# them. This one runs from inside common/, so it puts benchmarks/ on the path itself.
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import numpy as np
 import scipy.sparse as sp
@@ -21,8 +16,6 @@ import torch
 
 import nacho
 
-import config
-from common import parser
 
 RNG = np.random.default_rng(0)
 ROWS, COLS, DENSITY = 200, 180, 0.05
@@ -89,6 +82,15 @@ def from_coo_result(result):
     ).tocsr()
 
 
+def from_coo3_result(result):
+    """nacho COO3_cpu / COO3_gpu -> {(i, j, k): value}, since scipy has no 3D sparse type."""
+    return {
+        (int(i), int(j), int(k)): float(v)
+        for i, j, k, v in zip(buffer(result.dim_i_indices), buffer(result.dim_j_indices),
+                              buffer(result.dim_k_indices), buffer(result.values))
+    }
+
+
 def from_csf3_result(result):
     """nacho CSF3_cpu / CSF3_gpu -> {(i, j, k): value}, since scipy has no 3D sparse type."""
     dim_i_indices = buffer(result.dim_i_indices)
@@ -125,72 +127,98 @@ def matches(actual, expected):
 def case_csr_add(device):
     a, b = random_csr(), random_csr()
     result = kernel("csr_add", device)(
-        parser.to_csr(as_torch_csr(a), device), parser.to_csr(as_torch_csr(b), device))
+        nacho.to_csr(as_torch_csr(a), device), nacho.to_csr(as_torch_csr(b), device))
     return from_csr_result(result), a + b
 
 
 def case_csr_add_3(device):
     a, b, c = random_csr(), random_csr(), random_csr()
     result = kernel("csr_add_3", device)(
-        parser.to_csr(as_torch_csr(a), device), parser.to_csr(as_torch_csr(b), device),
-        parser.to_csr(as_torch_csr(c), device))
+        nacho.to_csr(as_torch_csr(a), device), nacho.to_csr(as_torch_csr(b), device),
+        nacho.to_csr(as_torch_csr(c), device))
     return from_csr_result(result), a + b + c
 
 
 def case_csr_mul(device):
     a, b = random_csr(), random_csr()
     result = kernel("csr_mul", device)(
-        parser.to_csr(as_torch_csr(a), device), parser.to_csr(as_torch_csr(b), device))
+        nacho.to_csr(as_torch_csr(a), device), nacho.to_csr(as_torch_csr(b), device))
     return from_csr_result(result), a.multiply(b)
 
 
 def case_dcsr_add(device):
     a, b = random_csr(), random_csr()
     result = kernel("dcsr_add", device)(
-        parser.to_dcsr(as_torch_csr(a), device), parser.to_dcsr(as_torch_csr(b), device))
+        nacho.to_dcsr(as_torch_csr(a), device), nacho.to_dcsr(as_torch_csr(b), device))
     return from_dcsr_result(result, a.shape), a + b
 
 
 def case_dcsr_mul(device):
     a, b = random_csr(), random_csr()
     result = kernel("dcsr_mul", device)(
-        parser.to_dcsr(as_torch_csr(a), device), parser.to_dcsr(as_torch_csr(b), device))
+        nacho.to_dcsr(as_torch_csr(a), device), nacho.to_dcsr(as_torch_csr(b), device))
     return from_dcsr_result(result, a.shape), a.multiply(b)
 
 
 def case_dcsr_mul_without_recursive_partitioning(device):
     a, b = random_csr(), random_csr()
     result = kernel("dcsr_mul_without_recursive_partitioning", device)(
-        parser.to_dcsr(as_torch_csr(a), device), parser.to_dcsr(as_torch_csr(b), device))
+        nacho.to_dcsr(as_torch_csr(a), device), nacho.to_dcsr(as_torch_csr(b), device))
     return from_dcsr_result(result, a.shape), a.multiply(b)
 
 
 def case_coo_add(device):
     a, b = random_csr(), random_csr()
-    to_coo = lambda m: parser.to_coo(as_torch_csr(m).to_sparse_coo(), device)
+    to_coo = lambda m: nacho.to_coo(as_torch_csr(m).to_sparse_coo(), device)
     result = kernel("coo_add", device)(to_coo(a), to_coo(b))
     return from_coo_result(result), a + b
 
 
 def case_coo_mul(device):
     a, b = random_csr(), random_csr()
-    to_coo = lambda m: parser.to_coo(as_torch_csr(m).to_sparse_coo(), device)
+    to_coo = lambda m: nacho.to_coo(as_torch_csr(m).to_sparse_coo(), device)
     result = kernel("coo_mul", device)(to_coo(a), to_coo(b))
     return from_coo_result(result), a.multiply(b)
+
+
+def case_coo_csr_add(device):
+    """Mixed operands: a CSR left-hand side and a COO right-hand side, giving CSR."""
+    a, b = random_csr(), random_csr()
+    result = kernel("coo_csr_add", device)(
+        nacho.to_csr(as_torch_csr(a), device),
+        nacho.to_coo(as_torch_csr(b).to_sparse_coo(), device))
+    return from_csr_result(result), a + b
+
+
+def _expected_sum(a_coordinates, a_values, b_coordinates, b_values):
+    """The union of two coordinate lists, summing values where they coincide."""
+    expected = {tuple(int(x) for x in c): float(v) for c, v in zip(a_coordinates, a_values)}
+    for coordinate, value in zip(b_coordinates, b_values):
+        key = tuple(int(x) for x in coordinate)
+        expected[key] = expected.get(key, 0.0) + float(value)
+    return expected
 
 
 def case_csf_add(device):
     a_coordinates, a_values = random_coo_3d()
     b_coordinates, b_values = random_coo_3d()
     result = kernel("csf_add", device)(
-        parser.to_csf3(a_coordinates, a_values, SHAPE_3D, device),
-        parser.to_csf3(b_coordinates, b_values, SHAPE_3D, device))
+        nacho.to_csf3(a_coordinates, a_values, SHAPE_3D, device),
+        nacho.to_csf3(b_coordinates, b_values, SHAPE_3D, device))
 
-    expected = {tuple(int(x) for x in c): float(v) for c, v in zip(a_coordinates, a_values)}
-    for coordinate, value in zip(b_coordinates, b_values):
-        key = tuple(int(x) for x in coordinate)
-        expected[key] = expected.get(key, 0.0) + float(value)
-    return from_csf3_result(result), expected
+    return from_csf3_result(result), _expected_sum(a_coordinates, a_values,
+                                                   b_coordinates, b_values)
+
+
+def case_coo3d_add(device):
+    a_coordinates, a_values = random_coo_3d()
+    b_coordinates, b_values = random_coo_3d()
+    result = kernel("coo3d_add", device)(
+        nacho.to_coo3(a_coordinates, a_values, SHAPE_3D, device),
+        nacho.to_coo3(b_coordinates, b_values, SHAPE_3D, device))
+
+    return from_coo3_result(result), _expected_sum(a_coordinates, a_values,
+                                                   b_coordinates, b_values)
 
 
 CASES = [
@@ -203,7 +231,9 @@ CASES = [
      case_dcsr_mul_without_recursive_partitioning),
     ("coo_add", case_coo_add),
     ("coo_mul", case_coo_mul),
+    ("coo_csr_add", case_coo_csr_add),
     ("csf_add", case_csf_add),
+    ("coo3d_add", case_coo3d_add),
 ]
 
 DEVICES = ["cpu", "cuda"]

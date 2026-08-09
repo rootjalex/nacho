@@ -13,53 +13,14 @@ partitioning of work between threads, which is what Taco generates.
     python benchmarks/csr_add.py --device cpu --start 0 --end 1600
 """
 
-import argparse
-import gc
-import time
-
-import numpy as np
 import torch
 
 import nacho
 
-import config
 from common.compare import csr_equal, csr_failure_reason, summarize
-from common.parser import matrix_list, parse_matrix, to_csr
+from common.parser import matrix_list, parse_matrix
 from common.plotter import plot_scatter
-
-
-def flush_gpu_state():
-    gc.collect()
-    torch.cuda.empty_cache()
-    torch.empty(int(40 * (1024 ** 2)), dtype=torch.int8, device="cuda").zero_()
-    torch.cuda.synchronize()
-
-
-def _gpu_time(fn):
-    """Run fn() config.ITER_COUNT times; return (last result, trimmed mean ms)."""
-    torch.cuda.synchronize()
-    times = []
-    result = None
-    for _ in range(config.ITER_COUNT):
-        start = torch.cuda.Event(enable_timing=True)
-        end = torch.cuda.Event(enable_timing=True, blocking=True)
-        start.record()
-        result = fn()
-        end.record()
-        torch.cuda.synchronize()
-        times.append(start.elapsed_time(end))
-    return result, float(np.sort(np.array(times))[config.TRIM:-config.TRIM].mean())
-
-
-def _cpu_time(fn):
-    """Run fn() config.ITER_COUNT times; return (last result, trimmed mean ms)."""
-    times = []
-    result = None
-    for _ in range(config.ITER_COUNT):
-        started = time.perf_counter()
-        result = fn()
-        times.append((time.perf_counter() - started) * 1000)
-    return result, float(np.sort(np.array(times))[config.TRIM:-config.TRIM].mean())
+from common.timing import flush_gpu_state, parse_sweep_args, timer_for
 
 
 def to_int32_if_safe(tensor):
@@ -96,7 +57,7 @@ def benchmark_csr_add(start, end, device="cpu", save_and_plot=True):
     on_gpu = device == "cuda"
     kernel = nacho.gpu_csr_add_f32 if on_gpu else nacho.cpu_csr_add_f32
     taco_kernel = nacho.gpu_csr_add_taco_f32 if on_gpu else nacho.cpu_csr_add_taco_f32
-    measure = _gpu_time if on_gpu else _cpu_time
+    measure = timer_for(device)
 
     df = matrix_list()
     nnz_totals, nacho_runtimes, failed = [], [], []
@@ -112,8 +73,8 @@ def benchmark_csr_add(start, end, device="cpu", save_and_plot=True):
 
         A_torch = _clip_to_common_shape(A_raw, rows, cols, to_cpu=not on_gpu)
         B_torch = _clip_to_common_shape(B_raw, rows, cols, to_cpu=not on_gpu)
-        A_csr = to_csr(A_torch, device)
-        B_csr = to_csr(B_torch, device)
+        A_csr = nacho.to_csr(A_torch, device)
+        B_csr = nacho.to_csr(B_torch, device)
         A_base = _to_baseline_csr(A_torch, device)
         B_base = _to_baseline_csr(B_torch, device)
 
@@ -173,18 +134,8 @@ def benchmark_csr_add(start, end, device="cpu", save_and_plot=True):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--device", choices=["cpu", "cuda", "both"], default="both",
-                        help="which device's benchmark to run (default: both)")
-    parser.add_argument("--start", type=int, default=0,
-                        help="first index into the matrix list (default: 0)")
-    parser.add_argument("--end", type=int, default=1600,
-                        help="one past the last index into the matrix list (default: 1600)")
-    parser.add_argument("--no-plot", action="store_true",
-                        help="print results without writing figures or .npz files")
-    args = parser.parse_args()
-
-    for device in (["cpu", "cuda"] if args.device == "both" else [args.device]):
+    args = parse_sweep_args(__doc__.splitlines()[0])
+    for device in args.devices:
         benchmark_csr_add(args.start, args.end, device=device,
                           save_and_plot=not args.no_plot)
 

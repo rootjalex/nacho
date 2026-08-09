@@ -8,3 +8,4 @@ scikit-build-core>=0.10
 numpy
 scipy
 pandas
+matplotlib

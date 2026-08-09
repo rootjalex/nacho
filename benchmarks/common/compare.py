@@ -52,9 +52,24 @@ def csr_result_to_coo(result):
     return rows[kept], result.dim_j_indices[kept], result.values[kept]
 
 
-def coo_equal(result, reference):
+def csr_as_coo_equal(result, reference):
     """Whether a generated CSR result matches a coalesced torch sparse COO tensor."""
     rows, cols, values = csr_result_to_coo(result)
+    return (torch.equal(reference.indices()[0], rows) and
+            torch.equal(reference.indices()[1], cols) and
+            torch.equal(reference.values(), values))
+
+
+def coo_equal(result, reference, prune=False):
+    """Whether a generated COO result matches a coalesced torch sparse COO tensor.
+
+    prune drops stored zeros from the result first, which an elementwise product needs:
+    nacho stores a position wherever both operands were non-zero, torch does not.
+    """
+    rows, cols, values = result.dim_i_indices, result.dim_j_indices, result.values
+    if prune:
+        kept = values != 0
+        rows, cols, values = rows[kept], cols[kept], values[kept]
     return (torch.equal(reference.indices()[0], rows) and
             torch.equal(reference.indices()[1], cols) and
             torch.equal(reference.values(), values))

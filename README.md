@@ -70,28 +70,52 @@ c = nacho.gpu_csr_mul_f32(a, b)          # nacho.CSR_gpu, launch geometry option
 
 # Testing
 
-`benchmarks/common/smoke.py` checks each generated kernel on both devices against scipy on
-small random inputs; run it after rebuilding and before any timing work. Kernels missing
-from the current build are skipped rather than failing.
+`tests/smoke.py` checks each generated kernel on both devices against scipy on small
+random inputs; run it after rebuilding and before any timing work. Kernels missing from
+the current build are skipped rather than failing.
 
 ```bash
-python benchmarks/common/smoke.py
+python tests/smoke.py
 ```
 
 # Benchmarks
 
-Each script directly in `benchmarks/` is a standalone entry point:
+The benchmarks read their inputs from two datasets, neither of which lives in this repo.
+Set both before running anything:
 
 ```bash
-python benchmarks/csr_add.py   --device cpu --start 0 --end 1600   # vs PyTorch
-python benchmarks/csr_mul.py   --device cpu --start 0 --end 1600   # vs PyTorch
-python benchmarks/csr_add_3.py --device cpu --start 0 --end 1600   # fused vs unfused
-python benchmarks/dcsr_lb_comparison.py --device cpu               # partitioning schemes
+export NACHO_SUITESPARSE_DIR=/path/to/suitesparse   # .mtx files, every 2-D benchmark
+export NACHO_FROSTT_DIR=/path/to/frostt             # .tns files, frostt_tensors_add.py
 ```
 
-Shared helpers — matrix loading, plotting, the smoke test — live in `benchmarks/common/`.
-Per-machine paths and iteration counts live in `benchmarks/config.py` and can be
-overridden with `NACHO_`-prefixed environment variables.
+FROSTT tensors must have lexicographically sorted coordinates and no duplicate
+coordinates.
+
+Each script directly in `benchmarks/` is then a standalone entry point:
+
+```bash
+python benchmarks/csr_add.py     --device cpu --start 0 --end 1600  # vs cuSPARSE/Taco/MKL
+python benchmarks/csr_mul.py     --device cpu --start 0 --end 1600  # vs PyTorch
+python benchmarks/coo_add.py     --device cpu --start 0 --end 1600  # vs PyTorch
+python benchmarks/coo_mul.py     --device cpu --start 0 --end 1600  # vs PyTorch
+python benchmarks/coo_csr_add.py --device cpu --start 0 --end 1600  # vs PyTorch
+python benchmarks/csr_add_3.py   --device cpu --start 0 --end 1600  # fused vs unfused
+python benchmarks/frostt_tensors_add.py --device cpu                # CSF3 vs COO3D vs torch
+python benchmarks/dcsr_lb_comparison.py --device cpu                # partitioning schemes
+```
+
+Shared helpers — matrix loading, plotting, timing, result comparison — live in
+`benchmarks/common/`. Every setting in `benchmarks/config.py` — dataset paths, which FROSTT
+tensors to run, iteration counts, output directory — can be overridden by an environment
+variable of the same name prefixed with `NACHO_`.
+
+Building a nacho tensor from a torch one is part of the package rather than the benchmark
+harness, so it works anywhere:
+
+```python
+import nacho
+A = nacho.to_csr(torch_csr, device="cuda")   # also to_dcsr, to_coo, to_coo3, to_csf3
+```
 
 ### Acknowledgements
 

@@ -131,6 +131,9 @@ void test() {
 
     Kernel("csf_add").expr(a_csf_ijk + b_csf_ijk).emit();
 
+    // The same 3D addition over a flattened coordinate list rather than a level tree.
+    Kernel("coo3d_add").expr(a_coo_ijk + b_coo_ijk).emit();
+
     // TODO(atharvac) Reduction kernels. The Accumulate path splits the result into
     // <Z>_temp and <Z>, and the entry point exposes only the former, so there is nothing
     // for the bindings to return yet.

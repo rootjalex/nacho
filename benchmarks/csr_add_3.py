@@ -7,69 +7,31 @@ the generated csr_add twice. PyTorch is used only as the correctness reference.
     python benchmarks/csr_add_3.py --device cpu --start 0 --end 1600
 """
 
-import argparse
-import gc
-import time as _time
-
 import numpy as np
 import torch
 
 import nacho
 
-import config
 from common.compare import csr_equal, csr_failure_reason
-from common.parser import matrix_list, parse_matrix, to_csr
+from common.parser import matrix_list, parse_matrix
 from common.plotter import plot, plot_scatter
-
-
-def flush_gpu_state():
-    gc.collect()
-    torch.cuda.empty_cache()
-    torch.empty(int(40 * (1024 ** 2)), dtype=torch.int8, device="cuda").zero_()
-    torch.cuda.synchronize()
-
-
-def _gpu_time(fn):
-    """Run fn() config.ITER_COUNT times; return (last result, trimmed mean ms)."""
-    torch.cuda.synchronize()
-    times = []
-    result = None
-    for _ in range(config.ITER_COUNT):
-        start = torch.cuda.Event(enable_timing=True)
-        end = torch.cuda.Event(enable_timing=True, blocking=True)
-        start.record()
-        result = fn()
-        end.record()
-        torch.cuda.synchronize()
-        times.append(start.elapsed_time(end))
-    return result, float(np.sort(np.array(times))[config.TRIM:-config.TRIM].mean())
-
-
-def _cpu_time(fn):
-    """Run fn() config.ITER_COUNT times; return (last result, trimmed mean ms)."""
-    times = []
-    result = None
-    for _ in range(config.ITER_COUNT):
-        started = _time.perf_counter()
-        result = fn()
-        times.append((_time.perf_counter() - started) * 1000)
-    return result, float(np.sort(np.array(times))[config.TRIM:-config.TRIM].mean())
+from common.timing import cpu_time, flush_gpu_state, gpu_time, parse_sweep_args
 
 
 def time_fused_gpu(A, B, C):
-    return _gpu_time(lambda: nacho.gpu_csr_add_3_f32(A, B, C))
+    return gpu_time(lambda: nacho.gpu_csr_add_3_f32(A, B, C))
 
 
 def time_unfused_gpu(A, B, C):
-    return _gpu_time(lambda: nacho.gpu_csr_add_f32(nacho.gpu_csr_add_f32(A, B), C))
+    return gpu_time(lambda: nacho.gpu_csr_add_f32(nacho.gpu_csr_add_f32(A, B), C))
 
 
 def time_fused_cpu(A, B, C):
-    return _cpu_time(lambda: nacho.cpu_csr_add_3_f32(A, B, C))
+    return cpu_time(lambda: nacho.cpu_csr_add_3_f32(A, B, C))
 
 
 def time_unfused_cpu(A, B, C):
-    return _cpu_time(lambda: nacho.cpu_csr_add_f32(nacho.cpu_csr_add_f32(A, B), C))
+    return cpu_time(lambda: nacho.cpu_csr_add_f32(nacho.cpu_csr_add_f32(A, B), C))
 
 
 def to_int32_if_safe(tensor):
@@ -133,9 +95,9 @@ def benchmark_csr_add_3_gpu(start, end, save_and_plot=True):
         B_torch = _clip_to_common_shape(B, rows, cols)
         C_torch = _clip_to_common_shape(C, rows, cols)
 
-        A_csr = to_csr(A_torch, "cuda")
-        B_csr = to_csr(B_torch, "cuda")
-        C_csr = to_csr(C_torch, "cuda")
+        A_csr = nacho.to_csr(A_torch, "cuda")
+        B_csr = nacho.to_csr(B_torch, "cuda")
+        C_csr = nacho.to_csr(C_torch, "cuda")
 
         nnz_a, nnz_b, nnz_c = (A_csr.values.numel(), B_csr.values.numel(), C_csr.values.numel())
         print(f"  M={rows}  N={cols}  nnzA={nnz_a}  nnzB={nnz_b}  nnzC={nnz_c}")
@@ -207,9 +169,9 @@ def benchmark_csr_add_3_cpu(start, end, save_and_plot=True):
         B_torch = _to_cpu_torch(B)
         C_torch = _to_cpu_torch(C)
 
-        A_csr = to_csr(A_torch, "cpu")
-        B_csr = to_csr(B_torch, "cpu")
-        C_csr = to_csr(C_torch, "cpu")
+        A_csr = nacho.to_csr(A_torch, "cpu")
+        B_csr = nacho.to_csr(B_torch, "cpu")
+        C_csr = nacho.to_csr(C_torch, "cpu")
 
         nnz_a, nnz_b, nnz_c = (A_csr.values.numel(), B_csr.values.numel(), C_csr.values.numel())
         print(f"  M={rows}  N={cols}  nnzA={nnz_a}  nnzB={nnz_b}  nnzC={nnz_c}")
@@ -253,16 +215,7 @@ def benchmark_csr_add_3_cpu(start, end, save_and_plot=True):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--device", choices=["cpu", "cuda", "both"], default="both",
-                        help="which device's benchmark to run (default: both)")
-    parser.add_argument("--start", type=int, default=0,
-                        help="first index into the matrix list (default: 0)")
-    parser.add_argument("--end", type=int, default=1600,
-                        help="one past the last index into the matrix list (default: 1600)")
-    parser.add_argument("--no-plot", action="store_true",
-                        help="print results without writing figures or .npz files")
-    args = parser.parse_args()
+    args = parse_sweep_args(__doc__.splitlines()[0])
 
     if args.device in ("cpu", "both"):
         benchmark_csr_add_3_cpu(args.start, args.end, save_and_plot=not args.no_plot)
