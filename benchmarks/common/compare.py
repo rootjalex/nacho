@@ -58,14 +58,36 @@ def csr_allclose(result, reference, tolerance=1e-4):
     A contraction sums a coordinate's contributions in whatever order the reduction
     happens to visit them, so values agree only approximately even when the sparsity
     structure is identical.
+
+    Each entry is judged against the largest magnitude in its row rather than against
+    itself. An entry can be the sum of terms orders of magnitude larger than the entry:
+    where those cancel, float32 leaves a residue set by the terms, and comparing it to a
+    near-zero result reports a total mismatch for what is one ulp of the summands.
+
+    A contraction can also cancel exactly, and the two sides disagree on whether to keep
+    the position: torch stores the zero, nacho drops it. Both are pruned first so the
+    comparison is over the entries that carry a value.
     """
-    if not (torch.equal(reference.crow_indices(), result.dim_j_offsets) and
-            torch.equal(reference.col_indices(), result.dim_j_indices)):
+    rows, cols, values = csr_result_to_coo(result)
+
+    expected_coo = reference.to_sparse_coo().coalesce()
+    kept = expected_coo.values() != 0
+    expected_rows = expected_coo.indices()[0][kept].to(rows.dtype)
+    expected_cols = expected_coo.indices()[1][kept].to(cols.dtype)
+    expected = expected_coo.values()[kept]
+
+    if not (torch.equal(expected_rows, rows) and torch.equal(expected_cols, cols)):
         return False
-    if reference.values().numel() == 0:
+    if expected.numel() == 0:
         return True
-    relative = ((reference.values() - result.values).abs() /
-                reference.values().abs().clamp_min(1))
+
+    row_count = reference.crow_indices().numel() - 1
+    row_of = expected_rows.to(torch.int64)
+    row_magnitude = torch.zeros(row_count, device=expected.device, dtype=expected.dtype)
+    row_magnitude.scatter_reduce_(0, row_of, expected.abs(), reduce="amax",
+                                  include_self=False)
+
+    relative = (expected - values).abs() / row_magnitude[row_of].clamp_min(1)
     return bool(relative.max() < tolerance)
 
 

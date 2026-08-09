@@ -24,6 +24,13 @@ from common.plotter import plot_scatter
 from common.timing import flush_gpu_state, gpu_time, launch_args, parse_sweep_args
 
 
+# Products whose intermediate does not fit on the device. They are listed rather than
+# detected because a product that runs out cannot release what it already allocated, so
+# every later iteration would see less memory than the one before.
+SKIP_INDICES = frozenset({1057, 1063, 1094, 1100, 1101, 1102, 1103, 1104, 1105,
+                          1164, 1213, 1218, 1246, 1247, 1273, 1292})
+
+
 def _time_product(label, run):
     """(result, milliseconds), or (None, None) if the product could not be computed."""
     try:
@@ -39,7 +46,9 @@ def _measure_pair(A_torch, B_torch, launch):
     B_csr = nacho.to_csr(B_torch, "cuda")
 
     result, nacho_ms = _time_product("nacho", lambda: nacho.gpu_spgemm_f32(A_csr, B_csr, *launch))
+    flush_gpu_state()
     reference, cusparse_ms = _time_product("cuSPARSE", lambda: torch.sparse.mm(A_torch, B_torch))
+    flush_gpu_state()
 
     correct = True
     if result is not None and reference is not None:
@@ -48,6 +57,7 @@ def _measure_pair(A_torch, B_torch, launch):
         print(f"  cuSPARSE  {cusparse_ms:.4f} ms   speedup={cusparse_ms/nacho_ms:.3f}x")
 
     del A_csr, B_csr, result, reference
+    flush_gpu_state()
     return nacho_ms, cusparse_ms, correct
 
 
@@ -67,8 +77,12 @@ def benchmark_spgemm(start, end, save_and_plot=True):
             failed.append(index)
 
     for i in range(start + 1, end):
-        flush_gpu_state()
         print(f"\nIteration {i}")
+        if i in SKIP_INDICES:
+            print("  skipped, intermediate does not fit on the device")
+            continue
+
+        flush_gpu_state()
         A = parse_matrix(df.iloc[i - 1]["name"])
         B = parse_matrix(df.iloc[i]["name"])
 

@@ -27,6 +27,13 @@ from common.plotter import plot_scatter
 from common.timing import flush_gpu_state, gpu_time, launch_args, parse_sweep_args
 
 
+# Products whose intermediate does not fit on the device. They are listed rather than
+# detected because a product that runs out cannot release what it already allocated, so
+# every later iteration would see less memory than the one before.
+SKIP_INDICES = frozenset({1057, 1063, 1094, 1100, 1101, 1102, 1103, 1104, 1105,
+                          1164, 1213, 1218, 1246, 1247, 1273, 1292})
+
+
 def _time_product(label, run):
     """(result, milliseconds), or (None, None) if the product could not be computed."""
     try:
@@ -91,8 +98,12 @@ def benchmark_sssmm(start, end, save_and_plot=True):
             failed.append(index)
 
     for i in range(start + 1, end - 1):
-        flush_gpu_state()
         print(f"\nIteration {i}")
+        if i in SKIP_INDICES:
+            print("  skipped, intermediate does not fit on the device")
+            continue
+
+        flush_gpu_state()
         A = parse_matrix(df.iloc[i - 1]["name"])
         B = parse_matrix(df.iloc[i]["name"])
         C = parse_matrix(df.iloc[i + 1]["name"])
