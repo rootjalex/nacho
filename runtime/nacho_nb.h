@@ -33,9 +33,16 @@ using ShapeTuple = nb::ndarray<nb::pytorch, int32_t, nb::shape<Rank>, nb::c_cont
 // Kernels hand back buffers they own: malloc'd on the CPU path, cudaMallocAsync'd on
 // the GPU path. These wrap such a buffer in an ndarray whose capsule frees it with the
 // matching deallocator, transferring ownership to Python.
+//
+// A kernel whose result is empty allocates zero bytes, and cudaMallocAsync answers that
+// with a null pointer. There is nothing to own in that case, and a capsule cannot hold
+// null, so the array is handed over unowned.
 template <typename T>
 ArrayCPU<T> adopt_cpu(T *data, size_t count) {
     size_t shape[1] = {count};
+    if (data == nullptr) {
+        return ArrayCPU<T>(data, 1, shape, nb::handle(), nullptr, nb::dtype<T>(), nb::device::cpu::value);
+    }
     nb::capsule owner(data, [](void *p) noexcept { std::free(p); });
     return ArrayCPU<T>(data, 1, shape, owner, nullptr, nb::dtype<T>(), nb::device::cpu::value);
 }
@@ -43,6 +50,9 @@ ArrayCPU<T> adopt_cpu(T *data, size_t count) {
 template <typename T>
 ArrayGPU<T> adopt_gpu(T *data, size_t count) {
     size_t shape[1] = {count};
+    if (data == nullptr) {
+        return ArrayGPU<T>(data, 1, shape, nb::handle(), nullptr, nb::dtype<T>(), nb::device::cuda::value);
+    }
     nb::capsule owner(data, cudaFreeWrapper);
     return ArrayGPU<T>(data, 1, shape, owner, nullptr, nb::dtype<T>(), nb::device::cuda::value);
 }

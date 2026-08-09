@@ -15,15 +15,18 @@ import nacho
 from common.compare import csr_equal, csr_failure_reason
 from common.parser import matrix_list, parse_matrix
 from common.plotter import plot, plot_scatter
-from common.timing import cpu_time, flush_gpu_state, gpu_time, parse_sweep_args
+from common.timing import cpu_time, flush_gpu_state, gpu_time, launch_args, parse_sweep_args
 
 
 def time_fused_gpu(A, B, C):
-    return gpu_time(lambda: nacho.gpu_csr_add_3_f32(A, B, C))
+    launch = launch_args("cuda")
+    return gpu_time(lambda: nacho.gpu_csr_add_3_f32(A, B, C, *launch))
 
 
 def time_unfused_gpu(A, B, C):
-    return gpu_time(lambda: nacho.gpu_csr_add_f32(nacho.gpu_csr_add_f32(A, B), C))
+    launch = launch_args("cuda")
+    return gpu_time(
+        lambda: nacho.gpu_csr_add_f32(nacho.gpu_csr_add_f32(A, B, *launch), C, *launch))
 
 
 def time_fused_cpu(A, B, C):

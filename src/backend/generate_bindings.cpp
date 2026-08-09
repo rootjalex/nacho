@@ -275,7 +275,7 @@ void generate_bindings(const BindingSpec &spec) {
         for (size_t i = 0; i < operands.size(); ++i) {
             out << (i ? "\"), nb::arg(\"" : "") << operands[i].first;
         }
-        out << "\"), nb::arg(\"num_blocks\") = 1024, nb::arg(\"threads_per_block\") = 256";
+        out << "\"), nb::arg(\"num_blocks\") = 256, nb::arg(\"threads_per_block\") = 256";
     }
     out << ");\n";
     out << "}\n";

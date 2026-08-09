@@ -42,6 +42,18 @@ def _results_path(name, suffix):
     return str(config.RESULTS_DIR / f"{name}{suffix}")
 
 
+# Vector formats the paper figures are written in: EPS for LaTeX, PDF to view directly.
+FIGURE_FORMATS = ("eps", "pdf")
+
+
+def _save_figure(name, **savefig_kwargs):
+    """Write the current figure once per entry in FIGURE_FORMATS."""
+    for extension in FIGURE_FORMATS:
+        path = _results_path(name, f".{extension}")
+        plt.savefig(path, format=extension, **savefig_kwargs)
+        print(f"Saved figure: {path}")
+
+
 def plot(nnz, manual, cusparse, pytorch, name):
     """Runtime against total nnz, on log-log axes."""
     np.savez(_results_path(name, ".npz"), nnz=nnz, manual=manual,
@@ -121,9 +133,8 @@ def plot_scatter(filename, x_data, x_label, nacho, cusparse=None, pytorch=None, 
                loc="upper left", markerscale=5)
     plt.grid(True)
 
-    plt.savefig(_results_path(filename, ".eps"), format="eps", bbox_inches="tight", pad_inches=.02)
+    _save_figure(filename, bbox_inches="tight", pad_inches=.02)
     plt.close()
-    print(f"Saved figure: {_results_path(filename, '.eps')}")
 
     compute_stats("cuSPARSE", cusparse, nacho)
     compute_stats("Intel MKL" if pytorch_as_mkl else "PyTorch", pytorch, nacho)

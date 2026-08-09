@@ -28,7 +28,7 @@ import torch
 import nacho
 
 import config
-from common.timing import cpu_time, gpu_time
+from common.timing import cpu_time, gpu_time, launch_args
 
 
 def _release(device):
@@ -83,6 +83,7 @@ def benchmark_frostt_add(device="cpu", save_and_plot=True):
     """Time csf_add, coo3d_add and PyTorch on each configured FROSTT tensor."""
     on_gpu = device == "cuda"
     measure = gpu_time if on_gpu else cpu_time
+    launch = launch_args(device)
     csf_kernel = nacho.gpu_csf_add_f32 if on_gpu else nacho.cpu_csf_add_f32
     coo3d_kernel = nacho.gpu_coo3d_add_f32 if on_gpu else nacho.cpu_coo3d_add_f32
 
@@ -99,14 +100,14 @@ def benchmark_frostt_add(device="cpu", save_and_plot=True):
 
         A_csf = nacho.to_csf3(a_coordinates, a_values, dims, device)
         B_csf = nacho.to_csf3(b_coordinates, b_values, dims, device)
-        _, csf_ms = measure(lambda: csf_kernel(A_csf, B_csf))
+        _, csf_ms = measure(lambda: csf_kernel(A_csf, B_csf, *launch))
         del A_csf, B_csf
         _release(device)
         print(f"  csf_add    {csf_ms:.2f} ms")
 
         A_coo3 = nacho.to_coo3(a_coordinates, a_values, dims, device)
         B_coo3 = nacho.to_coo3(b_coordinates, b_values, dims, device)
-        _, coo3d_ms = measure(lambda: coo3d_kernel(A_coo3, B_coo3))
+        _, coo3d_ms = measure(lambda: coo3d_kernel(A_coo3, B_coo3, *launch))
         del A_coo3, B_coo3
         _release(device)
         print(f"  coo3d_add  {coo3d_ms:.2f} ms")

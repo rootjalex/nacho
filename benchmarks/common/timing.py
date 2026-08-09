@@ -57,6 +57,16 @@ def timer_for(device):
     return gpu_time if device == "cuda" else cpu_time
 
 
+def launch_args(device):
+    """Trailing arguments the generated GPU kernels take, empty on the CPU.
+
+    Spliced into a call as `kernel(a, b, *launch_args(device))`. The generated wrappers
+    carry their own defaults, so passing these explicitly is what keeps every script on
+    the geometry in config rather than on whatever the compiler emitted.
+    """
+    return (config.NUM_BLOCKS, config.THREADS_PER_BLOCK) if device == "cuda" else ()
+
+
 def parse_sweep_args(description):
     """The argument set every matrix-pair sweep takes."""
     parser = argparse.ArgumentParser(description=description)

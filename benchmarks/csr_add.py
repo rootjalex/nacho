@@ -20,7 +20,7 @@ import nacho
 from common.compare import csr_equal, csr_failure_reason, summarize
 from common.parser import matrix_list, parse_matrix
 from common.plotter import plot_scatter
-from common.timing import flush_gpu_state, parse_sweep_args, timer_for
+from common.timing import flush_gpu_state, launch_args, parse_sweep_args, timer_for
 
 
 def to_int32_if_safe(tensor):
@@ -58,6 +58,7 @@ def benchmark_csr_add(start, end, device="cpu", save_and_plot=True):
     kernel = nacho.gpu_csr_add_f32 if on_gpu else nacho.cpu_csr_add_f32
     taco_kernel = nacho.gpu_csr_add_taco_f32 if on_gpu else nacho.cpu_csr_add_taco_f32
     measure = timer_for(device)
+    launch = launch_args(device)
 
     df = matrix_list()
     nnz_totals, nacho_runtimes, failed = [], [], []
@@ -84,7 +85,7 @@ def benchmark_csr_add(start, end, device="cpu", save_and_plot=True):
         print(f"  A={df.iloc[i-1]['name']}  B={df.iloc[i]['name']}")
 
         reference, torch_ms = measure(lambda: A_torch + B_torch)
-        result, nacho_ms = measure(lambda: kernel(A_csr, B_csr))
+        result, nacho_ms = measure(lambda: kernel(A_csr, B_csr, *launch))
         _, taco_ms = measure(lambda: taco_kernel(A_base, B_base))
 
         correct = csr_equal(result, reference)

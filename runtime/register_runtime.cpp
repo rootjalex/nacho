@@ -1,5 +1,7 @@
 #include "register_runtime.h"
 
+#include <nanobind/stl/string.h>
+
 #include "baseline_types.h"
 #include "io/parse.h"
 

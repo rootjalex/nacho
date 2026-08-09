@@ -13,7 +13,7 @@ import nacho
 from common.compare import coo_equal, summarize
 from common.parser import matrix_list, parse_matrix
 from common.plotter import plot_scatter
-from common.timing import flush_gpu_state, parse_sweep_args, timer_for
+from common.timing import flush_gpu_state, launch_args, parse_sweep_args, timer_for
 
 
 def _load_coo_pair(df, i, device):
@@ -33,6 +33,7 @@ def benchmark_coo_add(start, end, device="cpu", save_and_plot=True):
     on_gpu = device == "cuda"
     kernel = nacho.gpu_coo_add_f32 if on_gpu else nacho.cpu_coo_add_f32
     measure = timer_for(device)
+    launch = launch_args(device)
 
     df = matrix_list()
     nnz_totals, nacho_runtimes, pytorch_runtimes, failed = [], [], [], []
@@ -48,7 +49,7 @@ def benchmark_coo_add(start, end, device="cpu", save_and_plot=True):
         print(f"  A={df.iloc[i-1]['name']}  B={df.iloc[i]['name']}")
 
         reference, pytorch_ms = measure(lambda: (A_torch + B_torch).coalesce())
-        result, nacho_ms = measure(lambda: kernel(A_coo, B_coo))
+        result, nacho_ms = measure(lambda: kernel(A_coo, B_coo, *launch))
 
         correct = coo_equal(result, reference)
         print(f"  Nacho    {nacho_ms:.4f} ms   correct={correct}")

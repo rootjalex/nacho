@@ -2,16 +2,11 @@
 #include <iostream>
 #include <cuda_runtime.h>
 
-// Wrapper function for cudaFree
+// Releases a result buffer handed to Python, called from the capsule that owns it.
+//
 void cudaFreeWrapper(void* ptr) noexcept {
-    // Can't do this due to `noexcept`
-    // cudaError_t error = cudaFree(ptr);
-    // if (error != cudaSuccess) {
-    //     throw std::runtime_error(cudaGetErrorString(error));
-    // }
-    // cudaFree(ptr);
     if(ptr != nullptr) {
-        cudaFree(ptr);
+        cudaFreeAsync(ptr, 0);
     }
 }
 
