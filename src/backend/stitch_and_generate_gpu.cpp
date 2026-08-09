@@ -167,8 +167,10 @@ const std::vector<std::string> &scatter_reduction_lines() {
         TensorLowerer &result_tensor,
         std::vector<CIN> forall_list,
         TensorLowerer &reduced_result_tensor,
-        std::vector<LoopNum> &reduction_loops)
-        : StitchAndGenerate(name, operand_tensors, result_tensor, std::move(forall_list), reduced_result_tensor, reduction_loops) {
+        std::vector<LoopNum> &reduction_loops,
+        std::vector<std::string> requested_operand_ordering)
+        : StitchAndGenerate(name, operand_tensors, result_tensor, std::move(forall_list), reduced_result_tensor, reduction_loops,
+                            std::move(requested_operand_ordering)) {
             // Worker kernels are only ever called from the __global__ wrappers.
             open_files("_gpu.h", "_gpu.cu", "__device__ inline");
             main_func.name = name + "_gpu_i32_f32";
@@ -314,11 +316,11 @@ const std::vector<std::string> &scatter_reduction_lines() {
 
         main_func.body.emplace_back(
             llir::BaseExpr::make(
-                llir::lFunctionCall::make("cub::DeviceScan::ExclusiveSum", {
+                llir::lFunctionCall::make("cub::DeviceScan::InclusiveSum", {
                     llir::lConst::make(0),
                     llir::lVar::make(sizet_type, "cub_bytes"),
                     null_scan_iterator, null_scan_iterator,
-                    num_threads_var,
+                    num_threads_var+1,
                     cuda_stream_var
                 })
             )
@@ -355,7 +357,7 @@ const std::vector<std::string> &scatter_reduction_lines() {
             }
         }
 
-        size_expr = size_expr + llir::lConst::make(num_mem_block_fields) * num_threads_var;
+        size_expr = size_expr + llir::lConst::make(num_mem_block_fields) * (num_threads_var + 1);
 
         std::string mem_block_name = "mem_block_" + get_all_loops_string(current_sparse_intersection);
         main_func.body.emplace_back(
@@ -452,6 +454,13 @@ const std::vector<std::string> &scatter_reduction_lines() {
             );
             for (LoopNum loop = BEFORE_FIRST_LOOP + 1; loop <= current_sparse_intersection; ++loop) {
                 if (result_tensor.tensor_level_exists(loop) && result_tensor.is_sparse(loop)) {
+                    // The counts occupy num_threads slots, but generate_prefix_sum_calls
+                    // walks the pointer back one afterwards to turn the inclusive scan into
+                    // exclusive offsets. That slot is reserved here, ahead of the counts, so
+                    // the shifted pointer stays inside this field's own region.
+                    main_func.body.emplace_back(
+                        llir::Accumulate::make(offset_var, llir::lVar::make(sizet_type, "sizeof(int32_t)"))
+                    );
                     main_func.body.emplace_back(
                         llir::Store::make(
                             get_count_offsets_field(loop, current_sparse_intersection),
@@ -510,33 +519,11 @@ const std::vector<std::string> &scatter_reduction_lines() {
 
     void StitchAndGenerateGPU::generate_prefix_sum_calls(LoopNum previous_sparse_intersection, LoopNum current_sparse_intersection) {
 
-        for (LoopNum loop = previous_sparse_intersection + 1; loop <= current_sparse_intersection; ++loop) {
-            if (result_tensor.tensor_level_exists(loop) && result_tensor.is_sparse(loop)) {
-                main_func.body.emplace_back(
-                    llir::Declare::make(
-                        llir::Int_t::make(32),
-                        "temp_last_value_" + get_all_loops_string(current_sparse_intersection) + "_" +std::to_string(loop.get())
-                    )
-                );
-                main_func.body.emplace_back(
-                    llir::BaseExpr::make(
-                        llir::lFunctionCall::make("cudaMemcpyAsync", {
-                            llir::lAddress::make(llir::lVar::make(llir::Int_t::make(32), "temp_last_value_" + get_all_loops_string(current_sparse_intersection) + "_" +std::to_string(loop.get()))),
-                            get_count_offsets_field(loop, current_sparse_intersection) + (num_threads_var - 1),
-                            llir::lVar::make(sizet_type, "sizeof(int32_t)"),
-                            device_to_host,
-                            cuda_stream_var
-                        })
-                    )
-                );
-            }
-        }
-
         for (LoopNum loop = BEFORE_FIRST_LOOP + 1; loop <= current_sparse_intersection; ++loop) {
             if (result_tensor.tensor_level_exists(loop) && result_tensor.is_sparse(loop)) {
                 main_func.body.emplace_back(
                     llir::BaseExpr::make(
-                        llir::lFunctionCall::make("cub::DeviceScan::ExclusiveSum", {
+                        llir::lFunctionCall::make("cub::DeviceScan::InclusiveSum", {
                             llir::lVar::make(void_type, "cub_temp_storage_" + get_all_loops_string(current_sparse_intersection)),
                             llir::lVar::make(sizet_type, "cub_bytes"),
                             get_count_offsets_field(loop, current_sparse_intersection),
@@ -546,26 +533,42 @@ const std::vector<std::string> &scatter_reduction_lines() {
                         })
                     )
                 );
-            }
-        }
-
-        for (LoopNum loop = previous_sparse_intersection + 1; loop <= current_sparse_intersection; ++loop) {
-            if (result_tensor.tensor_level_exists(loop) && result_tensor.is_sparse(loop)) {
+                // The last inclusive element is the total. Levels resolved by an earlier
+                // intersection already have their length and are only rescanned to give
+                // this phase's threads their starting offsets.
+                if (loop > previous_sparse_intersection) {
+                    main_func.body.emplace_back(
+                        llir::BaseExpr::make(
+                            llir::lFunctionCall::make("cudaMemcpyAsync", {
+                                llir::lAddress::make(result_tensor.get_length_field(result_tensor.loop_index(loop))),
+                                get_count_offsets_field(loop, current_sparse_intersection) + (num_threads_var - 1),
+                                llir::lVar::make(sizet_type, "sizeof(int32_t)"),
+                                device_to_host,
+                                cuda_stream_var
+                            })
+                        )
+                    );
+                }
+                // Walking the base back one slot turns the inclusive scan into the
+                // exclusive offsets the compute kernel wants, and the reserved slot it
+                // now points at becomes the leading zero.
                 main_func.body.emplace_back(
-                    llir::BaseExpr::make(
-                        llir::lFunctionCall::make("cudaMemcpyAsync", {
-                            llir::lAddress::make(result_tensor.get_length_field(result_tensor.loop_index(loop))),
-                            get_count_offsets_field(loop, current_sparse_intersection) + (num_threads_var - 1),
-                            llir::lVar::make(sizet_type, "sizeof(int32_t)"),
-                            device_to_host,
-                            cuda_stream_var
-                        })
+                    llir::Store::make(
+                        get_count_offsets_field(loop, current_sparse_intersection),
+                        get_count_offsets_field(loop, current_sparse_intersection) - 1
+                    )
+                );
+                main_func.body.emplace_back(
+                    generate_zero_range_statement(
+                        get_count_offsets_field(loop, current_sparse_intersection),
+                        llir::lVar::make(sizet_type, "sizeof(int32_t)")
                     )
                 );
             }
         }
-        // The host reads/writes the length fields right below (temp_last_value_* accumulate),
-        // so the preceding cudaMemcpyAsync's must have actually landed by then.
+
+        // The lengths were copied back asynchronously and the host reads them right below
+        // to size its allocations, so the copies have to have landed by now.
         main_func.body.emplace_back(
             llir::BaseExpr::make(
                 llir::lFunctionCall::make("cudaStreamSynchronize", {cuda_stream_var})
@@ -574,13 +577,6 @@ const std::vector<std::string> &scatter_reduction_lines() {
 
         for (LoopNum loop = previous_sparse_intersection + 1; loop <= current_sparse_intersection; ++loop) {
             if (result_tensor.tensor_level_exists(loop) && result_tensor.is_sparse(loop)) {
-                main_func.body.emplace_back(
-                    llir::Accumulate::make(
-                        result_tensor.get_length_field(result_tensor.loop_index(loop)),
-                        llir::lVar::make(llir::Int_t::make(32), "temp_last_value_" + get_all_loops_string(current_sparse_intersection) + "_" +std::to_string(loop.get()))
-                    )
-                );
-
                 // A merged level stores a length per flattened dimension, all equal. Only
                 // the first was brought back from the device; mirror it into the rest.
                 std::vector<TensorIndex> indices = result_tensor.stored_indices(result_tensor.loop_index(loop));

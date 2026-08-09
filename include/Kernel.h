@@ -24,8 +24,7 @@ const char *target_tag(Target target);
 //         .emit();
 //
 // Everything but the name and expression has a default, so the common case is
-// three lines. Operand order in both the C++ signature and the Python wrapper is
-// lexicographic by tensor name, so name operands a, b, c to match expression order.
+// three lines.
 class Kernel {
 public:
     explicit Kernel(std::string name);
@@ -37,6 +36,11 @@ public:
 
     // Name of the result tensor, and so of its generated struct. Defaults to "Z".
     Kernel &result_name(std::string name);
+
+    // The order the kernel takes its operands in, in both the C++ signature and the
+    // Python wrapper. Must name every operand of the expression exactly once. Defaults
+    // to the operands' names in lexicographic order.
+    Kernel &operand_ordering(std::vector<std::string> names);
 
     // Overrides the Python function name for one target.
     // Defaults to "<cpu|gpu>_<kernel name>_f32".
@@ -61,6 +65,7 @@ private:
     Expr expr_;
     std::vector<Target> targets_{Target::CPU, Target::GPU};
     std::string result_name_ = "Z";
+    std::vector<std::string> operand_ordering_;
     std::vector<std::pair<Target, std::string>> python_names_;
     bool bindings_ = true;
     bool recursive_partitioning_ = true;

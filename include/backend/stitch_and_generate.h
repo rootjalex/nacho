@@ -52,20 +52,32 @@ namespace backend {
 
         std::vector<llir::lStmt> main_function_stmts;
 
+        // The operand names in the order the entry point takes them. Set from the
+        // requested ordering, or the operands' own (lexicographic) order when none
+        // was requested.
+        std::vector<std::string> operand_ordering;
+
         StitchAndGenerate(std::string name,
                            std::map<std::string, TensorLowerer> &operand_tensors,
                            TensorLowerer &result_tensor,
                            std::vector<CIN> forall_list,
                            TensorLowerer &reduced_result_tensor,
-                           std::vector<LoopNum> &reduction_loops)
+                           std::vector<LoopNum> &reduction_loops,
+                           std::vector<std::string> requested_operand_ordering)
             : operand_tensors(operand_tensors), result_tensor(result_tensor),
               forall_list(std::move(forall_list)), reduced_result_tensor(reduced_result_tensor),
-              reduction_loops(reduction_loops), name(std::move(name)) {}
+              reduction_loops(reduction_loops), name(std::move(name)) {
+            resolve_operand_ordering(std::move(requested_operand_ordering));
+        }
 
         // Opens header_file/source_file at "<output_directory()>/<name><header_suffix>" and
         // "<output_directory()>/<name><source_suffix>", and writes the boilerplate prologue
         // shared by every target (CPU/GPU).
         void open_files(const std::string &header_suffix, const std::string &source_suffix, const std::string &runnable_macro);
+
+        // Fills operand_ordering, rejecting a requested ordering that is not a permutation
+        // of the expression's operands.
+        void resolve_operand_ordering(std::vector<std::string> requested);
 
         // Adds the operand-tensor arguments shared by the CPU/GPU main function signatures,
         // and sets the return type to the output tensor's struct.
@@ -128,7 +140,8 @@ namespace backend {
             llir::lStmt compute_kernel, // compute_kernel from previous sparse intersect
             llir::lType partition_struct, llir::lStmt partition_kernel, llir::lStmt precompute_kernel, // partition and precompute kernels from current sparse intersection
             LoopNum previous_previous_sparse_intersection, LoopNum previous_sparse_intersection, LoopNum current_sparse_intersection,
-            std::map<std::string, TensorLowerer> included_tensors
+            std::map<std::string, TensorLowerer> included_tensors,
+            bool operands_intersected_at_current // whether this level co-iterates operands, rather than closing out the loop nest
         );
 
         virtual void generate_memory_allocations(
@@ -257,7 +270,8 @@ namespace backend {
             TensorLowerer &result_tensor,
             std::vector<CIN> forall_list,
             TensorLowerer &reduced_result_tensor,
-            std::vector<LoopNum> &reduction_loops);
+            std::vector<LoopNum> &reduction_loops,
+            std::vector<std::string> requested_operand_ordering);
 
         // Tracks pointers registered via generate_single_memory_allocation_statement, keyed by the
         // sparse-intersection level
@@ -291,7 +305,8 @@ namespace backend {
             TensorLowerer &result_tensor,
             std::vector<CIN> forall_list,
             TensorLowerer &reduced_result_tensor,
-            std::vector<LoopNum> &reduction_loops);
+            std::vector<LoopNum> &reduction_loops,
+            std::vector<std::string> requested_operand_ordering);
 
         void stitch_scatter_reduction() override;
 

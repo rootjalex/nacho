@@ -42,7 +42,14 @@ namespace backend {
 
             StitchAndGenerate* stitch_and_generate;
 
-            CINLowerer(CIN cin, std::string name, bool is_cpu = false);
+            CINLowerer(CIN cin, std::string name, bool is_cpu = false,
+                       std::vector<std::string> operand_ordering = {});
+
+            // The operand names in the order the entry point takes them, after any
+            // requested ordering has been validated against the expression.
+            const std::vector<std::string> &operand_ordering() const {
+                return stitch_and_generate->operand_ordering;
+            }
 
             std::vector<TensorIndex> get_loop_order();
             std::vector<CIN> get_forall_list();

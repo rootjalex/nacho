@@ -1,6 +1,6 @@
 # nacho
 
-Sparse Tensor Algebra compiler for GPUs
+Sparse Tensor Algebra compiler for GPUs and multicore CPUs
 
 ### Setup
 
@@ -42,21 +42,29 @@ for — and exactly what the extension build compiles.
 
 # Python bindings
 
-Kernels are exposed to Python through nanobind. `compiler.cpp` declares a kernel with
+Generated kernels, and the tensor classes they take and return, are exposed to Python
+through nanobind. A kernel is declared in [compiler.cpp](compiler.cpp) — consisting of
+the tensor formats, the operands over them, and the expression:
 
 ```cpp
+Format csr = Format::ordered({
+    {"i", LevelFormat::Dense},
+    {"j", LevelFormat::Compressed_unique},
+}).named("CSR");
+
+TensorType csr_f32 = TensorType(csr, dType::Float32);
+Expr a_csr_ij = Tensor::make(csr_f32, "a");
+Expr b_csr_ij = Tensor::make(csr_f32, "b");
+
 Kernel("csr_mul").expr(a_csr_ij * b_csr_ij).targets({Target::CPU, Target::GPU}).emit();
 ```
 
-and the compiler emits, alongside the kernel itself, a wrapper and the tensor classes it
-needs. A layout's Python class name comes from `Format::named("CSR")`; formats derived by
-the compiler (an expression's result, or the flattened form of a COO operand) recover the
-same name from their level structure.
+`.named("CSR")` is the Python class name of the layout, giving `nacho.CSR_cpu` and
+`nacho.CSR_gpu`; the kernel is exposed as `<cpu|gpu>_<name>_f32`. Operands are passed in
+lexicographic order by name unless `.operand_ordering({"b", "a"})` says otherwise.
 
-Operand order in both the C++ signature and the Python wrapper is lexicographic by tensor
-name, so name operands `a`, `b`, `c` to match the order they appear in the expression.
-
-Build the extension against whatever is currently in `generated/`:
+Before the generated code can be used from Python it has to be compiled into the
+extension module:
 
 ```bash
 pip install --no-build-isolation -ve .
@@ -64,15 +72,15 @@ pip install --no-build-isolation -ve .
 
 ```python
 import nacho
-c = nacho.cpu_csr_mul_f32(a, b)          # a, b are nacho.CSR_cpu
-c = nacho.gpu_csr_mul_f32(a, b)          # nacho.CSR_gpu, launch geometry optional
+A, B = nacho.to_csr(A_torch, "cpu"), nacho.to_csr(B_torch, "cpu")
+C = nacho.cpu_csr_mul_f32(A, B)          # A, B are nacho.CSR_cpu
+C = nacho.gpu_csr_mul_f32(A, B)          # nacho.CSR_gpu, grid size can be optionally provided
 ```
 
 # Testing
 
 `tests/smoke.py` checks each generated kernel on both devices against scipy on small
-random inputs; run it after rebuilding and before any timing work. Kernels missing from
-the current build are skipped rather than failing.
+random inputs; run it after rebuilding and before any timing work.
 
 ```bash
 python tests/smoke.py
@@ -94,38 +102,23 @@ coordinates.
 Each script directly in `benchmarks/` is then a standalone entry point:
 
 ```bash
-python benchmarks/csr_add.py     --device cpu --start 0 --end 1600  # vs cuSPARSE/Taco/MKL
-python benchmarks/csr_mul.py     --device cpu --start 0 --end 1600  # vs PyTorch
-python benchmarks/coo_add.py     --device cpu --start 0 --end 1600  # vs PyTorch
-python benchmarks/coo_mul.py     --device cpu --start 0 --end 1600  # vs PyTorch
+python benchmarks/csr_add.py     --device both --start 0 --end 1600  # vs cuSPARSE/Taco/MKL
+python benchmarks/csr_mul.py     --device both --start 0 --end 1600  # vs PyTorch
+python benchmarks/coo_add.py     --device both --start 0 --end 1600  # vs PyTorch
+python benchmarks/coo_mul.py     --device both --start 0 --end 1600  # vs PyTorch
 python benchmarks/coo_csr_add.py --device cpu --start 0 --end 1600  # vs PyTorch
 python benchmarks/csr_add_3.py   --device cpu --start 0 --end 1600  # fused vs unfused
-python benchmarks/frostt_tensors_add.py --device cpu                # CSF3 vs COO3D vs torch
-python benchmarks/inner_prod.py  --device cpu                       # FROSTT, CSF3 vs COO3 vs torch
-python benchmarks/dcsr_lb_comparison.py --device cpu                # partitioning schemes
+python benchmarks/frostt_tensors_add.py --device both               # CSF3 vs COO3D vs torch
+python benchmarks/inner_prod.py  --device both                       # FROSTT, CSF3 vs COO3 vs torch
+python benchmarks/dcsr_lb_comparison.py --device both                # partitioning schemes
 
 python benchmarks/spgemm.py --start 0 --end 1300                    # vs cuSPARSE
 python benchmarks/sssmm.py  --start 0 --end 1300                    # fused vs unfused vs cuSPARSE
 ```
 
-`spgemm` and `sssmm` take no `--device`: contracting their reduction is emitted only for
-CUDA. They also stop short of the full matrix list by default, because the intermediate
-they build holds one entry per scalar multiply rather than per result non-zero, and the
-largest matrices exhaust device memory. A product that runs out is recorded as a gap in
-the plot rather than aborting the sweep.
+Settings in `benchmarks/config.py` — dataset paths, iteration counts, output directory — 
+can be overridden by an environment variable of the same name prefixed with `NACHO_`.
 
-Shared helpers — matrix loading, plotting, timing, result comparison — live in
-`benchmarks/common/`. Every setting in `benchmarks/config.py` — dataset paths, which FROSTT
-tensors to run, iteration counts, output directory — can be overridden by an environment
-variable of the same name prefixed with `NACHO_`.
-
-Building a nacho tensor from a torch one is part of the package rather than the benchmark
-harness, so it works anywhere:
-
-```python
-import nacho
-A = nacho.to_csr(torch_csr, device="cuda")   # also to_dcsr, to_coo, to_coo3, to_csf3
-```
 
 ### Acknowledgements
 

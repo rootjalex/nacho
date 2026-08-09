@@ -241,8 +241,8 @@ void generate_bindings(const BindingSpec &spec) {
     record(result_class);
 
     std::vector<std::pair<std::string, TensorClass>> operands;  // parameter name -> class
-    for (const auto &[operand_name, operand] : spec.operand_tensors) {
-        TensorClass operand_class = describe(operand, spec.target_tag);
+    for (const std::string &operand_name : spec.operand_ordering) {
+        TensorClass operand_class = describe(spec.operand_tensors.at(operand_name), spec.target_tag);
         record(operand_class);
         operands.emplace_back(operand_name, std::move(operand_class));
     }

@@ -9,8 +9,10 @@ namespace backend {
         TensorLowerer &result_tensor,
         std::vector<CIN> forall_list,
         TensorLowerer &reduced_result_tensor,
-        std::vector<LoopNum> &reduction_loops)
-        : StitchAndGenerate(name, operand_tensors, result_tensor, std::move(forall_list), reduced_result_tensor, reduction_loops) {
+        std::vector<LoopNum> &reduction_loops,
+        std::vector<std::string> requested_operand_ordering)
+        : StitchAndGenerate(name, operand_tensors, result_tensor, std::move(forall_list), reduced_result_tensor, reduction_loops,
+                            std::move(requested_operand_ordering)) {
             // Worker kernels run on the host inside tbb::parallel_for lambdas.
             open_files("_cpu.h", "_cpu.cpp", "inline");
             main_func.name = name + "_cpu_i32_f32";

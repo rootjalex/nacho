@@ -11,7 +11,8 @@ namespace backend {
         LoopNum previous_previous_sparse_intersection,
         LoopNum previous_sparse_intersection, 
         LoopNum current_sparse_intersection,
-        std::map<std::string, TensorLowerer> included_tensors
+        std::map<std::string, TensorLowerer> included_tensors,
+        bool operands_intersected_at_current
     ) {
         if(compute_kernel.defined()) {
             llir::lStmt result_tensor_allocations = this->generate_result_tensor_allocations(result_tensor, previous_previous_sparse_intersection, previous_sparse_intersection);
@@ -45,7 +46,8 @@ namespace backend {
         if(precompute_kernel.defined()) {
             this->stitch_precompute_kernel_call(precompute_kernel, current_sparse_intersection);
             this->generate_prefix_sum_calls(previous_sparse_intersection, current_sparse_intersection);
-            if(current_sparse_intersection != LoopNum(forall_list.size()-1)) {
+            // Only an intersected level can produce nothing from non-empty operands.
+            if(operands_intersected_at_current) {
                 this->generate_early_termination_for_empty_result(previous_sparse_intersection, current_sparse_intersection);
             }
         }
@@ -235,8 +237,31 @@ namespace backend {
         return llir::Generic_t::make(output_tensor().get_struct_name() + "<index_t, value_t>");
     }
 
+    void StitchAndGenerate::resolve_operand_ordering(std::vector<std::string> requested) {
+        if (requested.empty()) {
+            for (const auto &[tensor_name, tensor] : operand_tensors) {
+                operand_ordering.push_back(tensor_name);
+            }
+            return;
+        }
+
+        internal_assert(requested.size() == operand_tensors.size())
+            << "Kernel '" << name << "' lists " << requested.size()
+            << " operands in its ordering but the expression has " << operand_tensors.size();
+        std::set<std::string> seen;
+        for (const std::string &tensor_name : requested) {
+            internal_assert(operand_tensors.count(tensor_name) > 0)
+                << "Kernel '" << name << "' orders an operand '" << tensor_name
+                << "' that its expression does not use";
+            internal_assert(seen.insert(tensor_name).second)
+                << "Kernel '" << name << "' lists operand '" << tensor_name << "' twice in its ordering";
+        }
+        operand_ordering = std::move(requested);
+    }
+
     void StitchAndGenerate::add_tensor_args() {
-        for (const auto &[tensor_name, tensor] : operand_tensors) {
+        for (const std::string &tensor_name : operand_ordering) {
+            const TensorLowerer &tensor = operand_tensors.at(tensor_name);
             main_func.args.emplace_back(llir::Function::Argument{
                 .mutating = false,
                 .type = llir::Generic_t::make(tensor.get_struct_name() + "<index_t, value_t>"),

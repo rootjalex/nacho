@@ -73,6 +73,12 @@ Kernel &Kernel::result_name(std::string name) {
     return *this;
 }
 
+Kernel &Kernel::operand_ordering(std::vector<std::string> names) {
+    internal_assert(!names.empty()) << "Kernel '" << name_ << "' operand ordering cannot be empty";
+    operand_ordering_ = std::move(names);
+    return *this;
+}
+
 Kernel &Kernel::python_name(Target target, std::string name) {
     python_names_.emplace_back(target, std::move(name));
     return *this;
@@ -105,7 +111,7 @@ void Kernel::emit() {
 
     for (Target target : targets_) {
         const bool is_cpu = target == Target::CPU;
-        backend::CINLowerer lowerer(compile_to_cin(expr_, result_name_), name_, is_cpu);
+        backend::CINLowerer lowerer(compile_to_cin(expr_, result_name_), name_, is_cpu, operand_ordering_);
         lowerer.recursive_partitioning = recursive_partitioning_;
         lowerer.lower_cin();
 
@@ -116,6 +122,7 @@ void Kernel::emit() {
                 .python_name = python_name_for(target),
                 .is_cpu = is_cpu,
                 .operand_tensors = lowerer.operand_tensors,
+                .operand_ordering = lowerer.operand_ordering(),
                 .result_tensor = lowerer.output_tensor(),
             });
         }

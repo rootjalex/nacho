@@ -4,6 +4,7 @@
 
 #include <map>
 #include <string>
+#include <vector>
 
 namespace nacho {
 namespace backend {
@@ -15,6 +16,9 @@ struct BindingSpec {
     std::string python_name;   // e.g. "cpu_csr_mul_f32"
     bool is_cpu;
     std::map<std::string, TensorLowerer> operand_tensors;
+    // Operand names in the order the entry point takes them; the wrapper's Python
+    // parameters follow it so the two signatures cannot drift.
+    std::vector<std::string> operand_ordering;
     TensorLowerer result_tensor;
 };
 

@@ -9,11 +9,13 @@
 #include "backend/compute.h"
 #include "Printer.h"
 #include <map>
+#include <set>
 
 namespace nacho {
 namespace backend {
 
-    CINLowerer::CINLowerer(CIN cin, std::string name, bool is_cpu) : cin(std::move(cin)), name(std::move(name)), reductionLoops({}) {
+    CINLowerer::CINLowerer(CIN cin, std::string name, bool is_cpu, std::vector<std::string> operand_ordering)
+        : cin(std::move(cin)), name(std::move(name)), reductionLoops({}) {
         loop_order = get_loop_order();
         struct TensorVisitor : Visitor {
             std::map<std::string, TensorLowerer> &operand_tensors;
@@ -79,9 +81,9 @@ namespace backend {
         this->cin.accept(&visitor);
 
         if(is_cpu) {
-            stitch_and_generate = new StitchAndGenerateCPU(this->name, operand_tensors, result_tensor, get_forall_list(), reduced_result_tensor, reductionLoops);
+            stitch_and_generate = new StitchAndGenerateCPU(this->name, operand_tensors, result_tensor, get_forall_list(), reduced_result_tensor, reductionLoops, std::move(operand_ordering));
         } else {
-            stitch_and_generate = new StitchAndGenerateGPU(this->name, operand_tensors, result_tensor, get_forall_list(), reduced_result_tensor, reductionLoops);
+            stitch_and_generate = new StitchAndGenerateGPU(this->name, operand_tensors, result_tensor, get_forall_list(), reduced_result_tensor, reductionLoops, std::move(operand_ordering));
         }
     }
 
@@ -128,6 +130,10 @@ namespace backend {
         if (recursive_partitioning) {
             sparse_intersection_levels = get_all_sparse_intersection_levels(cin);
         }
+
+        // The list below is padded with the loop nest's boundaries so it can be walked as
+        // spans. Only these entries are levels where operands are genuinely sparse intersections.
+        std::set<LoopNum> intersected_levels(sparse_intersection_levels.begin(), sparse_intersection_levels.end());
 
         sparse_intersection_levels.insert(sparse_intersection_levels.begin(), BEFORE_FIRST_LOOP);
         if(sparse_intersection_levels.back()!=LoopNum(loop_order.size()-1)) {
@@ -189,7 +195,8 @@ namespace backend {
             stitch_and_generate->stitch_kernels(compute_kernel, partition_struct, partition_kernel, precompute_kernel,
                                                 i==0 ? BEFORE_FIRST_LOOP : sparse_intersection_levels[i-1],
                                                 previous_sparse_intersection, current_sparse_intersection,
-                                                included_tensors_current);
+                                                included_tensors_current,
+                                                intersected_levels.count(current_sparse_intersection) > 0);
 
 
             // Generate Compute kernel
