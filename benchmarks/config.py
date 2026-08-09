@@ -25,7 +25,7 @@ def _int(name: str, default: int) -> int:
 
 
 # Directory holding the SuiteSparse .mtx files.
-SUITESPARSE_DIR = _path("SUITESPARSE_DIR", Path("/scratch/suitesparse/"))
+SUITESPARSE_DIR = _path("SUITESPARSE_DIR", Path("/scratch/atharva/suitesparse/"))
 
 # Index of the SuiteSparse matrices: name, nnz, percent_nnz, total_elements, rows, columns.
 STATS_CSV = _path("STATS_CSV", BENCHMARKS_DIR / "suitesparse_stats.csv")
