@@ -192,12 +192,16 @@ namespace backend {
 
         for (LoopNum loop = previous_sparse_intersection + 1; loop <= current_sparse_intersection; ++loop) {
             if(result_tensor.tensor_level_exists(loop) && result_tensor.is_sparse(loop)) {
-                main_func.body.emplace_back(
-                    llir::Store::make(
-                        result_tensor.get_length_field(result_tensor.loop_index(loop)),
-                        llir::lVar::make(llir::Int_t::make(32), "prefix_sum_" + get_all_loops_string(current_sparse_intersection) + "_" + std::to_string(loop.get()))
-                    )
-                );
+                // A merged level stores a length per flattened dimension, all equal to the
+                // number of coordinate tuples this level produced.
+                for (const auto &index : result_tensor.stored_indices(result_tensor.loop_index(loop))) {
+                    main_func.body.emplace_back(
+                        llir::Store::make(
+                            result_tensor.get_length_field(index),
+                            llir::lVar::make(llir::Int_t::make(32), "prefix_sum_" + get_all_loops_string(current_sparse_intersection) + "_" + std::to_string(loop.get()))
+                        )
+                    );
+                }
             }
         }
     }

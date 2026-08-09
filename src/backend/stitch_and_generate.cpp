@@ -160,12 +160,15 @@ namespace backend {
 
         for(LoopNum loop = previous_sparse_intersection + 1; loop <= LoopNum(forall_list.size() - 1); ++loop) {
             if(result_tensor.tensor_level_exists(loop) && result_tensor.is_sparse(loop)) {
-                early_termination_stmts.emplace_back(
-                    llir::Store::make(
-                        result_tensor.get_length_field(result_tensor.loop_index(loop)),
-                        llir::lConst::make(0)
-                    )
-                );
+                // A merged level stores a length per flattened dimension; zero them all.
+                for (const auto &index : result_tensor.stored_indices(result_tensor.loop_index(loop))) {
+                    early_termination_stmts.emplace_back(
+                        llir::Store::make(
+                            result_tensor.get_length_field(index),
+                            llir::lConst::make(0)
+                        )
+                    );
+                }
             }
         }
 
@@ -280,12 +283,31 @@ namespace backend {
                 return tensor.second.tensor_level_exists(loopNum);
             });
             internal_assert(it != operand_tensors.end()) << "No operand tensor found for loop number " << loopNum.get();
-            main_func.body.emplace_back(
-                llir::Store::make(
-                    result_tensor.get_size_field(level),
-                    it->second.get_size_field(it->second.loop_num_to_tensor_level(loopNum))
-                )
-            );
+            TensorLevelNum operand_level = it->second.loop_num_to_tensor_level(loopNum);
+
+            if (result_tensor.is_merged_level(level)) {
+                // A merged level keeps a size per dimension it flattens. Result and operand
+                // flatten the same dimensions, so copy them pairwise.
+                std::vector<TensorIndex> result_indices = result_tensor.stored_indices(level);
+                std::vector<TensorIndex> operand_indices = it->second.stored_indices(operand_level);
+                internal_assert(result_indices.size() == operand_indices.size())
+                    << "Result and operand disagree on how many dimensions loop " << loopNum.get() << " covers";
+                for (size_t i = 0; i < result_indices.size(); ++i) {
+                    main_func.body.emplace_back(
+                        llir::Store::make(
+                            result_tensor.get_size_field(result_indices[i]),
+                            it->second.get_size_field(operand_indices[i])
+                        )
+                    );
+                }
+            } else {
+                main_func.body.emplace_back(
+                    llir::Store::make(
+                        result_tensor.get_size_field(level),
+                        it->second.get_size_field(operand_level)
+                    )
+                );
+            }
         }
     }
 

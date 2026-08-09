@@ -360,11 +360,23 @@ namespace backend {
         for (LoopNum loop = previous_sparse_intersection + 1; loop <= current_sparse_intersection; ++loop) {
             if (result_tensor.tensor_level_exists(loop) && result_tensor.is_sparse(loop)) {
                 main_func.body.emplace_back(
-                    llir::Accumulate::make( 
+                    llir::Accumulate::make(
                         result_tensor.get_length_field(result_tensor.loop_index(loop)),
                         llir::lVar::make(llir::Int_t::make(32), "temp_last_value_" + get_all_loops_string(current_sparse_intersection) + "_" +std::to_string(loop.get()))
                     )
                 );
+
+                // A merged level stores a length per flattened dimension, all equal. Only
+                // the first was brought back from the device; mirror it into the rest.
+                std::vector<TensorIndex> indices = result_tensor.stored_indices(result_tensor.loop_index(loop));
+                for (size_t i = 1; i < indices.size(); ++i) {
+                    main_func.body.emplace_back(
+                        llir::Store::make(
+                            result_tensor.get_length_field(indices[i]),
+                            result_tensor.get_length_field(indices[0])
+                        )
+                    );
+                }
             }
         }
     }

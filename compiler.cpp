@@ -112,26 +112,22 @@ void test() {
 
     Kernel("csr_mul").expr(a_csr_ij * b_csr_ij).emit();
 
-    // TODO(atharvac) The merged-level path is incomplete on the host driver. For a COO
-    // tensor flattened to a single merged level "ij", the driver refers to dim_ij_size
-    // and dim_ij_length, but the struct carries one size and one length per sub-index
-    // (dim_i_size, dim_j_size, dim_i_length, dim_j_length). write_tuple_ is also only
-    // emitted for operands, so the result tensor has no writer.
-    //
-    // Kernel("coo_add").expr(a_coo_ij + b_coo_ij).emit();
-    // Kernel("coo_mul").expr(a_coo_ij * b_coo_ij).emit();
+    Kernel("coo_add").expr(a_coo_ij + b_coo_ij).emit();
 
-    // TODO(atharvac) Does not compile
-    // Kernel("coo_csr_add").expr(a_csr_ij + b_coo_ij).emit();
-    // 
-    // compute_ij_kernel declares seg_end_b_i_p inside the main merge
-    // loop, then reads it from the drain loop that runs after b is exhausted. The guard
-    // there decides whether to write a row-offset terminator, so it needs a deliberate
-    // fix rather than a mechanical one.
+    Kernel("coo_mul").expr(a_coo_ij * b_coo_ij).emit();
+
+    Kernel("coo_csr_add").expr(a_csr_ij + b_coo_ij).emit();
 
     Kernel("dcsr_add").expr(a_dcsr_ij + b_dcsr_ij).emit();
 
     Kernel("dcsr_mul").expr(a_dcsr_ij * b_dcsr_ij).emit();
+
+    // Same product, partitioned once over the whole loop nest. Comparing the two shows
+    // what re-partitioning at each sparse intersection level is worth.
+    Kernel("dcsr_mul_without_recursive_partitioning")
+        .expr(a_dcsr_ij * b_dcsr_ij)
+        .recursive_partitioning(false)
+        .emit();
 
     Kernel("csf_add").expr(a_csf_ijk + b_csf_ijk).emit();
 

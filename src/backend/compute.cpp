@@ -9,6 +9,19 @@
 namespace nacho {
 namespace backend {
 
+void ComputeKernelLowerer::add_seg_end_declarations(std::vector<llir::lStmt> &stmts) {
+    auto declare_for = [&stmts](const TensorLowerer &tensor) {
+        if (llir::lStmt declarations = tensor.make_seg_end_declarations(); declarations.defined()) {
+            stmts.push_back(declarations);
+        }
+    };
+
+    for (const auto &[tensor_name, tensor] : operand_tensors) {
+        declare_for(tensor);
+    }
+    declare_for(result_tensor);
+}
+
 void ComputeKernelLowerer::add_partition_assignments(
     std::vector<llir::lStmt> &stmts) {
     // int thread_id = blockIdx.x * blockDim.x + threadIdx.x;
@@ -227,6 +240,8 @@ llir::lStmt ComputeKernelLowerer::
         }
     }
 
+    add_seg_end_declarations(stmts);
+
     std::set<Seq, SeqLessThan> defined; // initially empty
     internal_assert(cin.defined());
     stmts.push_back(lower_loop(cin, defined, /*is_precompute*/ true, BEFORE_FIRST_LOOP+1, nullptr));
@@ -354,6 +369,8 @@ llir::lStmt ComputeKernelLowerer::
             ));
         }
     }
+
+    add_seg_end_declarations(stmts);
 
     std::set<Seq, SeqLessThan> defined; // initially empty
     internal_assert(cin.defined());

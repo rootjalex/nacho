@@ -207,9 +207,32 @@ namespace nacho {
             return llir::Store::make(get_indices_field(index)[pos], value);
         }
 
+        // The indices a level is physically stored under. A merged level flattens several
+        // dimensions into one traversal but still keeps a coordinate array per dimension,
+        // so that its layout is identical to the unflattened form; every other level is
+        // stored under its own single index.
+        inline std::vector<TensorIndex> stored_indices(const TensorIndex &index) const {
+            if (!index.is_merged_index()) {
+                return {index};
+            }
+            std::vector<TensorIndex> expanded;
+            expanded.reserve(index.indices.size());
+            for (const auto &name : index.indices) {
+                expanded.emplace_back(name);
+            }
+            return expanded;
+        }
+
+        inline std::vector<TensorIndex> stored_indices(const TensorLevelNum level) const {
+            return stored_indices(tensor_level_index(level));
+        }
+
+        // The coordinate arrays of a merged level are parallel, so they share a length and
+        // a read can use any of them. Code that *assigns* a length must instead walk
+        // stored_indices() and set each one.
         inline std::string
         get_length_field_name(const TensorIndex &index) const {
-            return "dim_" + index.str() + "_length";
+            return "dim_" + stored_indices(index).front().str() + "_length";
         }
 
         inline std::string get_length_field_name(const TensorLevelNum level) const {
@@ -229,7 +252,6 @@ namespace nacho {
                 get_length_field_name(level)
             );
         }
-
 
         inline llir::lExpr get_offsets_field(const TensorIndex &index) const {
             return llir::lFieldAccess::make(
@@ -567,9 +589,13 @@ namespace nacho {
                     get_bound(level, true, pos_vars)
                 }
             );
+            // Assignment, not a declaration: the variable is declared once at the top of
+            // the kernel by make_seg_end_declarations(). Only the lattice points that
+            // iterate this level assign it, but points that don't still read it, so it has
+            // to outlive any single point's scope.
             stmts.push_back(
-                llir::Declare::make(
-                    index_t, get_seg_end_name(level),
+                llir::Store::make(
+                    get_seg_end(level),
                     llir::lSelect::make(
                         index_value != get_coord_var(level, index_t),
                         get_iter(level),
@@ -577,8 +603,21 @@ namespace nacho {
                     )
                 )
             );
-        
+
             return llir::Sequence::make(std::move(stmts));
+        }
+
+        // Levels that need a seg_end variable: a non-unique sparse level can span several
+        // consecutive positions for one coordinate, so traversing it needs the end of the
+        // current run as well as the current position.
+        llir::lStmt make_seg_end_declarations() const {
+            std::vector<llir::lStmt> stmts;
+            for (TensorLevelNum level = BEFORE_FIRST_LEVEL + 1; level < end_tensor_level(); ++level) {
+                if (is_sparse(level) && !is_unique(level)) {
+                    stmts.push_back(llir::Declare::make(index_t, get_seg_end_name(level)));
+                }
+            }
+            return stmts.empty() ? llir::lStmt() : llir::Sequence::make(std::move(stmts));
         }
 
         llir::lStmt make_inc(const TensorLevelNum level,

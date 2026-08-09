@@ -231,6 +231,15 @@ namespace backend {
             stitch_and_generate->stitch_result_tensor_def(result_tensor.lower_tensor_struct_definition());
         }
 
+        // The compute kernel writes coordinate tuples into a merged result level, so the
+        // result needs the same tuple accessors the operands get.
+        if (llir::lStmt stmt = result_tensor.lower_func_read_tuple_for_merged_index(); stmt.defined()) {
+            stitch_and_generate->add_to_header_file(stmt);
+        }
+        if (llir::lStmt stmt = result_tensor.lower_func_write_tuple_for_merged_index(); stmt.defined()) {
+            stitch_and_generate->add_to_header_file(stmt);
+        }
+
 
 
         // Use BaseKernelLowerer to lower the one time struct definitions of result_per_thread_count struct and result_to_operand_pos_map struct
