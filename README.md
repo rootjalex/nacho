@@ -119,10 +119,10 @@ Each script directly in `benchmarks/` is a standalone entry point:
 ```bash
 python benchmarks/csr_add.py     --device both --start 0 --end 1600  # vs cuSPARSE/Taco/MKL
 python benchmarks/csr_mul.py     --device both --start 0 --end 1600  # vs PyTorch
-python benchmarks/coo_add.py     --device both --start 0 --end 1600  # vs PyTorch
-python benchmarks/coo_mul.py     --device both --start 0 --end 1600  # vs PyTorch
+python benchmarks/coo_add.py     --device cuda --start 0 --end 1600  # vs PyTorch
+python benchmarks/coo_mul.py     --device cuda --start 0 --end 1600  # vs PyTorch
 python benchmarks/coo_csr_add.py --device both --start 0 --end 1600  # vs PyTorch
-python benchmarks/csr_add_3.py   --device both --start 0 --end 1600  # fused vs unfused
+python benchmarks/csr_add_3.py   --device cuda --start 0 --end 1600  # fused vs unfused
 python benchmarks/frostt_tensors_add.py --device both               # CSF3 vs COO3D vs torch
 python benchmarks/inner_prod.py  --device both                       # FROSTT, CSF3 vs COO3 vs torch
 python benchmarks/dcsr_lb_comparison.py --device both                # partitioning schemes
