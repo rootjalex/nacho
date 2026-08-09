@@ -106,8 +106,8 @@ python benchmarks/datasets/download_suitesparse.py
 
 
 ```bash
-python benchmarks/datasets/download_frostt.py nell-2
-python benchmarks/datasets/sort_frostt.py nell-2
+python benchmarks/datasets/download_frostt.py --all
+python benchmarks/datasets/sort_frostt.py --all
 ```
 
 The second script is dedups and sorts the downloaded frostt tensor
