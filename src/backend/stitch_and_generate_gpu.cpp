@@ -296,21 +296,24 @@ const std::vector<std::string> &scatter_reduction_lines() {
         llir::lExpr null_scan_iterator =
             llir::Cast::make(llir::Generic_t::make("int32_t*"), llir::lConst::make(0));
 
-        llir::lExpr size_expr = llir::lConst::make(0);
-        if(compute_kernel_defined) {
-            if(operand_pos_map_struct_def.defined()) {
-                for(auto &[tensor_name, tensor] : operand_tensors) {
-                    auto field = std::find_if(operand_pos_map_struct_def.as<llir::Struct_t>()->fields.begin(), operand_pos_map_struct_def.as<llir::Struct_t>()->fields.end(),
-                        [previous_sparse_intersection, &tensor](const std::pair<std::string, llir::lType> &field) {
-                            return field.first == tensor.get_iterator_suffix(tensor.loop_index(previous_sparse_intersection));
-                        });
-                    if(field != operand_pos_map_struct_def.as<llir::Struct_t>()->fields.end()) {
-                        size_expr =  size_expr + result_tensor.get_length_field(result_tensor.loop_index(previous_sparse_intersection));
-                    }
+        // The position map fields for this level, if any. They are read again at the next
+        // sparse intersection, so they get a block of their own rather than a slice of the
+        // per-level scratch that is freed on the way there.
+        std::vector<std::pair<std::string, llir::lType>> pos_map_fields;
+        if(compute_kernel_defined && operand_pos_map_struct_def.defined()) {
+            for(auto &[tensor_name, tensor] : operand_tensors) {
+                auto field = std::find_if(operand_pos_map_struct_def.as<llir::Struct_t>()->fields.begin(), operand_pos_map_struct_def.as<llir::Struct_t>()->fields.end(),
+                    [previous_sparse_intersection, &tensor](const std::pair<std::string, llir::lType> &field) {
+                        return field.first == tensor.get_iterator_suffix(tensor.loop_index(previous_sparse_intersection));
+                    });
+                if(field != operand_pos_map_struct_def.as<llir::Struct_t>()->fields.end()) {
+                    pos_map_fields.push_back(*field);
                 }
             }
+        }
 
-        
+        llir::lExpr size_expr = llir::lConst::make(0);
+        if(compute_kernel_defined) {
             size_expr = size_expr + result_tensor.get_length_field(result_tensor.loop_index(previous_sparse_intersection)) + llir::lConst::make(1);
         }
 
@@ -395,29 +398,51 @@ const std::vector<std::string> &scatter_reduction_lines() {
             return llir::Cast::make(pointer_type, mem_block_base_var + offset_var);
         };
 
-        if(compute_kernel_defined) {
-            if(operand_pos_map_struct_def.defined()) {
-                declare_operand_pos_map_once();
+        if(!pos_map_fields.empty()) {
+            declare_operand_pos_map_once();
 
-                for(auto &[tensor_name, tensor] : operand_tensors) {
-                    auto field = std::find_if(operand_pos_map_struct_def.as<llir::Struct_t>()->fields.begin(), operand_pos_map_struct_def.as<llir::Struct_t>()->fields.end(),
-                        [previous_sparse_intersection, &tensor](const std::pair<std::string, llir::lType> &field) {
-                            return field.first == tensor.get_iterator_suffix(tensor.loop_index(previous_sparse_intersection));
-                        });
-                    if(field != operand_pos_map_struct_def.as<llir::Struct_t>()->fields.end()) {
-                        main_func.body.emplace_back(
-                            llir::Store::make(
-                                llir::lFieldAccess::make(llir::lVar::make(operand_pos_map_struct_def, get_operand_pos_map_var_name()), field->first),
-                                mem_block_slice(field->second)
-                            )
-                        );
-                        main_func.body.emplace_back(
-                            llir::Accumulate::make(offset_var, llir::lVar::make(sizet_type, "sizeof(int32_t)") * result_tensor.get_length_field(result_tensor.loop_index(previous_sparse_intersection)))
-                        );
-                    }
-                }
+            llir::lExpr pos_map_length = result_tensor.get_length_field(result_tensor.loop_index(previous_sparse_intersection));
+            std::string pos_map_block_name = "pos_map_block_" + get_all_loops_string(current_sparse_intersection);
+            llir::lExpr pos_map_block_var = llir::lVar::make(llir::Generic_t::make("void*"), pos_map_block_name);
+            main_func.body.emplace_back(
+                llir::Declare::make(llir::Generic_t::make("void*"), pos_map_block_name, llir::lConst::make(0))
+            );
+            main_func.body.emplace_back(
+                generate_single_memory_allocation_statement(
+                    pos_map_block_var,
+                    llir::Ptr_t::make(void_type),
+                    llir::lVar::make(sizet_type, "sizeof(int32_t)") * llir::lConst::make((int)pos_map_fields.size()) * pos_map_length,
+                    false
+                )
+            );
+            long_lived_allocations.push_back(pos_map_block_var);
+
+            std::string pos_map_offset_name = "pos_map_offset_" + get_all_loops_string(current_sparse_intersection);
+            std::string pos_map_base_name = "pos_map_block_base_" + get_all_loops_string(current_sparse_intersection);
+            main_func.body.emplace_back(
+                llir::Declare::make(llir::Int_t::make(32), pos_map_offset_name, llir::lConst::make(0))
+            );
+            main_func.body.emplace_back(
+                llir::Declare::make(llir::Generic_t::make("char*"), pos_map_base_name,
+                    llir::Cast::make(llir::Generic_t::make("char*"), pos_map_block_var))
+            );
+            auto pos_map_offset_var = llir::lVar::make(llir::Int_t::make(32), pos_map_offset_name);
+            auto pos_map_base_var = llir::lVar::make(llir::Generic_t::make("char*"), pos_map_base_name);
+
+            for(const auto &field : pos_map_fields) {
+                main_func.body.emplace_back(
+                    llir::Store::make(
+                        llir::lFieldAccess::make(llir::lVar::make(operand_pos_map_struct_def, get_operand_pos_map_var_name()), field.first),
+                        llir::Cast::make(field.second, pos_map_base_var + pos_map_offset_var)
+                    )
+                );
+                main_func.body.emplace_back(
+                    llir::Accumulate::make(pos_map_offset_var, llir::lVar::make(sizet_type, "sizeof(int32_t)") * pos_map_length)
+                );
             }
+        }
 
+        if(compute_kernel_defined) {
             main_func.body.emplace_back(
                 llir::Store::make(
                     work_offsets_var,
@@ -617,14 +642,15 @@ const std::vector<std::string> &scatter_reduction_lines() {
         );
     }
 
+    llir::lStmt StitchAndGenerateGPU::generate_free_statement(llir::lExpr address) {
+        return llir::BaseExpr::make(
+            llir::lFunctionCall::make("cudaFreeAsync", {address, cuda_stream_var})
+        );
+    }
+
     llir::lStmt StitchAndGenerateGPU::generate_memory_free_statements(LoopNum sparse_intersection) {
         std::string mem_block_name = "mem_block_" + get_all_loops_string(sparse_intersection);
-        return llir::BaseExpr::make(
-            llir::lFunctionCall::make("cudaFreeAsync", {
-                llir::lVar::make(llir::Generic_t::make("void*"), mem_block_name),
-                cuda_stream_var
-            })
-        );
+        return generate_free_statement(llir::lVar::make(llir::Generic_t::make("void*"), mem_block_name));
     }
 
     llir::lStmt StitchAndGenerateGPU::generate_total_work_from_offsets_statement(llir::lExpr index_expr) {

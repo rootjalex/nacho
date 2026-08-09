@@ -187,6 +187,20 @@ namespace backend {
         // no earlier level to free).
         virtual llir::lStmt generate_memory_free_statements(LoopNum sparse_intersection) = 0;
 
+        // Buffers that outlive the level that allocated them: a result-to-operand position
+        // map is written at one sparse intersection and read by the next, so it cannot go
+        // out with that level's scratch. Released just before the entry point returns, on
+        // both the normal and the empty-result path.
+        std::vector<llir::lExpr> long_lived_allocations;
+
+        // Generates a single "release `address`" statement (`free` on CPU, `cudaFreeAsync`
+        // on GPU).
+        virtual llir::lStmt generate_free_statement(llir::lExpr address) = 0;
+
+        // Frees everything in long_lived_allocations, or an undefined statement if the
+        // kernel has none.
+        llir::lStmt generate_long_lived_free_statements();
+
         void stitch_compute_kernel_call(llir::lStmt compute_kernel, LoopNum current_sparse_intersection);
         void stitch_partition_kernel_call(llir::lType partition_struct, llir::lStmt partition_kernel, LoopNum current_sparse_intersection);
         void stitch_precompute_kernel_call(llir::lStmt precompute_kernel, LoopNum current_sparse_intersection);
@@ -289,6 +303,8 @@ namespace backend {
 
         llir::lStmt generate_memory_free_statements(LoopNum sparse_intersection) override;
 
+        llir::lStmt generate_free_statement(llir::lExpr address) override;
+
         llir::lExpr wrap_kernel_with_backend_specific_call(llir::lStmt kernel, LoopNum current_sparse_intersection) override;
 
         void generate_prefix_sum_calls(LoopNum previous_sparse_intersection, LoopNum current_sparse_intersection) override;
@@ -320,6 +336,8 @@ namespace backend {
         llir::lStmt generate_zero_range_statement(llir::lExpr field, llir::lExpr byte_count) override;
 
         llir::lStmt generate_memory_free_statements(LoopNum sparse_intersection) override;
+
+        llir::lStmt generate_free_statement(llir::lExpr address) override;
 
         llir::lExpr wrap_kernel_with_backend_specific_call(llir::lStmt kernel, LoopNum current_sparse_intersection) override;
 

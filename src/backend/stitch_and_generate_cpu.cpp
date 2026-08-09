@@ -65,14 +65,17 @@ namespace backend {
                             return field.first == tensor.get_iterator_suffix(tensor.loop_index(previous_sparse_intersection));
                         });
                     if(field != operand_pos_map_struct_def.as<llir::Struct_t>()->fields.end()) {
+                            llir::lExpr pos_map_field = llir::lFieldAccess::make(
+                                llir::lVar::make(operand_pos_map_struct_def, get_operand_pos_map_var_name()), field->first);
                             main_func.body.emplace_back(
                                 generate_single_memory_allocation_statement(
-                                    llir::lFieldAccess::make(llir::lVar::make(operand_pos_map_struct_def, get_operand_pos_map_var_name()), field->first),
+                                    pos_map_field,
                                     field->second,
                                     llir::lVar::make(sizet_type, "sizeof(int32_t)") * result_tensor.get_length_field(result_tensor.loop_index(previous_sparse_intersection)),
-                                    true
+                                    false
                                 )
                             );
+                            long_lived_allocations.push_back(pos_map_field);
                     }
                 }
             }
@@ -233,6 +236,10 @@ namespace backend {
         );
     }
 
+    llir::lStmt StitchAndGenerateCPU::generate_free_statement(llir::lExpr address) {
+        return llir::BaseExpr::make(llir::lFunctionCall::make("free", {address}));
+    }
+
     llir::lStmt StitchAndGenerateCPU::generate_memory_free_statements(LoopNum sparse_intersection) {
         auto it = allocated_pointers.find(get_all_loops_string(sparse_intersection));
         if (it == allocated_pointers.end()) {
@@ -241,9 +248,7 @@ namespace backend {
 
         std::vector<llir::lStmt> free_stmts;
         for (auto &address : it->second) {
-            free_stmts.emplace_back(
-                llir::BaseExpr::make(llir::lFunctionCall::make("free", {address}))
-            );
+            free_stmts.emplace_back(generate_free_statement(address));
         }
         return llir::Sequence::make(free_stmts);
     }

@@ -201,6 +201,11 @@ namespace backend {
             empty_out(reduced_result_tensor, BEFORE_FIRST_LOOP);
         }
 
+        llir::lStmt long_lived_frees = generate_long_lived_free_statements();
+        if (long_lived_frees.defined()) {
+            early_termination_stmts.emplace_back(long_lived_frees);
+        }
+
         early_termination_stmts.emplace_back(
             llir::Return::make(get_result_var())
         );
@@ -235,6 +240,17 @@ namespace backend {
 
     llir::lType StitchAndGenerate::get_result_struct_type() const {
         return llir::Generic_t::make(output_tensor().get_struct_name() + "<index_t, value_t>");
+    }
+
+    llir::lStmt StitchAndGenerate::generate_long_lived_free_statements() {
+        if (long_lived_allocations.empty()) {
+            return llir::lStmt();
+        }
+        std::vector<llir::lStmt> free_stmts;
+        for (const llir::lExpr &address : long_lived_allocations) {
+            free_stmts.emplace_back(generate_free_statement(address));
+        }
+        return llir::Sequence::make(free_stmts);
     }
 
     void StitchAndGenerate::resolve_operand_ordering(std::vector<std::string> requested) {
@@ -286,6 +302,11 @@ namespace backend {
         header_file << "\n#undef __runnable__\n";
         header_file << "} // namespace " << name << std::endl;
         header_file.close();
+
+        llir::lStmt long_lived_frees = generate_long_lived_free_statements();
+        if (long_lived_frees.defined()) {
+            main_func.body.emplace_back(long_lived_frees);
+        }
 
         main_func.body.emplace_back(llir::Return::make(get_result_var()));
 
