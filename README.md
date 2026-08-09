@@ -100,7 +100,7 @@ export NACHO_FROSTT_DIR=/path/to/frostt             # .tns files, frostt_tensors
 to the paths above, so export the variables first. Both downloaders skip what is already
 on disk and can be re-run after an interrupted transfer.
 
-### Downloading and Unpack SuiteSparse dataset
+### SuiteSparse dataset
 
 ```bash
 python benchmarks/datasets/download_suitesparse.py
@@ -110,7 +110,7 @@ python benchmarks/datasets/download_suitesparse.py
 cd "$NACHO_SUITESPARSE_DIR"
 find . -name '*.tar.gz' -print0 | xargs -0 -P 8 -n 1 tar -xzf
 ```
-### Download and Sort Frostt Tensor Dataset
+### Frostt Tensor Dataset
 
 ```bash
 python benchmarks/datasets/download_frostt.py --all
