@@ -24,7 +24,6 @@ import torch
 
 import nacho
 
-import config
 from common.frostt import iter_shifted_pairs, to_torch
 from common.timing import cpu_time, gpu_time, launch_args
 
@@ -46,7 +45,7 @@ def _scalar(result):
     return float(values.cpu().numpy()[0])
 
 
-def benchmark_inner_prod(device="cpu", save_and_plot=True):
+def benchmark_inner_prod(device="cpu"):
     """Time both layouts against PyTorch on each configured FROSTT tensor."""
     on_gpu = device == "cuda"
     measure = gpu_time if on_gpu else cpu_time
@@ -54,7 +53,7 @@ def benchmark_inner_prod(device="cpu", save_and_plot=True):
     csf_kernel = nacho.gpu_inner_prod_f32 if on_gpu else nacho.cpu_inner_prod_f32
     coo_kernel = nacho.gpu_inner_prod_coo_f32 if on_gpu else nacho.cpu_inner_prod_coo_f32
 
-    names, csf_times, coo_times, pytorch_times, nnzs, failed = [], [], [], [], [], []
+    names, csf_times, coo_times, pytorch_times, failed = [], [], [], [], []
 
     for name, dims, a, b in iter_shifted_pairs(device):
         a_coordinates, a_values = a
@@ -141,7 +140,6 @@ def benchmark_inner_prod(device="cpu", save_and_plot=True):
             failed.append(name)
 
         names.append(name)
-        nnzs.append(len(a_values) + len(b_values))
         csf_times.append(csf_ms)
         coo_times.append(coo_ms)
         pytorch_times.append(pytorch_ms)
@@ -154,15 +152,6 @@ def benchmark_inner_prod(device="cpu", save_and_plot=True):
         return failed
 
     _print_summary(device, names, csf_times, coo_times, pytorch_times, failed)
-    if save_and_plot:
-        config.RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-        path = config.RESULTS_DIR / f"inner_prod_{device}.npz"
-        # nan where an implementation could not run, so the series stay aligned by tensor.
-        np.savez(path, names=names, nnz=nnzs,
-                 csf=np.array(csf_times, dtype=float),
-                 coo=np.array(coo_times, dtype=float),
-                 pytorch=np.array(pytorch_times, dtype=float))
-        print(f"Saved: {path}")
     return failed
 
 
@@ -208,12 +197,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--device", choices=["cpu", "cuda", "both"], default="both",
                         help="which device's benchmark to run (default: both)")
-    parser.add_argument("--no-plot", action="store_true",
-                        help="print results without writing .npz files")
     args = parser.parse_args()
 
     for device in (["cpu", "cuda"] if args.device == "both" else [args.device]):
-        benchmark_inner_prod(device=device, save_and_plot=not args.no_plot)
+        benchmark_inner_prod(device=device)
 
 
 if __name__ == "__main__":

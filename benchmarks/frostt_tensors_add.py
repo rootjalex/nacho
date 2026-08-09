@@ -24,15 +24,11 @@ their coordinates must already be sorted lexicographically.
 import argparse
 import gc
 
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
 import nacho
 
-import config
 from common.compare import (coo3_result_to_coordinates, coordinates_equal,
                             csf3_result_to_coordinates)
 from common.frostt import iter_shifted_pairs, to_torch
@@ -53,7 +49,7 @@ def _check(label, actual, expected):
     return ok
 
 
-def benchmark_frostt_add(device="cpu", save_and_plot=True, check=True):
+def benchmark_frostt_add(device="cpu", check=True):
     """Time csf_add, coo3d_add and PyTorch on each configured FROSTT tensor."""
     on_gpu = device == "cuda"
     measure = gpu_time if on_gpu else cpu_time
@@ -61,7 +57,7 @@ def benchmark_frostt_add(device="cpu", save_and_plot=True, check=True):
     csf_kernel = nacho.gpu_csf_add_f32 if on_gpu else nacho.cpu_csf_add_f32
     coo3d_kernel = nacho.gpu_coo3d_add_f32 if on_gpu else nacho.cpu_coo3d_add_f32
 
-    names, csf_times, coo3d_times, pytorch_times, nnzs = [], [], [], [], []
+    names, csf_times, coo3d_times, pytorch_times = [], [], [], []
     failed = []
 
     for name, dims, a, b in iter_shifted_pairs(device):
@@ -138,7 +134,6 @@ def benchmark_frostt_add(device="cpu", save_and_plot=True, check=True):
             failed.append(name)
 
         names.append(name)
-        nnzs.append(len(a_values) + len(b_values))
         csf_times.append(csf_ms)
         coo3d_times.append(coo3d_ms)
         pytorch_times.append(pytorch_ms)
@@ -151,8 +146,6 @@ def benchmark_frostt_add(device="cpu", save_and_plot=True, check=True):
         return names, csf_times, coo3d_times, pytorch_times
 
     _print_summary(device, names, csf_times, coo3d_times, pytorch_times, failed)
-    if save_and_plot:
-        _plot_speedups(device, names, nnzs, csf_times, coo3d_times, pytorch_times)
     return names, csf_times, coo3d_times, pytorch_times
 
 
@@ -194,55 +187,18 @@ def _print_summary(device, names, csf_times, coo3d_times, pytorch_times, failed)
     print(rule)
 
 
-def _plot_speedups(device, names, nnzs, csf_times, coo3d_times, pytorch_times):
-    config.RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-    stem = str(config.RESULTS_DIR / f"frostt_tensors_add_{device}")
-
-    np.savez(f"{stem}.npz", names=names, nnz=nnzs,
-             csf=np.array(csf_times, dtype=float), coo3d=np.array(coo3d_times, dtype=float),
-             pytorch=np.array(pytorch_times, dtype=float))
-
-    # A tensor an implementation could not run has no bar: nan leaves a gap rather than
-    # dropping the tensor and shifting every label after it.
-    def speedups(times):
-        return np.array([np.nan if p is None or t is None else p / t
-                         for p, t in zip(pytorch_times, times)], dtype=float)
-
-    positions = np.arange(len(names))
-    width = 0.38
-
-    figure, axes = plt.subplots(figsize=(max(4.0, 1.1 * len(names)), 2.6))
-    axes.bar(positions - width / 2, speedups(csf_times), width,
-             label="CSF3", color="#88CCEE")
-    axes.bar(positions + width / 2, speedups(coo3d_times), width,
-             label="COO3D", color="#332288")
-    axes.axhline(1.0, color="grey", linewidth=0.8)
-
-    axes.set_xticks(positions)
-    axes.set_xticklabels(names, rotation=30, ha="right")
-    axes.set_ylabel("Speedup over PyTorch")
-    axes.set_title(f"FROSTT 3D addition ({device})")
-    axes.legend()
-    figure.tight_layout()
-    figure.savefig(f"{stem}.png", dpi=200)
-    print(f"Saved: {stem}.png")
-    plt.close(figure)
-
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--device", choices=["cpu", "cuda", "both"], default="both",
                         help="which device's benchmark to run (default: both)")
-    parser.add_argument("--no-plot", action="store_true",
-                        help="print results without writing figures or .npz files")
     parser.add_argument("--no-check", action="store_true",
                         help="time only, skipping the correctness comparison and the "
                              "second result it has to keep alive")
     args = parser.parse_args()
 
     for device in (["cpu", "cuda"] if args.device == "both" else [args.device]):
-        benchmark_frostt_add(device=device, save_and_plot=not args.no_plot,
-                             check=not args.no_check)
+        benchmark_frostt_add(device=device, check=not args.no_check)
 
 
 if __name__ == "__main__":

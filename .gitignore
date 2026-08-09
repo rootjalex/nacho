@@ -38,6 +38,7 @@ cmake-build-*
 .idea
 .vscode
 generated
+benchmark_results
 __pycache__/
 *.egg-info/
 

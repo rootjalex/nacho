@@ -2,10 +2,10 @@
 
 Computes c[i,k] * sum_j a[i,j] * b[j,k] as one generated kernel, so the product is only
 formed where the mask has an entry and the intermediate A @ B is never materialised in
-full. Both comparisons materialise it, differing only in who computes the product:
+full. Both baselines materialise it, differing in who computes the product and the mask:
 
-  Nacho unfused   gpu_spgemm_f32(A, B)          then gpu_csr_mul_f32 with C
   cuSPARSE        gpu_spgemm_cusparse_f32(A, B) then gpu_csr_mul_f32 with C
+  PyTorch         torch.sparse.mm(A, B) then an elementwise multiply with C
 
 
 Each iteration measures up to two products: A, A, A when A is square, and the consecutive
@@ -49,7 +49,7 @@ def _cusparse_unfused(A_base, B_base, C_csr, launch):
 
 
 def _measure_triple(A_torch, B_torch, C_torch, launch):
-    """Time the fused kernel and both unfused routes on one masked product."""
+    """Time the fused kernel against the two unfused baselines on one masked product."""
     A_csr = nacho.to_csr(A_torch, "cuda")
     B_csr = nacho.to_csr(B_torch, "cuda")
     C_csr = nacho.to_csr(C_torch, "cuda")
@@ -58,27 +58,25 @@ def _measure_triple(A_torch, B_torch, C_torch, launch):
 
     fused, fused_ms = _time_product(
         "nacho fused", lambda: nacho.gpu_sssmm_f32(A_csr, B_csr, C_csr, *launch))
-    _, unfused_ms = _time_product(
-        "nacho unfused",
-        lambda: nacho.gpu_csr_mul_f32(nacho.gpu_spgemm_f32(A_csr, B_csr, *launch),
-                                      C_csr, *launch))
     reference, cusparse_ms = _time_product(
         "cuSPARSE", lambda: _cusparse_unfused(A_base, B_base, C_csr, launch))
+    _, pytorch_ms = _time_product(
+        "PyTorch", lambda: torch.sparse.mm(A_torch, B_torch) * C_torch)
 
     correct = True
     if fused is not None and reference is not None:
         correct = csr_structure_equal(fused, reference)
         print(f"  nacho fused    {fused_ms:.4f} ms   correct={correct}")
-        if unfused_ms is not None:
-            print(f"  nacho unfused  {unfused_ms:.4f} ms   "
-                  f"speedup_fused={unfused_ms/fused_ms:.3f}x")
         print(f"  cuSPARSE       {cusparse_ms:.4f} ms   "
               f"speedup_fused={cusparse_ms/fused_ms:.3f}x")
+        if pytorch_ms is not None:
+            print(f"  PyTorch        {pytorch_ms:.4f} ms   "
+                  f"speedup_fused={pytorch_ms/fused_ms:.3f}x")
         if not correct:
             csr_structure_failure_reason(fused, reference)
 
     del A_csr, B_csr, C_csr, A_base, B_base, fused, reference
-    return fused_ms, unfused_ms, cusparse_ms, correct
+    return fused_ms, cusparse_ms, pytorch_ms, correct
 
 
 def _slice_rows(matrix, rows, cols):
@@ -91,17 +89,17 @@ def _slice_rows(matrix, rows, cols):
 
 
 def benchmark_sssmm(start, end, save_and_plot=True):
-    """Fused vs unfused vs cuSPARSE over the matrix list."""
+    """Fused against cuSPARSE and PyTorch over the matrix list."""
     launch = launch_args("cuda")
     df = matrix_list()
 
-    nnz_totals, fused_times, unfused_times, cusparse_times, failed = [], [], [], [], []
+    nnz_totals, fused_times, cusparse_times, pytorch_times, failed = [], [], [], [], []
 
-    def record(nnz, fused_ms, unfused_ms, cusparse_ms, correct, index):
+    def record(nnz, fused_ms, cusparse_ms, pytorch_ms, correct, index):
         nnz_totals.append(nnz)
         fused_times.append(fused_ms)
-        unfused_times.append(unfused_ms)
         cusparse_times.append(cusparse_ms)
+        pytorch_times.append(pytorch_ms)
         if not correct:
             print(f"  FAILED at {index}")
             failed.append(index)
@@ -146,16 +144,16 @@ def benchmark_sssmm(start, end, save_and_plot=True):
     if save_and_plot:
         plot_scatter(f"sssmm_gpu_{start}-{end}", nnz_totals,
                      "Total nnz (nnzA + nnzB + nnzC)", fused_times,
-                     cusparse=cusparse_times, unfused=unfused_times)
+                     cusparse=cusparse_times, pytorch=pytorch_times)
 
-    for label, series in (("Nacho unfused", unfused_times), ("cuSPARSE", cusparse_times)):
+    for label, series in (("cuSPARSE", cusparse_times), ("PyTorch", pytorch_times)):
         both = [(f, o) for f, o in zip(fused_times, series)
                 if f is not None and o is not None]
         summarize(f"gpu sssmm {start}-{end}", [f for f, _ in both],
                   label, [o for _, o in both], failed)
     print(f"  incomplete: fused {sum(t is None for t in fused_times)}, "
-          f"unfused {sum(t is None for t in unfused_times)}, "
           f"cuSPARSE {sum(t is None for t in cusparse_times)}, "
+          f"PyTorch {sum(t is None for t in pytorch_times)}, "
           f"of {len(nnz_totals)} products")
     return failed
 
