@@ -63,6 +63,7 @@ target_sources(
     src/Equality.cpp
     src/Format.cpp
     src/Frontend.cpp
+    src/Kernel.cpp
     src/GeneratePartition.cpp
     src/Lattice.cpp
     src/Mutator.cpp
@@ -73,6 +74,8 @@ target_sources(
     src/llir/Function.cpp
     src/llir/LLIR.cpp
     src/backend/compile.cpp
+    src/backend/generate_bindings.cpp
+    src/backend/output.cpp
     src/backend/partition.cpp
     src/backend/tensor.cpp
     src/backend/compute.cpp
@@ -93,6 +96,7 @@ target_sources(
     include/Equality.h
     include/Format.h
     include/Frontend.h
+    include/Kernel.h
     include/GeneratePartition.h
     include/IntrusivePtr.h
     include/IRFwdDecl.h
@@ -112,6 +116,8 @@ target_sources(
     include/llir/LLIR.h
     include/backend/partition.h
     include/backend/compile.h
+    include/backend/generate_bindings.h
+    include/backend/output.h
     include/backend/tensor.h
     include/backend/compute.h
     include/backend/base_lowerer.h

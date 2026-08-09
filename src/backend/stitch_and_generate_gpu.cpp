@@ -3,14 +3,196 @@
 namespace nacho {
 namespace backend {
 
+namespace {
+
+// The contraction stage of ESC algorithm, one entry per emitted line. `$...$` are substituted with the
+// tensors' actual field names.
+//
+//
+// TODO(atharvac) : this needs to be generalized for any kind of scatter reduction
+// not just dense-sparse-sparse to dense-sparse
+const std::vector<std::string> &scatter_reduction_lines() {
+    static const std::vector<std::string> lines = {
+        "",
+        "// Contract $REDUCED$ out of $TEMP$.",
+        "{",
+        "  const index_t contract_rows = $ROWS$;",
+        "  const index_t contract_products = $PRODUCTS$;",
+        "  const auto contract_policy = thrust::cuda::par_nosync.on(stream);",
+        "",
+        "  index_t* contract_segments = nullptr;",
+        "  index_t* contract_keys_alt = nullptr;",
+        "  index_t* contract_row_of = nullptr;",
+        "  index_t* contract_row_ids = nullptr;",
+        "  index_t* contract_unique_rows = nullptr;",
+        "  index_t* contract_row_counts = nullptr;",
+        "  value_t* contract_values_alt = nullptr;",
+        "  value_t* contract_summed_values = nullptr;",
+        "  int64_t* contract_keys = nullptr;",
+        "  int64_t* contract_summed_keys = nullptr;",
+        "",
+        "  // CUB sizes its scratch from the counts alone, so these probes run before the pool",
+        "  // exists and the iterators they are handed are still null.",
+        "  size_t contract_sort_bytes = 0;",
+        "  size_t contract_scan_bytes = 0;",
+        "  {",
+        "    cub::DoubleBuffer<index_t> probe_keys(contract_keys_alt, contract_keys_alt);",
+        "    cub::DoubleBuffer<value_t> probe_values(contract_values_alt, contract_values_alt);",
+        "    cub::DeviceSegmentedSort::SortPairs(nullptr, contract_sort_bytes, probe_keys, probe_values,",
+        "                                        contract_products, contract_rows,",
+        "                                        contract_segments, contract_segments + 1, stream);",
+        "  }",
+        "  cub::DeviceScan::InclusiveSum(nullptr, contract_scan_bytes, contract_row_counts,",
+        "                                contract_row_counts, contract_rows, stream);",
+        // Not const: CUB takes the size by mutable reference, and rewrites it on each call.
+        "  size_t contract_scratch_bytes =",
+        "      contract_sort_bytes > contract_scan_bytes ? contract_sort_bytes : contract_scan_bytes;",
+        "",
+        "  // Every buffer below is one entry per scalar product, so together they can outgrow",
+        "  // the device. One allocation makes that failure atomic: a sequence of them would",
+        "  // strand whatever had already succeeded, since the frees are only reached on the way",
+        "  // out. Widest alignment first, then the 4-byte buffers, then CUB's scratch on a",
+        "  // 256-byte boundary.",
+        "  const size_t contract_n = (size_t)contract_products;",
+        "  const size_t contract_pool_bytes =",
+        "      2 * sizeof(int64_t) * contract_n",
+        "    + 2 * sizeof(value_t) * contract_n",
+        "    + 5 * sizeof(index_t) * contract_n",
+        "    + sizeof(index_t) * (size_t)(contract_rows + 1)",
+        "    + 256 + contract_scratch_bytes;",
+        "  void* contract_pool = nullptr;",
+        "  cudaMallocAsync(&contract_pool, contract_pool_bytes, stream);",
+        "  char* contract_base = (char*)contract_pool;",
+        "  size_t contract_offset = 0;",
+        "  contract_keys = (int64_t*)(contract_base + contract_offset);",
+        "  contract_offset += sizeof(int64_t) * contract_n;",
+        "  contract_summed_keys = (int64_t*)(contract_base + contract_offset);",
+        "  contract_offset += sizeof(int64_t) * contract_n;",
+        "  contract_values_alt = (value_t*)(contract_base + contract_offset);",
+        "  contract_offset += sizeof(value_t) * contract_n;",
+        "  contract_summed_values = (value_t*)(contract_base + contract_offset);",
+        "  contract_offset += sizeof(value_t) * contract_n;",
+        "  contract_keys_alt = (index_t*)(contract_base + contract_offset);",
+        "  contract_offset += sizeof(index_t) * contract_n;",
+        "  contract_row_of = (index_t*)(contract_base + contract_offset);",
+        "  contract_offset += sizeof(index_t) * contract_n;",
+        "  contract_row_ids = (index_t*)(contract_base + contract_offset);",
+        "  contract_offset += sizeof(index_t) * contract_n;",
+        "  contract_unique_rows = (index_t*)(contract_base + contract_offset);",
+        "  contract_offset += sizeof(index_t) * contract_n;",
+        "  contract_row_counts = (index_t*)(contract_base + contract_offset);",
+        "  contract_offset += sizeof(index_t) * contract_n;",
+        "  contract_segments = (index_t*)(contract_base + contract_offset);",
+        "  contract_offset += sizeof(index_t) * (size_t)(contract_rows + 1);",
+        "  contract_offset = ((contract_offset + 255) / 256) * 256;",
+        "  void* contract_scratch = (void*)(contract_base + contract_offset);",
+        "",
+        "  // Outer coordinate p spans inner positions",
+        "  // [inner_offsets[reduced_offsets[p]], inner_offsets[reduced_offsets[p + 1]]).",
+        "  {",
+        "    const index_t* contract_inner_offsets = $INNER_OFFSETS$;",
+        "    thrust::transform(contract_policy,",
+        "                      $REDUCED_OFFSETS$, $REDUCED_OFFSETS$ + (contract_rows + 1),",
+        "                      contract_segments,",
+        "                      [contract_inner_offsets] __device__ (index_t position) {",
+        "                        return contract_inner_offsets[position];",
+        "                      });",
+        "  }",
+        "",
+        "  cub::DoubleBuffer<index_t> contract_sorted_keys($INNER_INDICES$, contract_keys_alt);",
+        "  cub::DoubleBuffer<value_t> contract_sorted_values($TEMP_VALUES$, contract_values_alt);",
+        "  cub::DeviceSegmentedSort::SortPairs(contract_scratch, contract_scratch_bytes,",
+        "                                      contract_sorted_keys, contract_sorted_values,",
+        "                                      contract_products, contract_rows,",
+        "                                      contract_segments, contract_segments + 1, stream);",
+        "",
+        "  {",
+        "    const index_t* contract_bounds = contract_segments;",
+        "    const index_t contract_row_count = contract_rows;",
+        "    thrust::transform(contract_policy,",
+        "                      thrust::make_counting_iterator<index_t>(0),",
+        "                      thrust::make_counting_iterator<index_t>(contract_products),",
+        "                      contract_row_of,",
+        "                      [contract_bounds, contract_row_count] __device__ (index_t position) {",
+        "                        index_t low = 0;",
+        "                        index_t high = contract_row_count;",
+        "                        while (low < high) {",
+        "                          const index_t mid = (low + high + 1) / 2;",
+        "                          if (contract_bounds[mid] <= position) { low = mid; } else { high = mid - 1; }",
+        "                        }",
+        "                        return low;",
+        "                      });",
+        "    const index_t* contract_rows_of = contract_row_of;",
+        "    const index_t* contract_inner = contract_sorted_keys.Current();",
+        "    thrust::transform(contract_policy,",
+        "                      thrust::make_counting_iterator<index_t>(0),",
+        "                      thrust::make_counting_iterator<index_t>(contract_products),",
+        "                      contract_keys,",
+        "                      [contract_rows_of, contract_inner] __device__ (index_t position) {",
+        "                        return ((int64_t)contract_rows_of[position] << 32)",
+        "                             | (int64_t)(uint32_t)contract_inner[position];",
+        "                      });",
+        "  }",
+        "",
+        "  const auto contract_end = thrust::reduce_by_key(contract_policy,",
+        "      contract_keys, contract_keys + contract_products,",
+        "      contract_sorted_values.Current(),",
+        "      contract_summed_keys, contract_summed_values,",
+        "      thrust::equal_to<int64_t>(), thrust::plus<value_t>());",
+        "  cudaStreamSynchronize(stream);",
+        "  $OUT_LENGTH$ = (index_t)(contract_end.first - contract_summed_keys);",
+        "",
+        "  cudaMallocAsync((void**)&$OUT_OFFSETS$, sizeof(index_t) * (contract_rows + 1), stream);",
+        "  cudaMallocAsync((void**)&$OUT_INDICES$, sizeof(index_t) * $OUT_LENGTH$, stream);",
+        "  cudaMallocAsync((void**)&$OUT_VALUES$, sizeof(value_t) * $OUT_LENGTH$, stream);",
+        "  cudaMemsetAsync($OUT_OFFSETS$, 0, sizeof(index_t) * (contract_rows + 1), stream);",
+        "",
+        "  thrust::transform(contract_policy, contract_summed_keys, contract_summed_keys + $OUT_LENGTH$,",
+        "                    $OUT_INDICES$,",
+        "                    [] __device__ (int64_t key) { return (index_t)(key & 0xFFFFFFFF); });",
+        "  thrust::copy(contract_policy, contract_summed_values,",
+        "               contract_summed_values + $OUT_LENGTH$, $OUT_VALUES$);",
+        "  thrust::transform(contract_policy, contract_summed_keys, contract_summed_keys + $OUT_LENGTH$,",
+        "                    contract_row_ids,",
+        "                    [] __device__ (int64_t key) { return (index_t)(key >> 32); });",
+        "",
+        "  // Rebuild the output's offsets from how many entries each outer coordinate kept.",
+        "  const auto contract_rows_end = thrust::reduce_by_key(contract_policy,",
+        "      contract_row_ids, contract_row_ids + $OUT_LENGTH$,",
+        "      thrust::make_constant_iterator<index_t>(1),",
+        "      contract_unique_rows, contract_row_counts);",
+        "  cudaStreamSynchronize(stream);",
+        "  const index_t contract_unique = (index_t)(contract_rows_end.first - contract_unique_rows);",
+        "  thrust::scatter(contract_policy, contract_row_counts, contract_row_counts + contract_unique,",
+        "                  contract_unique_rows, $OUT_OFFSETS$ + 1);",
+        "  cub::DeviceScan::InclusiveSum(contract_scratch, contract_scratch_bytes,",
+        "                                $OUT_OFFSETS$ + 1, $OUT_OFFSETS$ + 1, contract_rows, stream);",
+        "",
+        "  // Both halves of each sort double buffer, so whichever one ended up current.",
+        "  cudaFreeAsync($REDUCED_OFFSETS$, stream);",
+        "  cudaFreeAsync($INNER_OFFSETS$, stream);",
+        "  cudaFreeAsync($INNER_INDICES$, stream);",
+        "  cudaFreeAsync($TEMP_VALUES$, stream);",
+        "  cudaFreeAsync(contract_pool, stream);",
+        "}",
+    };
+    return lines;
+}
+
+} // namespace
+
     StitchAndGenerateGPU::StitchAndGenerateGPU(
         std::string name,
         std::map<std::string, TensorLowerer> &operand_tensors,
         TensorLowerer &result_tensor,
         std::vector<CIN> forall_list,
-        TensorLowerer &reduced_result_tensor)
-        : StitchAndGenerate(name, operand_tensors, result_tensor, std::move(forall_list), reduced_result_tensor) {
-            open_files("_gpu.h", "_gpu.cu", "inline");
+        TensorLowerer &reduced_result_tensor,
+        std::vector<LoopNum> &reduction_loops,
+        std::vector<std::string> requested_operand_ordering)
+        : StitchAndGenerate(name, operand_tensors, result_tensor, std::move(forall_list), reduced_result_tensor, reduction_loops,
+                            std::move(requested_operand_ordering)) {
+            // Worker kernels are only ever called from the __global__ wrappers.
+            open_files("_gpu.h", "_gpu.cu", "__device__ inline");
             main_func.name = name + "_gpu_i32_f32";
 
             add_tensor_args();
@@ -47,8 +229,78 @@ namespace backend {
     llir::lStmt StitchAndGenerateGPU::generate_single_memory_allocation_statement(llir::lExpr address, llir::lType pointer_type, llir::lExpr size, bool register_for_free) {
         return llir::BaseExpr::make(
             llir::lFunctionCall::make("cudaMallocAsync", {
-                llir::lAddress::make(address),
+                // cudaMallocAsync takes void**; the typed fields need an explicit cast.
+                llir::Cast::make(llir::Generic_t::make("void**"), llir::lAddress::make(address)),
                 size,
+                cuda_stream_var
+            })
+        );
+    }
+
+    void StitchAndGenerateGPU::stitch_scatter_reduction() {
+        const TensorLowerer &temp = result_tensor;
+        const TensorLowerer &out = reduced_result_tensor;
+
+        internal_assert(reduction_loops.size() == 1)
+            << "Kernel '" << name << "': scatter reduction over more than one loop is not supported";
+        const LoopNum reduced_loop = reduction_loops.front();
+
+        // The loops the output keeps, split around the reduced one.
+        std::vector<LoopNum> outer_loops, inner_loops;
+        for (LoopNum loop = BEFORE_FIRST_LOOP + 1; loop < LoopNum(forall_list.size()); ++loop) {
+            if (!temp.tensor_level_exists(loop) || loop == reduced_loop) {
+                continue;
+            }
+            (loop < reduced_loop ? outer_loops : inner_loops).push_back(loop);
+        }
+        internal_assert(outer_loops.size() == 1 && inner_loops.size() == 1)
+            << "Kernel '" << name << "': scatter reduction needs exactly one level on each "
+            << "side of the reduced one";
+
+        const TensorIndex outer = temp.loop_index(outer_loops.front());
+        const TensorIndex reduced = temp.loop_index(reduced_loop);
+        const TensorIndex inner = temp.loop_index(inner_loops.front());
+        internal_assert(!temp.is_sparse(temp.loop_num_to_tensor_level(outer_loops.front())))
+            << "Kernel '" << name << "': scatter reduction needs a dense outermost level";
+
+        auto field = [](const TensorLowerer &tensor, const std::string &member) {
+            return tensor.tensor_name + "." + member;
+        };
+
+        // The emitted block reads and writes only these, plus `stream` and the two structs.
+        const std::map<std::string, std::string> substitutions = {
+            {"$ROWS$", field(temp, temp.get_size_field_name(outer))},
+            {"$PRODUCTS$", field(temp, temp.get_length_field_name(inner))},
+            {"$REDUCED_OFFSETS$", field(temp, temp.get_offsets_field_name(reduced))},
+            {"$INNER_OFFSETS$", field(temp, temp.get_offsets_field_name(inner))},
+            {"$INNER_INDICES$", field(temp, temp.get_indices_field_name(inner))},
+            {"$TEMP_VALUES$", field(temp, temp.get_values_field_name())},
+            {"$OUT_OFFSETS$", field(out, out.get_offsets_field_name(inner))},
+            {"$OUT_INDICES$", field(out, out.get_indices_field_name(inner))},
+            {"$OUT_LENGTH$", field(out, out.get_length_field_name(inner))},
+            {"$OUT_VALUES$", field(out, out.get_values_field_name())},
+            {"$REDUCED$", reduced.str()},
+            {"$TEMP$", temp.tensor_name},
+        };
+
+        for (const std::string &line : scatter_reduction_lines()) {
+            std::string emitted = line;
+            for (const auto &[placeholder, replacement] : substitutions) {
+                for (size_t at = emitted.find(placeholder); at != std::string::npos;
+                     at = emitted.find(placeholder, at + replacement.size())) {
+                    emitted.replace(at, placeholder.size(), replacement);
+                }
+            }
+            main_func.body.emplace_back(llir::RawStmt::make(emitted));
+        }
+    }
+
+    llir::lStmt StitchAndGenerateGPU::generate_zero_range_statement(llir::lExpr field, llir::lExpr byte_count) {
+        return llir::BaseExpr::make(
+            llir::lFunctionCall::make("cudaMemsetAsync", {
+                field,
+                llir::lConst::make(0),
+                byte_count,
                 cuda_stream_var
             })
         );
@@ -58,31 +310,40 @@ namespace backend {
         llir::lType partition_struct, LoopNum previous_sparse_intersection, LoopNum current_sparse_intersection,
         bool precompute_kernel_defined, bool compute_kernel_defined
     ) {
-        llir::lExpr size_expr = llir::lConst::make(0);
-        if(compute_kernel_defined) {
-            if(operand_pos_map_struct_def.defined()) {
-                for(auto &[tensor_name, tensor] : operand_tensors) {
-                    auto field = std::find_if(operand_pos_map_struct_def.as<llir::Struct_t>()->fields.begin(), operand_pos_map_struct_def.as<llir::Struct_t>()->fields.end(),
-                        [previous_sparse_intersection, &tensor](const std::pair<std::string, llir::lType> &field) {
-                            return field.first == tensor.get_iterator_suffix(tensor.loop_index(previous_sparse_intersection));
-                        });
-                    if(field != operand_pos_map_struct_def.as<llir::Struct_t>()->fields.end()) {
-                        size_expr =  size_expr + result_tensor.get_length_field(result_tensor.loop_index(previous_sparse_intersection));
-                    }
+        // CUB deduces its iterator types from the arguments even when d_temp_storage is null
+        // and it only reports the temp-storage size, so the sizing queries below pass a typed
+        // null pointer matching the buffers the real scans operate on.
+        llir::lExpr null_scan_iterator =
+            llir::Cast::make(llir::Generic_t::make("int32_t*"), llir::lConst::make(0));
+
+        // The position map fields for this level, if any. They are read again at the next
+        // sparse intersection, so they get a block of their own rather than a slice of the
+        // per-level scratch that is freed on the way there.
+        std::vector<std::pair<std::string, llir::lType>> pos_map_fields;
+        if(compute_kernel_defined && operand_pos_map_struct_def.defined()) {
+            for(auto &[tensor_name, tensor] : operand_tensors) {
+                auto field = std::find_if(operand_pos_map_struct_def.as<llir::Struct_t>()->fields.begin(), operand_pos_map_struct_def.as<llir::Struct_t>()->fields.end(),
+                    [previous_sparse_intersection, &tensor](const std::pair<std::string, llir::lType> &field) {
+                        return field.first == tensor.get_iterator_suffix(tensor.loop_index(previous_sparse_intersection));
+                    });
+                if(field != operand_pos_map_struct_def.as<llir::Struct_t>()->fields.end()) {
+                    pos_map_fields.push_back(*field);
                 }
             }
+        }
 
-        
+        llir::lExpr size_expr = llir::lConst::make(0);
+        if(compute_kernel_defined) {
             size_expr = size_expr + result_tensor.get_length_field(result_tensor.loop_index(previous_sparse_intersection)) + llir::lConst::make(1);
         }
 
         main_func.body.emplace_back(
             llir::BaseExpr::make(
-                llir::lFunctionCall::make("cub::DeviceScan::ExclusiveScan", {
+                llir::lFunctionCall::make("cub::DeviceScan::InclusiveSum", {
                     llir::lConst::make(0),
                     llir::lVar::make(sizet_type, "cub_bytes"),
-                    llir::lConst::make(0), llir::lConst::make(0),
-                    num_threads_var,
+                    null_scan_iterator, null_scan_iterator,
+                    num_threads_var+1,
                     cuda_stream_var
                 })
             )
@@ -98,7 +359,7 @@ namespace backend {
                     llir::lFunctionCall::make("cub::DeviceScan::InclusiveSum", {
                         llir::lConst::make(0),
                         llir::lVar::make(sizet_type, work_offsets_scan_bytes_name),
-                        llir::lConst::make(0), llir::lConst::make(0),
+                        null_scan_iterator, null_scan_iterator,
                         result_tensor.get_length_field(result_tensor.loop_index(previous_sparse_intersection)),
                         cuda_stream_var
                     })
@@ -119,7 +380,7 @@ namespace backend {
             }
         }
 
-        size_expr = size_expr + llir::lConst::make(num_mem_block_fields) * num_threads_var;
+        size_expr = size_expr + llir::lConst::make(num_mem_block_fields) * (num_threads_var + 1);
 
         std::string mem_block_name = "mem_block_" + get_all_loops_string(current_sparse_intersection);
         main_func.body.emplace_back(
@@ -146,40 +407,66 @@ namespace backend {
         );
         std::string mem_block_base_name = "mem_block_base_" + get_all_loops_string(current_sparse_intersection);
         main_func.body.emplace_back(
-            llir::Declare::make(llir::Generic_t::make("char*"), mem_block_base_name, llir::lVar::make(llir::Generic_t::make("char*"), mem_block_name))
+            llir::Declare::make(llir::Generic_t::make("char*"), mem_block_base_name,
+                llir::Cast::make(llir::Generic_t::make("char*"), llir::lVar::make(llir::Generic_t::make("void*"), mem_block_name)))
         );
         auto offset_var = llir::lVar::make(llir::Int_t::make(32), "offset_" + get_all_loops_string(current_sparse_intersection));
         auto mem_block_base_var = llir::lVar::make(llir::Generic_t::make("char*"), mem_block_base_name);
 
-        if(compute_kernel_defined) {
-            if(operand_pos_map_struct_def.defined()) {
+        // Byte-addressed slice of the shared block, cast back to the field's pointer type.
+        auto mem_block_slice = [&](llir::lType pointer_type) {
+            return llir::Cast::make(pointer_type, mem_block_base_var + offset_var);
+        };
+
+        if(!pos_map_fields.empty()) {
+            declare_operand_pos_map_once();
+
+            llir::lExpr pos_map_length = result_tensor.get_length_field(result_tensor.loop_index(previous_sparse_intersection));
+            std::string pos_map_block_name = "pos_map_block_" + get_all_loops_string(current_sparse_intersection);
+            llir::lExpr pos_map_block_var = llir::lVar::make(llir::Generic_t::make("void*"), pos_map_block_name);
+            main_func.body.emplace_back(
+                llir::Declare::make(llir::Generic_t::make("void*"), pos_map_block_name, llir::lConst::make(0))
+            );
+            main_func.body.emplace_back(
+                generate_single_memory_allocation_statement(
+                    pos_map_block_var,
+                    llir::Ptr_t::make(void_type),
+                    llir::lVar::make(sizet_type, "sizeof(int32_t)") * llir::lConst::make((int)pos_map_fields.size()) * pos_map_length,
+                    false
+                )
+            );
+            long_lived_allocations.push_back(pos_map_block_var);
+
+            std::string pos_map_offset_name = "pos_map_offset_" + get_all_loops_string(current_sparse_intersection);
+            std::string pos_map_base_name = "pos_map_block_base_" + get_all_loops_string(current_sparse_intersection);
+            main_func.body.emplace_back(
+                llir::Declare::make(llir::Int_t::make(32), pos_map_offset_name, llir::lConst::make(0))
+            );
+            main_func.body.emplace_back(
+                llir::Declare::make(llir::Generic_t::make("char*"), pos_map_base_name,
+                    llir::Cast::make(llir::Generic_t::make("char*"), pos_map_block_var))
+            );
+            auto pos_map_offset_var = llir::lVar::make(llir::Int_t::make(32), pos_map_offset_name);
+            auto pos_map_base_var = llir::lVar::make(llir::Generic_t::make("char*"), pos_map_base_name);
+
+            for(const auto &field : pos_map_fields) {
                 main_func.body.emplace_back(
-                    llir::Declare::make(get_operand_pos_map_type(), get_operand_pos_map_var_name())
+                    llir::Store::make(
+                        llir::lFieldAccess::make(llir::lVar::make(operand_pos_map_struct_def, get_operand_pos_map_var_name()), field.first),
+                        llir::Cast::make(field.second, pos_map_base_var + pos_map_offset_var)
+                    )
                 );
-
-                for(auto &[tensor_name, tensor] : operand_tensors) {
-                    auto field = std::find_if(operand_pos_map_struct_def.as<llir::Struct_t>()->fields.begin(), operand_pos_map_struct_def.as<llir::Struct_t>()->fields.end(),
-                        [previous_sparse_intersection, &tensor](const std::pair<std::string, llir::lType> &field) {
-                            return field.first == tensor.get_iterator_suffix(tensor.loop_index(previous_sparse_intersection));
-                        });
-                    if(field != operand_pos_map_struct_def.as<llir::Struct_t>()->fields.end()) {
-                        main_func.body.emplace_back(
-                            llir::Store::make(
-                                llir::lFieldAccess::make(llir::lVar::make(operand_pos_map_struct_def, get_operand_pos_map_var_name()), field->first),
-                                mem_block_base_var + offset_var
-                            )
-                        );
-                        main_func.body.emplace_back(
-                            llir::Accumulate::make(offset_var, llir::lVar::make(sizet_type, "sizeof(int32_t)") * result_tensor.get_length_field(result_tensor.loop_index(previous_sparse_intersection)))
-                        );
-                    }
-                }
+                main_func.body.emplace_back(
+                    llir::Accumulate::make(pos_map_offset_var, llir::lVar::make(sizet_type, "sizeof(int32_t)") * pos_map_length)
+                );
             }
+        }
 
+        if(compute_kernel_defined) {
             main_func.body.emplace_back(
                 llir::Store::make(
                     work_offsets_var,
-                    mem_block_base_var + offset_var
+                    mem_block_slice(llir::Ptr_t::make(llir::Int_t::make(32)))
                 )
             );
             main_func.body.emplace_back(
@@ -198,7 +485,7 @@ namespace backend {
             main_func.body.emplace_back(
                 llir::Store::make(
                     llir::lFieldAccess::make(partitions_var, field.first),
-                    mem_block_base_var + offset_var
+                    mem_block_slice(field.second)
                 )
             );
             main_func.body.emplace_back(
@@ -212,10 +499,17 @@ namespace backend {
             );
             for (LoopNum loop = BEFORE_FIRST_LOOP + 1; loop <= current_sparse_intersection; ++loop) {
                 if (result_tensor.tensor_level_exists(loop) && result_tensor.is_sparse(loop)) {
+                    // The counts occupy num_threads slots, but generate_prefix_sum_calls
+                    // walks the pointer back one afterwards to turn the inclusive scan into
+                    // exclusive offsets. That slot is reserved here, ahead of the counts, so
+                    // the shifted pointer stays inside this field's own region.
+                    main_func.body.emplace_back(
+                        llir::Accumulate::make(offset_var, llir::lVar::make(sizet_type, "sizeof(int32_t)"))
+                    );
                     main_func.body.emplace_back(
                         llir::Store::make(
                             get_count_offsets_field(loop, current_sparse_intersection),
-                            mem_block_base_var + offset_var
+                            mem_block_slice(llir::Ptr_t::make(llir::Int_t::make(32)))
                         )
                     );
                     main_func.body.emplace_back(
@@ -226,7 +520,8 @@ namespace backend {
         }
 
         main_func.body.emplace_back(
-            llir::Declare::make(llir::Generic_t::make("void*"), "cub_temp_storage_" + get_all_loops_string(current_sparse_intersection), mem_block_base_var + offset_var)
+            llir::Declare::make(llir::Generic_t::make("void*"), "cub_temp_storage_" + get_all_loops_string(current_sparse_intersection),
+                mem_block_slice(llir::Generic_t::make("void*")))
         );
     }
 
@@ -269,32 +564,11 @@ namespace backend {
 
     void StitchAndGenerateGPU::generate_prefix_sum_calls(LoopNum previous_sparse_intersection, LoopNum current_sparse_intersection) {
 
-        for (LoopNum loop = previous_sparse_intersection + 1; loop <= current_sparse_intersection; ++loop) {
-            if (result_tensor.tensor_level_exists(loop) && result_tensor.is_sparse(loop)) {
-                main_func.body.emplace_back(
-                    llir::Declare::make(
-                        llir::Int_t::make(32),
-                        "temp_last_value_" + get_all_loops_string(current_sparse_intersection) + "_" +std::to_string(loop.get())
-                    )
-                );
-                main_func.body.emplace_back(
-                    llir::BaseExpr::make(
-                        llir::lFunctionCall::make("cudaMemcpyAsync", {
-                            llir::lAddress::make(llir::lVar::make(llir::Int_t::make(32), "temp_last_value_" + get_all_loops_string(current_sparse_intersection) + "_" +std::to_string(loop.get()))),
-                            get_count_offsets_field(loop, current_sparse_intersection) + (num_threads_var - 1),
-                            llir::lVar::make(sizet_type, "sizeof(int32_t)"),
-                            cuda_stream_var
-                        })
-                    )
-                );
-            }
-        }
-
         for (LoopNum loop = BEFORE_FIRST_LOOP + 1; loop <= current_sparse_intersection; ++loop) {
             if (result_tensor.tensor_level_exists(loop) && result_tensor.is_sparse(loop)) {
                 main_func.body.emplace_back(
                     llir::BaseExpr::make(
-                        llir::lFunctionCall::make("cub::DeviceScan::ExclusiveScan", {
+                        llir::lFunctionCall::make("cub::DeviceScan::InclusiveSum", {
                             llir::lVar::make(void_type, "cub_temp_storage_" + get_all_loops_string(current_sparse_intersection)),
                             llir::lVar::make(sizet_type, "cub_bytes"),
                             get_count_offsets_field(loop, current_sparse_intersection),
@@ -304,39 +578,62 @@ namespace backend {
                         })
                     )
                 );
-            }
-        }
-
-        for (LoopNum loop = previous_sparse_intersection + 1; loop <= current_sparse_intersection; ++loop) {
-            if (result_tensor.tensor_level_exists(loop) && result_tensor.is_sparse(loop)) {
+                // The last inclusive element is the total. Levels resolved by an earlier
+                // intersection already have their length and are only rescanned to give
+                // this phase's threads their starting offsets.
+                if (loop > previous_sparse_intersection) {
+                    main_func.body.emplace_back(
+                        llir::BaseExpr::make(
+                            llir::lFunctionCall::make("cudaMemcpyAsync", {
+                                llir::lAddress::make(result_tensor.get_length_field(result_tensor.loop_index(loop))),
+                                get_count_offsets_field(loop, current_sparse_intersection) + (num_threads_var - 1),
+                                llir::lVar::make(sizet_type, "sizeof(int32_t)"),
+                                device_to_host,
+                                cuda_stream_var
+                            })
+                        )
+                    );
+                }
+                // Walking the base back one slot turns the inclusive scan into the
+                // exclusive offsets the compute kernel wants, and the reserved slot it
+                // now points at becomes the leading zero.
                 main_func.body.emplace_back(
-                    llir::BaseExpr::make(
-                        llir::lFunctionCall::make("cudaMemcpyAsync", {
-                            llir::lAddress::make(result_tensor.get_length_field(result_tensor.loop_index(loop))),
-                            get_count_offsets_field(loop, current_sparse_intersection) + (num_threads_var - 1),
-                            llir::lVar::make(sizet_type, "sizeof(int32_t)"),
-                            cuda_stream_var
-                        })
+                    llir::Store::make(
+                        get_count_offsets_field(loop, current_sparse_intersection),
+                        get_count_offsets_field(loop, current_sparse_intersection) - 1
+                    )
+                );
+                main_func.body.emplace_back(
+                    generate_zero_range_statement(
+                        get_count_offsets_field(loop, current_sparse_intersection),
+                        llir::lVar::make(sizet_type, "sizeof(int32_t)")
                     )
                 );
             }
         }
-        // The host reads/writes the length fields right below (temp_last_value_* accumulate),
-        // so the preceding cudaMemcpyAsync's must have actually landed by then.
-        main_func.body.emplace_back(
-            llir::BaseExpr::make(
-                llir::lFunctionCall::make("cudaStreamSynchronize", {cuda_stream_var})
-            )
-        );
+
+        // The lengths were copied back asynchronously and the host reads them right below
+        // to size its allocations, so the copies have to have landed by now.
+        // Not sure if this is required or not?
+        // main_func.body.emplace_back(
+        //     llir::BaseExpr::make(
+        //         llir::lFunctionCall::make("cudaStreamSynchronize", {cuda_stream_var})
+        //     )
+        // );
 
         for (LoopNum loop = previous_sparse_intersection + 1; loop <= current_sparse_intersection; ++loop) {
             if (result_tensor.tensor_level_exists(loop) && result_tensor.is_sparse(loop)) {
-                main_func.body.emplace_back(
-                    llir::Accumulate::make( 
-                        result_tensor.get_length_field(result_tensor.loop_index(loop)),
-                        llir::lVar::make(llir::Int_t::make(32), "temp_last_value_" + get_all_loops_string(current_sparse_intersection) + "_" +std::to_string(loop.get()))
-                    )
-                );
+                // A merged level stores a length per flattened dimension, all equal. Only
+                // the first was brought back from the device; mirror it into the rest.
+                std::vector<TensorIndex> indices = result_tensor.stored_indices(result_tensor.loop_index(loop));
+                for (size_t i = 1; i < indices.size(); ++i) {
+                    main_func.body.emplace_back(
+                        llir::Store::make(
+                            result_tensor.get_length_field(indices[i]),
+                            result_tensor.get_length_field(indices[0])
+                        )
+                    );
+                }
             }
         }
     }
@@ -366,14 +663,15 @@ namespace backend {
         );
     }
 
+    llir::lStmt StitchAndGenerateGPU::generate_free_statement(llir::lExpr address) {
+        return llir::BaseExpr::make(
+            llir::lFunctionCall::make("cudaFreeAsync", {address, cuda_stream_var})
+        );
+    }
+
     llir::lStmt StitchAndGenerateGPU::generate_memory_free_statements(LoopNum sparse_intersection) {
         std::string mem_block_name = "mem_block_" + get_all_loops_string(sparse_intersection);
-        return llir::BaseExpr::make(
-            llir::lFunctionCall::make("cudaFreeAsync", {
-                llir::lVar::make(llir::Generic_t::make("void*"), mem_block_name),
-                cuda_stream_var
-            })
-        );
+        return generate_free_statement(llir::lVar::make(llir::Generic_t::make("void*"), mem_block_name));
     }
 
     llir::lStmt StitchAndGenerateGPU::generate_total_work_from_offsets_statement(llir::lExpr index_expr) {
@@ -382,6 +680,7 @@ namespace backend {
                 llir::lAddress::make(llir::lVar::make(llir::Int_t::make(32), "total_work")),
                 work_offsets_var + index_expr,
                 llir::lVar::make(sizet_type, "sizeof(int32_t)"),
+                device_to_host,
                 cuda_stream_var
             })
         );

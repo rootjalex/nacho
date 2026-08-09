@@ -8,9 +8,13 @@ namespace backend {
         std::map<std::string, TensorLowerer> &operand_tensors,
         TensorLowerer &result_tensor,
         std::vector<CIN> forall_list,
-        TensorLowerer &reduced_result_tensor)
-        : StitchAndGenerate(name, operand_tensors, result_tensor, std::move(forall_list), reduced_result_tensor) {
-            open_files("_cpu.h", "_cpu.cpp", "__device__ inline");
+        TensorLowerer &reduced_result_tensor,
+        std::vector<LoopNum> &reduction_loops,
+        std::vector<std::string> requested_operand_ordering)
+        : StitchAndGenerate(name, operand_tensors, result_tensor, std::move(forall_list), reduced_result_tensor, reduction_loops,
+                            std::move(requested_operand_ordering)) {
+            // Worker kernels run on the host inside tbb::parallel_for lambdas.
+            open_files("_cpu.h", "_cpu.cpp", "inline");
             main_func.name = name + "_cpu_i32_f32";
 
             source_file << "#include \"tbb/parallel_for.h\"\n";
@@ -39,6 +43,12 @@ namespace backend {
         );
     }
 
+    llir::lStmt StitchAndGenerateCPU::generate_zero_range_statement(llir::lExpr field, llir::lExpr byte_count) {
+        return llir::BaseExpr::make(
+            llir::lFunctionCall::make("memset", {field, llir::lConst::make(0), byte_count})
+        );
+    }
+
     void StitchAndGenerateCPU::generate_memory_allocations(
         llir::lType partition_struct, LoopNum previous_sparse_intersection, LoopNum current_sparse_intersection,
         bool precompute_kernel_defined, bool compute_kernel_defined
@@ -47,9 +57,7 @@ namespace backend {
 
         if(compute_kernel_defined) {
             if(operand_pos_map_struct_def.defined()) {
-                main_func.body.emplace_back(
-                    llir::Declare::make(get_operand_pos_map_type(), get_operand_pos_map_var_name())
-                );
+                declare_operand_pos_map_once();
 
                 for(auto &[tensor_name, tensor] : operand_tensors) {
                     auto field =    std::find_if(operand_pos_map_struct_def.as<llir::Struct_t>()->fields.begin(), operand_pos_map_struct_def.as<llir::Struct_t>()->fields.end(),
@@ -57,23 +65,30 @@ namespace backend {
                             return field.first == tensor.get_iterator_suffix(tensor.loop_index(previous_sparse_intersection));
                         });
                     if(field != operand_pos_map_struct_def.as<llir::Struct_t>()->fields.end()) {
+                            llir::lExpr pos_map_field = llir::lFieldAccess::make(
+                                llir::lVar::make(operand_pos_map_struct_def, get_operand_pos_map_var_name()), field->first);
                             main_func.body.emplace_back(
                                 generate_single_memory_allocation_statement(
-                                    llir::lFieldAccess::make(llir::lVar::make(operand_pos_map_struct_def, get_operand_pos_map_var_name()), field->first),
+                                    pos_map_field,
                                     field->second,
                                     llir::lVar::make(sizet_type, "sizeof(int32_t)") * result_tensor.get_length_field(result_tensor.loop_index(previous_sparse_intersection)),
-                                    true
+                                    false
                                 )
                             );
+                            long_lived_allocations.push_back(pos_map_field);
                     }
                 }
             }
 
+            // Indexed by position in the previous level of the result, plus a terminator:
+            // generate_work_offsets_scan() prefix-sums [1, length] and reads [length].
             main_func.body.emplace_back(
                 generate_single_memory_allocation_statement(
                     work_offsets_var,
                     llir::Ptr_t::make(llir::Int_t::make(32)),
-                    llir::lVar::make(sizet_type, "sizeof(int32_t)") * num_threads_var,
+                    llir::lVar::make(sizet_type, "sizeof(int32_t)")
+                        * (result_tensor.get_length_field(result_tensor.loop_index(previous_sparse_intersection))
+                           + llir::lConst::make(1)),
                     true
                 )
             );
@@ -180,12 +195,16 @@ namespace backend {
 
         for (LoopNum loop = previous_sparse_intersection + 1; loop <= current_sparse_intersection; ++loop) {
             if(result_tensor.tensor_level_exists(loop) && result_tensor.is_sparse(loop)) {
-                main_func.body.emplace_back(
-                    llir::Store::make(
-                        result_tensor.get_length_field(result_tensor.loop_index(loop)),
-                        llir::lVar::make(llir::Int_t::make(32), "prefix_sum_" + get_all_loops_string(loop) + "_" + std::to_string(loop.get()))
-                    )
-                );
+                // A merged level stores a length per flattened dimension, all equal to the
+                // number of coordinate tuples this level produced.
+                for (const auto &index : result_tensor.stored_indices(result_tensor.loop_index(loop))) {
+                    main_func.body.emplace_back(
+                        llir::Store::make(
+                            result_tensor.get_length_field(index),
+                            llir::lVar::make(llir::Int_t::make(32), "prefix_sum_" + get_all_loops_string(current_sparse_intersection) + "_" + std::to_string(loop.get()))
+                        )
+                    );
+                }
             }
         }
     }
@@ -217,6 +236,10 @@ namespace backend {
         );
     }
 
+    llir::lStmt StitchAndGenerateCPU::generate_free_statement(llir::lExpr address) {
+        return llir::BaseExpr::make(llir::lFunctionCall::make("free", {address}));
+    }
+
     llir::lStmt StitchAndGenerateCPU::generate_memory_free_statements(LoopNum sparse_intersection) {
         auto it = allocated_pointers.find(get_all_loops_string(sparse_intersection));
         if (it == allocated_pointers.end()) {
@@ -225,9 +248,7 @@ namespace backend {
 
         std::vector<llir::lStmt> free_stmts;
         for (auto &address : it->second) {
-            free_stmts.emplace_back(
-                llir::BaseExpr::make(llir::lFunctionCall::make("free", {address}))
-            );
+            free_stmts.emplace_back(generate_free_statement(address));
         }
         return llir::Sequence::make(free_stmts);
     }

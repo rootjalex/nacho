@@ -28,9 +28,28 @@ namespace backend {
             std::vector<LoopNum> reductionLoops;
             bool is_scatter_reduction = false;
 
+        // When false, the kernel partitions work once over the whole loop nest instead of
+        // re-partitioning at every sparse intersection level. Set before lower_cin().
+        bool recursive_partitioning = true;
+
+        // The tensor the entry point returns. A reduction fills result_tensor (`<Z>_temp`,
+        // which still carries the reduced dimensions) and contracts it into
+        // reduced_result_tensor (`<Z>`).
+        const TensorLowerer &output_tensor() const {
+            return reduced_result_tensor.tensor_name.empty() ? result_tensor
+                                                             : reduced_result_tensor;
+        }
+
             StitchAndGenerate* stitch_and_generate;
 
-            CINLowerer(CIN cin, std::string name, bool is_cpu = false);
+            CINLowerer(CIN cin, std::string name, bool is_cpu = false,
+                       std::vector<std::string> operand_ordering = {});
+
+            // The operand names in the order the entry point takes them, after any
+            // requested ordering has been validated against the expression.
+            const std::vector<std::string> &operand_ordering() const {
+                return stitch_and_generate->operand_ordering;
+            }
 
             std::vector<TensorIndex> get_loop_order();
             std::vector<CIN> get_forall_list();

@@ -187,6 +187,10 @@ struct Format {
     std::vector<Level> levels;
     std::set<Level> bc_levels;
 
+    // User-facing name for this layout, e.g. "CSR". Empty unless named() was called.
+    // Used to name the Python class the bindings generate for tensors of this format.
+    std::string name;
+
     // Factories
     static Format ordered(std::vector<Level> lvls) {
         return Format{.levels = std::move(lvls)};
@@ -194,6 +198,11 @@ struct Format {
     static Format unordered(std::set<Level> lvls) {
         return Format{.bc_levels = std::move(lvls)};
     }
+
+    // Names this layout and records signature -> name globally, so that formats
+    // *derived* from this one (an expression's result format, built fresh by
+    // add_formats/mul_formats) can recover the same name from their level structure.
+    Format named(std::string layout_name) const;
 
     bool is_coo() const {
         if (levels.size() < 2)
@@ -237,5 +246,14 @@ struct Format {
 // Format inference.
 Format add_formats(const Format &a, const Format &b);
 Format mul_formats(const Format &a, const Format &b);
+
+// A structural key for a layout: one code per level in order, joined by '_'
+// (d, cu, cn, su, sn, m). CSR is "d_cu", DCSR "cu_cu", 2D COO "cn_su".
+// Independent of index names, so a_ij and b_jk in CSR share a signature.
+std::string format_signature(const Format &format);
+
+// The name declared for this layout via named(), directly or by signature.
+// Fails with a diagnostic naming the signature if the layout was never named.
+const std::string &format_name(const Format &format);
 
 } // namespace nacho

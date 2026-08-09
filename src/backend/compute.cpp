@@ -9,6 +9,19 @@
 namespace nacho {
 namespace backend {
 
+void ComputeKernelLowerer::add_seg_end_declarations(std::vector<llir::lStmt> &stmts) {
+    auto declare_for = [&stmts](const TensorLowerer &tensor) {
+        if (llir::lStmt declarations = tensor.make_seg_end_declarations(); declarations.defined()) {
+            stmts.push_back(declarations);
+        }
+    };
+
+    for (const auto &[tensor_name, tensor] : operand_tensors) {
+        declare_for(tensor);
+    }
+    declare_for(result_tensor);
+}
+
 void ComputeKernelLowerer::add_partition_assignments(
     std::vector<llir::lStmt> &stmts) {
     // int thread_id = blockIdx.x * blockDim.x + threadIdx.x;
@@ -227,6 +240,8 @@ llir::lStmt ComputeKernelLowerer::
         }
     }
 
+    add_seg_end_declarations(stmts);
+
     std::set<Seq, SeqLessThan> defined; // initially empty
     internal_assert(cin.defined());
     stmts.push_back(lower_loop(cin, defined, /*is_precompute*/ true, BEFORE_FIRST_LOOP+1, nullptr));
@@ -302,6 +317,16 @@ llir::lStmt ComputeKernelLowerer::
                                       "<index_t, value_t>"),
         .name = result_tensor.tensor_name});
 
+    // A reduction whose reduced loops are innermost accumulates straight into the reduced
+    // result while walking result_tensor, so it needs both tensors.
+    if (output_write_tensor.tensor_name != result_tensor.tensor_name) {
+        args.emplace_back(llir::Function::Argument{
+            .mutating = true,
+            .type = llir::Generic_t::make(output_write_tensor.get_struct_name() +
+                                          "<index_t, value_t>"),
+            .name = output_write_tensor.tensor_name});
+    }
+
     if(next_sparse_intersection != LoopNum(forall_list.size())) {
         args.emplace_back(llir::Function::Argument{
             .mutating = true,
@@ -354,6 +379,8 @@ llir::lStmt ComputeKernelLowerer::
             ));
         }
     }
+
+    add_seg_end_declarations(stmts);
 
     std::set<Seq, SeqLessThan> defined; // initially empty
     internal_assert(cin.defined());
@@ -480,7 +507,7 @@ llir::lStmt ComputeKernelLowerer::lower_assign_statement(
             } else {
                 return llir::BaseExpr::make(
                 llir::lFunctionCall::make(
-                    "atomicAdd",
+                    "nacho_atomic_add",
                     {
                         llir::lAddress::make(output_write_tensor.get_values_field()[
                             output_write_tensor.get_level_indexing_expression(
@@ -1337,7 +1364,7 @@ llir::lStmt ComputeKernelLowerer::lower_loop(
             stmts.push_back(
                 llir::BaseExpr::make(
                 llir::lFunctionCall::make(
-                    "atomicAdd",
+                    "nacho_atomic_add",
                     {
                         llir::lAddress::make(output_write_tensor.get_values_field()[
                             output_write_tensor.get_level_indexing_expression(

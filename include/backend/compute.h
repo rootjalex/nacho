@@ -45,6 +45,11 @@ namespace backend {
         llir::lStmt lower_assign_statement(CIN assign, bool is_precompute);
 
         void add_partition_assignments(std::vector<llir::lStmt> &stmts);
+
+        // Declares the seg_end variables for every non-unique sparse level of every tensor
+        // this kernel touches. They live for the whole kernel because a lattice point that
+        // does not iterate a level still reads that level's seg_end.
+        void add_seg_end_declarations(std::vector<llir::lStmt> &stmts);
     };
 
 } // namespace backend

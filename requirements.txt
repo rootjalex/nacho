@@ -1,0 +1,11 @@
+# Build dependencies.
+cmake>=3.30
+ninja
+nanobind>=1.3.2
+scikit-build-core>=0.10
+
+# benchmarks/. torch is installed separately — its wheel is tied to a CUDA version.
+numpy
+scipy
+pandas
+matplotlib

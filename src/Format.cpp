@@ -10,6 +10,92 @@
 
 namespace nacho {
 
+namespace {
+
+std::string level_code(const Level &level) {
+    switch (level.format) {
+        case LevelFormat::Dense:                 return "d";
+        case LevelFormat::Compressed_unique:     return "cu";
+        case LevelFormat::Compressed_non_unique: return "cn";
+        case LevelFormat::Singleton_unique:      return "su";
+        case LevelFormat::Singleton_non_unique:  return "sn";
+        // A merged level stands for several dimensions at once, so the code carries how
+        // many: a flattened 2-D COO ("m2") is a different layout from a 3-D one ("m3").
+        case LevelFormat::MergedCoordinate:      return "m" + std::to_string(level.index.indices.size());
+    }
+    internal_assert(false) << "Unhandled LevelFormat " << static_cast<int>(level.format);
+    return "";
+}
+
+// Signature of the flattened form compile_to_cin() rewrites a COO tensor into.
+std::string coo_merged_signature(const Format &format) {
+    return "m" + std::to_string(format.levels.size());
+}
+
+// Declared layout names, keyed by format_signature().
+std::unordered_map<std::string, std::string> &named_format_registry() {
+    static std::unordered_map<std::string, std::string> registry;
+    return registry;
+}
+
+} // namespace
+
+std::string format_signature(const Format &format) {
+    std::string signature;
+    for (const auto &level : format.levels) {
+        if (!signature.empty()) {
+            signature += "_";
+        }
+        signature += level_code(level);
+    }
+    for (const auto &level : format.bc_levels) {
+        signature += "_bc";
+        signature += level_code(level);
+    }
+    return signature;
+}
+
+namespace {
+
+void register_format_name(const std::string &signature, const std::string &layout_name) {
+    auto &registry = named_format_registry();
+    auto [entry, inserted] = registry.emplace(signature, layout_name);
+    internal_assert(inserted || entry->second == layout_name)
+        << "Format signature '" << signature << "' is already named '" << entry->second
+        << "', cannot also name it '" << layout_name << "'";
+}
+
+} // namespace
+
+Format Format::named(std::string layout_name) const {
+    internal_assert(!layout_name.empty()) << "Cannot name a format with an empty string";
+
+    register_format_name(format_signature(*this), layout_name);
+    // compile_to_cin() flattens COO tensors to a single merged level. The flattened form
+    // has the same buffers, so it keeps the same name.
+    if (is_coo()) {
+        register_format_name(coo_merged_signature(*this), layout_name);
+    }
+
+    Format copy = *this;
+    copy.name = std::move(layout_name);
+    return copy;
+}
+
+const std::string &format_name(const Format &format) {
+    if (!format.name.empty()) {
+        return format.name;
+    }
+
+    const std::string signature = format_signature(format);
+    const auto &registry = named_format_registry();
+    auto entry = registry.find(signature);
+    internal_assert(entry != registry.end())
+        << "No name declared for format signature '" << signature << "'. Add .named(\"...\") "
+        << "to a Format with this level structure so the bindings can name its Python class.";
+    return entry->second;
+}
+
 // Map index -> position for fast lookup
 OrderMap index_order_map(const std::vector<Level> &levels) {
     OrderMap pos;

@@ -9,11 +9,13 @@
 #include "backend/compute.h"
 #include "Printer.h"
 #include <map>
+#include <set>
 
 namespace nacho {
 namespace backend {
 
-    CINLowerer::CINLowerer(CIN cin, std::string name, bool is_cpu) : cin(std::move(cin)), name(std::move(name)), reductionLoops({}) {
+    CINLowerer::CINLowerer(CIN cin, std::string name, bool is_cpu, std::vector<std::string> operand_ordering)
+        : cin(std::move(cin)), name(std::move(name)), reductionLoops({}) {
         loop_order = get_loop_order();
         struct TensorVisitor : Visitor {
             std::map<std::string, TensorLowerer> &operand_tensors;
@@ -79,9 +81,9 @@ namespace backend {
         this->cin.accept(&visitor);
 
         if(is_cpu) {
-            stitch_and_generate = new StitchAndGenerateCPU(this->name, operand_tensors, result_tensor, get_forall_list(), reduced_result_tensor);
+            stitch_and_generate = new StitchAndGenerateCPU(this->name, operand_tensors, result_tensor, get_forall_list(), reduced_result_tensor, reductionLoops, std::move(operand_ordering));
         } else {
-            stitch_and_generate = new StitchAndGenerateGPU(this->name, operand_tensors, result_tensor, get_forall_list(), reduced_result_tensor);
+            stitch_and_generate = new StitchAndGenerateGPU(this->name, operand_tensors, result_tensor, get_forall_list(), reduced_result_tensor, reductionLoops, std::move(operand_ordering));
         }
     }
 
@@ -121,7 +123,17 @@ namespace backend {
 
         auto forall_list = get_forall_list();
 
-        std::vector<LoopNum> sparse_intersection_levels = get_all_sparse_intersection_levels(cin);
+        // Without recursive partitioning the list collapses to a single span covering the
+        // whole loop nest, so one partition/precompute/compute phase is emitted rather
+        // than one per sparse intersection.
+        std::vector<LoopNum> sparse_intersection_levels;
+        if (recursive_partitioning) {
+            sparse_intersection_levels = get_all_sparse_intersection_levels(cin);
+        }
+
+        // The list below is padded with the loop nest's boundaries so it can be walked as
+        // spans. Only these entries are levels where operands are genuinely sparse intersections.
+        std::set<LoopNum> intersected_levels(sparse_intersection_levels.begin(), sparse_intersection_levels.end());
 
         sparse_intersection_levels.insert(sparse_intersection_levels.begin(), BEFORE_FIRST_LOOP);
         if(sparse_intersection_levels.back()!=LoopNum(loop_order.size()-1)) {
@@ -183,7 +195,8 @@ namespace backend {
             stitch_and_generate->stitch_kernels(compute_kernel, partition_struct, partition_kernel, precompute_kernel,
                                                 i==0 ? BEFORE_FIRST_LOOP : sparse_intersection_levels[i-1],
                                                 previous_sparse_intersection, current_sparse_intersection,
-                                                included_tensors_current);
+                                                included_tensors_current,
+                                                intersected_levels.count(current_sparse_intersection) > 0);
 
 
             // Generate Compute kernel
@@ -223,6 +236,15 @@ namespace backend {
             stitch_and_generate->stitch_temp_result_tensor_def(result_tensor.lower_tensor_struct_definition());
         } else {
             stitch_and_generate->stitch_result_tensor_def(result_tensor.lower_tensor_struct_definition());
+        }
+
+        // The compute kernel writes coordinate tuples into a merged result level, so the
+        // result needs the same tuple accessors the operands get.
+        if (llir::lStmt stmt = result_tensor.lower_func_read_tuple_for_merged_index(); stmt.defined()) {
+            stitch_and_generate->add_to_header_file(stmt);
+        }
+        if (llir::lStmt stmt = result_tensor.lower_func_write_tuple_for_merged_index(); stmt.defined()) {
+            stitch_and_generate->add_to_header_file(stmt);
         }
 
 
@@ -290,8 +312,13 @@ namespace backend {
                     //std::cout<<"Inside sparse intersection "<<(Seq)node<<std::endl;
                     if(node->a.get()->is_sparse && node->b.get()->is_sparse)
                     {
+                        // Two sparse sides make this a sparse intersection whatever they
+                        // hold, but both still have to be walked so the sparse dimensions
+                        // under them reach num_sparse_dims.
                         found_sparse_intersection = true;
                         inside_sparse_intersection = false;
+                        node->a.accept(this);
+                        node->b.accept(this);
                         return;
                     }
                     if(node->a.get()->is_sparse) {
@@ -405,8 +432,9 @@ namespace backend {
     void CINLowerer::lower_binary_search_function(bool is_upper_bound) {
         std::vector<std::string> generics = {"index_t"};
 
+        // Only ever called from the loop bodies, which are themselves __runnable__.
         std::vector<llir::Function::Attribute> attributes = {
-            llir::Function::inline_};
+            llir::Function::runnable};
 
         std::vector<llir::Function::Argument> args;
         llir::lType ret_type;

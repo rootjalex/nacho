@@ -33,10 +33,13 @@
 
 build
 build-dbg
+build-py
 cmake-build-*
 .idea
 .vscode
 generated
+__pycache__/
+*.egg-info/
 
 # Assembly files
 *.asm
