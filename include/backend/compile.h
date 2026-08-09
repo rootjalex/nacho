@@ -32,6 +32,14 @@ namespace backend {
         // re-partitioning at every sparse intersection level. Set before lower_cin().
         bool recursive_partitioning = true;
 
+        // The tensor the entry point returns. A reduction fills result_tensor (`<Z>_temp`,
+        // which still carries the reduced dimensions) and contracts it into
+        // reduced_result_tensor (`<Z>`).
+        const TensorLowerer &output_tensor() const {
+            return reduced_result_tensor.tensor_name.empty() ? result_tensor
+                                                             : reduced_result_tensor;
+        }
+
             StitchAndGenerate* stitch_and_generate;
 
             CINLowerer(CIN cin, std::string name, bool is_cpu = false);

@@ -116,7 +116,7 @@ void Kernel::emit() {
                 .python_name = python_name_for(target),
                 .is_cpu = is_cpu,
                 .operand_tensors = lowerer.operand_tensors,
-                .result_tensor = lowerer.result_tensor,
+                .result_tensor = lowerer.output_tensor(),
             });
         }
     }

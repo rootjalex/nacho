@@ -79,9 +79,9 @@ namespace backend {
         this->cin.accept(&visitor);
 
         if(is_cpu) {
-            stitch_and_generate = new StitchAndGenerateCPU(this->name, operand_tensors, result_tensor, get_forall_list(), reduced_result_tensor);
+            stitch_and_generate = new StitchAndGenerateCPU(this->name, operand_tensors, result_tensor, get_forall_list(), reduced_result_tensor, reductionLoops);
         } else {
-            stitch_and_generate = new StitchAndGenerateGPU(this->name, operand_tensors, result_tensor, get_forall_list(), reduced_result_tensor);
+            stitch_and_generate = new StitchAndGenerateGPU(this->name, operand_tensors, result_tensor, get_forall_list(), reduced_result_tensor, reductionLoops);
         }
     }
 

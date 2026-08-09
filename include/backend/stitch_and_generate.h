@@ -19,6 +19,9 @@ namespace backend {
         TensorLowerer &result_tensor;
         std::vector<CIN> forall_list;
         TensorLowerer &reduced_result_tensor;
+        // The loops the reduction sums over, ascending. Empty when the expression does not
+        // reduce. Computed once by CINLowerer.
+        std::vector<LoopNum> &reduction_loops;
 
         struct FuncDecl {
             std::vector<std::string> generics;
@@ -53,10 +56,11 @@ namespace backend {
                            std::map<std::string, TensorLowerer> &operand_tensors,
                            TensorLowerer &result_tensor,
                            std::vector<CIN> forall_list,
-                           TensorLowerer &reduced_result_tensor)
+                           TensorLowerer &reduced_result_tensor,
+                           std::vector<LoopNum> &reduction_loops)
             : operand_tensors(operand_tensors), result_tensor(result_tensor),
               forall_list(std::move(forall_list)), reduced_result_tensor(reduced_result_tensor),
-              name(std::move(name)) {}
+              reduction_loops(reduction_loops), name(std::move(name)) {}
 
         // Opens header_file/source_file at "<output_directory()>/<name><header_suffix>" and
         // "<output_directory()>/<name><source_suffix>", and writes the boilerplate prologue
@@ -64,14 +68,28 @@ namespace backend {
         void open_files(const std::string &header_suffix, const std::string &source_suffix, const std::string &runnable_macro);
 
         // Adds the operand-tensor arguments shared by the CPU/GPU main function signatures,
-        // and sets the return type to the result tensor's struct.
+        // and sets the return type to the output tensor's struct.
         void add_tensor_args();
 
-        // `<Result>_tensor_format<index_t, value_t>` — the entry point's return type.
+        // Whether the expression reduces. When it does, the compute kernels fill
+        // result_tensor (`<Z>_temp`, carrying the reduced dimensions) and the entry point
+        // returns reduced_result_tensor (`<Z>`) instead.
+        bool has_reduction() const { return !reduced_result_tensor.tensor_name.empty(); }
+
+        // The tensor the entry point returns.
+        const TensorLowerer &output_tensor() const {
+            return has_reduction() ? reduced_result_tensor : result_tensor;
+        }
+
+        // `<Output>_tensor_format<index_t, value_t>` — the entry point's return type.
         llir::lType get_result_struct_type() const;
 
-        // The local holding the result inside the entry point's body.
+        // The local holding the output inside the entry point's body.
         llir::lExpr get_result_var() const;
+
+        // Emits `<T>_tensor_format<index_t, value_t> <T> = {};` plus the stores copying
+        // each of the tensor's dimension sizes from whichever operand shares that loop.
+        void declare_and_size_tensor(const TensorLowerer &tensor);
 
         llir::lExpr convert_param_to_arg(const llir::Function::Argument &param, LoopNum current_sparse_intersection);
 
@@ -95,6 +113,12 @@ namespace backend {
         virtual void stitch_count_offset_struct_def(llir::lType type) {add_to_header_file(type);};
 
         llir::lType operand_pos_map_struct_def;
+
+        // One struct holds the position maps for every sparse intersection level, so the
+        // variable is declared the first time a level needs it and reused after that.
+        bool operand_pos_map_declared = false;
+        void declare_operand_pos_map_once();
+
         virtual void stitch_operand_pos_map_struct_def(llir::lType type) {
             operand_pos_map_struct_def = type;
             add_to_header_file(type);
@@ -118,14 +142,32 @@ namespace backend {
         // register_for_free should be true only for temporary/scratch allocations
         virtual llir::lStmt generate_single_memory_allocation_statement(llir::lExpr address, llir::lType pointer_type, llir::lExpr size, bool register_for_free) = 0;
 
-        // Generates the statement setting `offsets_field[0]` to 0. The compute kernel only
-        // ever writes the offset one past a coordinate it produced, so the leading entry of a
-        // freshly allocated offsets array has no other writer.
-        virtual llir::lStmt generate_zero_leading_offset_statement(llir::lExpr offsets_field) = 0;
+        // Generates the statement zeroing `byte_count` bytes at `field`. Two uses: the
+        // leading entry of an offsets array, which the compute kernel never writes because
+        // it only writes the offset one past a coordinate it produced; and the values array
+        // of an append reduction, which the compute kernel accumulates into.
+        virtual llir::lStmt generate_zero_range_statement(llir::lExpr field, llir::lExpr byte_count) = 0;
 
-        // Returns the statement allocating result tensor fields for loops between
-        // previous_sparse_intersection and current_sparse_intersection. 
-        llir::lStmt generate_result_tensor_allocations(LoopNum previous_sparse_intersection, LoopNum current_sparse_intersection, bool is_dummy_allocation = false);
+        // Allocates the reduced result's values array and zeroes it. An append reduction
+        // accumulates into every entry with atomic adds, so they all start at zero. A
+        // reduction over every loop leaves a tensor with no levels and exactly one entry.
+        llir::lStmt generate_append_reduction_allocation();
+
+        // Emits the stage contracting result_tensor into reduced_result_tensor when a
+        // reduced loop sits outside a sparse level of the result, so that several reduced
+        // coordinates land on one output coordinate. Only the GPU target implements it.
+        virtual void stitch_scatter_reduction();
+
+        // Number of values/non-zeros the tensor stores, as the product rule used when allocating a
+        // result: a sparse level sets the count to its length, a dense level scales by its
+        // size. A tensor with no levels holds one value.
+        llir::lExpr values_extent(const TensorLowerer &tensor) const;
+
+        // Returns the statement allocating `tensor`'s fields for loops between
+        // previous_sparse_intersection and current_sparse_intersection. is_dummy_allocation
+        // is the empty-result path: coordinates and values shrink to one element, offsets
+        // keep their full extent and are zeroed throughout.
+        llir::lStmt generate_result_tensor_allocations(const TensorLowerer &tensor, LoopNum previous_sparse_intersection, LoopNum current_sparse_intersection, bool is_dummy_allocation = false);
 
         // Returns the statement that frees the memory block(s) allocated for the sparse
         // intersection level ending at sparse_intersection (an empty Sequence if there was
@@ -214,7 +256,8 @@ namespace backend {
             std::map<std::string, TensorLowerer> &operand_tensors,
             TensorLowerer &result_tensor,
             std::vector<CIN> forall_list,
-            TensorLowerer &reduced_result_tensor);
+            TensorLowerer &reduced_result_tensor,
+            std::vector<LoopNum> &reduction_loops);
 
         // Tracks pointers registered via generate_single_memory_allocation_statement, keyed by the
         // sparse-intersection level
@@ -228,7 +271,7 @@ namespace backend {
 
         llir::lStmt generate_single_memory_allocation_statement(llir::lExpr address, llir::lType pointer_type, llir::lExpr size, bool register_for_free) override;
 
-        llir::lStmt generate_zero_leading_offset_statement(llir::lExpr offsets_field) override;
+        llir::lStmt generate_zero_range_statement(llir::lExpr field, llir::lExpr byte_count) override;
 
         llir::lStmt generate_memory_free_statements(LoopNum sparse_intersection) override;
 
@@ -247,7 +290,10 @@ namespace backend {
             std::map<std::string, TensorLowerer> &operand_tensors,
             TensorLowerer &result_tensor,
             std::vector<CIN> forall_list,
-            TensorLowerer &reduced_result_tensor);
+            TensorLowerer &reduced_result_tensor,
+            std::vector<LoopNum> &reduction_loops);
+
+        void stitch_scatter_reduction() override;
 
         void generate_memory_allocations(
             llir::lType partition_struct, LoopNum previous_sparse_intersection, LoopNum current_sparse_intersection,
@@ -256,7 +302,7 @@ namespace backend {
 
         llir::lStmt generate_single_memory_allocation_statement(llir::lExpr address, llir::lType pointer_type, llir::lExpr size, bool register_for_free) override;
 
-        llir::lStmt generate_zero_leading_offset_statement(llir::lExpr offsets_field) override;
+        llir::lStmt generate_zero_range_statement(llir::lExpr field, llir::lExpr byte_count) override;
 
         llir::lStmt generate_memory_free_statements(LoopNum sparse_intersection) override;
 

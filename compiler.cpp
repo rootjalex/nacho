@@ -71,6 +71,9 @@ void test() {
         {"i", LevelFormat::Dense}
     }).named("DenseVector");
 
+    // A full reduction contracts every dimension away, leaving a single value.
+    Format scalar = Format::ordered({}).named("Scalar");
+
     TensorType csr_f32 = TensorType(csr_1, dType::Float32);
     TensorType csc_f32 = TensorType(csc_1, dType::Float32);
     TensorType csr2_f32 = TensorType(csr_2, dType::Float32);
@@ -134,13 +137,20 @@ void test() {
     // The same 3D addition over a flattened coordinate list rather than a level tree.
     Kernel("coo3d_add").expr(a_coo_ijk + b_coo_ijk).emit();
 
-    // TODO(atharvac) Reduction kernels. The Accumulate path splits the result into
-    // <Z>_temp and <Z>, and the entry point exposes only the former, so there is nothing
-    // for the bindings to return yet.
-    //
-    // Kernel("spgemm").expr(Sum::make("j", a_csr_ij * b_csr_jk)).emit();
-    // Kernel("sssmm").expr(Sum::make("j", a_csr_ij * b_csr_jk * c_csr_ik)).emit();
-    // Kernel("inner_prod").expr(Sum::make("i", Sum::make("j", Sum::make("k", a_csf_ijk * b_csf_ijk)))).emit();
+    // Reduction kernels.
+    Kernel("inner_prod").expr(Sum::make("i", Sum::make("j", Sum::make("k", a_csf_ijk * b_csf_ijk)))).emit();
+
+    Kernel("inner_prod_coo").expr(Sum::make("i", Sum::make("j", Sum::make("k", a_coo_ijk * b_coo_ijk)))).emit();
+
+    Kernel("spgemm")
+        .expr(Sum::make("j", a_csr_ij * b_csr_jk))
+        .targets({Target::GPU})
+        .emit();
+
+    Kernel("sssmm")
+        .expr(Sum::make("j", a_csr_ij * b_csr_jk * c_csr_ik))
+        .targets({Target::GPU})
+        .emit();
 
     return;
 }

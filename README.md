@@ -101,8 +101,18 @@ python benchmarks/coo_mul.py     --device cpu --start 0 --end 1600  # vs PyTorch
 python benchmarks/coo_csr_add.py --device cpu --start 0 --end 1600  # vs PyTorch
 python benchmarks/csr_add_3.py   --device cpu --start 0 --end 1600  # fused vs unfused
 python benchmarks/frostt_tensors_add.py --device cpu                # CSF3 vs COO3D vs torch
+python benchmarks/inner_prod.py  --device cpu                       # FROSTT, CSF3 vs COO3 vs torch
 python benchmarks/dcsr_lb_comparison.py --device cpu                # partitioning schemes
+
+python benchmarks/spgemm.py --start 0 --end 1300                    # vs cuSPARSE
+python benchmarks/sssmm.py  --start 0 --end 1300                    # fused vs unfused vs cuSPARSE
 ```
+
+`spgemm` and `sssmm` take no `--device`: contracting their reduction is emitted only for
+CUDA. They also stop short of the full matrix list by default, because the intermediate
+they build holds one entry per scalar multiply rather than per result non-zero, and the
+largest matrices exhaust device memory. A product that runs out is recorded as a gap in
+the plot rather than aborting the sweep.
 
 Shared helpers — matrix loading, plotting, timing, result comparison — live in
 `benchmarks/common/`. Every setting in `benchmarks/config.py` — dataset paths, which FROSTT

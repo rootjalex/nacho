@@ -8,8 +8,9 @@ namespace backend {
         std::map<std::string, TensorLowerer> &operand_tensors,
         TensorLowerer &result_tensor,
         std::vector<CIN> forall_list,
-        TensorLowerer &reduced_result_tensor)
-        : StitchAndGenerate(name, operand_tensors, result_tensor, std::move(forall_list), reduced_result_tensor) {
+        TensorLowerer &reduced_result_tensor,
+        std::vector<LoopNum> &reduction_loops)
+        : StitchAndGenerate(name, operand_tensors, result_tensor, std::move(forall_list), reduced_result_tensor, reduction_loops) {
             // Worker kernels run on the host inside tbb::parallel_for lambdas.
             open_files("_cpu.h", "_cpu.cpp", "inline");
             main_func.name = name + "_cpu_i32_f32";
@@ -40,10 +41,9 @@ namespace backend {
         );
     }
 
-    llir::lStmt StitchAndGenerateCPU::generate_zero_leading_offset_statement(llir::lExpr offsets_field) {
-        return llir::Store::make(
-            llir::lArrayAccess::make(offsets_field, llir::lConst::make(0)),
-            llir::lConst::make(0)
+    llir::lStmt StitchAndGenerateCPU::generate_zero_range_statement(llir::lExpr field, llir::lExpr byte_count) {
+        return llir::BaseExpr::make(
+            llir::lFunctionCall::make("memset", {field, llir::lConst::make(0), byte_count})
         );
     }
 
@@ -55,9 +55,7 @@ namespace backend {
 
         if(compute_kernel_defined) {
             if(operand_pos_map_struct_def.defined()) {
-                main_func.body.emplace_back(
-                    llir::Declare::make(get_operand_pos_map_type(), get_operand_pos_map_var_name())
-                );
+                declare_operand_pos_map_once();
 
                 for(auto &[tensor_name, tensor] : operand_tensors) {
                     auto field =    std::find_if(operand_pos_map_struct_def.as<llir::Struct_t>()->fields.begin(), operand_pos_map_struct_def.as<llir::Struct_t>()->fields.end(),

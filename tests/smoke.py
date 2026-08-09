@@ -23,8 +23,8 @@ SHAPE_3D, NNZ_3D = (40, 30, 25), 900
 TOLERANCE = 1e-4
 
 
-def random_csr():
-    matrix = sp.random(ROWS, COLS, density=DENSITY, format="csr", dtype=np.float32,
+def random_csr(rows=ROWS, cols=COLS):
+    matrix = sp.random(rows, cols, density=DENSITY, format="csr", dtype=np.float32,
                        random_state=RNG.integers(2**31))
     matrix.sum_duplicates()
     matrix.sort_indices()
@@ -210,6 +210,57 @@ def case_csf_add(device):
                                                    b_coordinates, b_values)
 
 
+def case_spgemm(device):
+    """Contracts j out of a[i,j] * b[j,k], so the inner dimensions have to agree."""
+    a, b = random_csr(ROWS, COLS), random_csr(COLS, ROWS)
+    result = kernel("spgemm", device)(
+        nacho.to_csr(as_torch_csr(a), device), nacho.to_csr(as_torch_csr(b), device))
+    return from_csr_result(result), a @ b
+
+
+def case_sssmm(device):
+    """The same contraction, masked by a third operand over the result's coordinates."""
+    a, b = random_csr(ROWS, COLS), random_csr(COLS, ROWS)
+    c = random_csr(ROWS, ROWS)
+    result = kernel("sssmm", device)(
+        nacho.to_csr(as_torch_csr(a), device), nacho.to_csr(as_torch_csr(b), device),
+        nacho.to_csr(as_torch_csr(c), device))
+    return from_csr_result(result), (a @ b).multiply(c)
+
+
+def _expected_inner_product(a_coordinates, a_values, b_coordinates, b_values):
+    """Sum over the coordinates the two tensors share."""
+    a_entries = {tuple(int(x) for x in c): float(v)
+                 for c, v in zip(a_coordinates, a_values)}
+    return sum(a_entries[key] * float(value)
+               for coordinate, value in zip(b_coordinates, b_values)
+               if (key := tuple(int(x) for x in coordinate)) in a_entries)
+
+
+def case_inner_prod(device):
+    """Reduces every dimension away, so the result is a single value."""
+    a_coordinates, a_values = random_coo_3d()
+    b_coordinates, b_values = random_coo_3d()
+    result = kernel("inner_prod", device)(
+        nacho.to_csf3(a_coordinates, a_values, SHAPE_3D, device),
+        nacho.to_csf3(b_coordinates, b_values, SHAPE_3D, device))
+
+    expected = _expected_inner_product(a_coordinates, a_values, b_coordinates, b_values)
+    return {(): float(buffer(result.values)[0])}, {(): expected}
+
+
+def case_inner_prod_coo(device):
+    """The same contraction over a flat coordinate list rather than a level tree."""
+    a_coordinates, a_values = random_coo_3d()
+    b_coordinates, b_values = random_coo_3d()
+    result = kernel("inner_prod_coo", device)(
+        nacho.to_coo3(a_coordinates, a_values, SHAPE_3D, device),
+        nacho.to_coo3(b_coordinates, b_values, SHAPE_3D, device))
+
+    expected = _expected_inner_product(a_coordinates, a_values, b_coordinates, b_values)
+    return {(): float(buffer(result.values)[0])}, {(): expected}
+
+
 def case_coo3d_add(device):
     a_coordinates, a_values = random_coo_3d()
     b_coordinates, b_values = random_coo_3d()
@@ -234,6 +285,10 @@ CASES = [
     ("coo_csr_add", case_coo_csr_add),
     ("csf_add", case_csf_add),
     ("coo3d_add", case_coo3d_add),
+    ("inner_prod", case_inner_prod),
+    ("inner_prod_coo", case_inner_prod_coo),
+    ("spgemm", case_spgemm),
+    ("sssmm", case_sssmm),
 ]
 
 DEVICES = ["cpu", "cuda"]

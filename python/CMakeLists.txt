@@ -12,7 +12,8 @@ cmake_minimum_required(VERSION 3.15...3.30)
 set(CMAKE_CUDA_ARCHITECTURES 89 CACHE STRING "CUDA architectures to build for")
 project(nacho_ext LANGUAGES CUDA CXX)
 
-set(CMAKE_CXX_STANDARD 17)
+# C++20 for std::atomic_ref, which the host reduction kernels use.
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 set(NACHO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/..")

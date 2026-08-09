@@ -67,17 +67,26 @@ def launch_args(device):
     return (config.NUM_BLOCKS, config.THREADS_PER_BLOCK) if device == "cuda" else ()
 
 
-def parse_sweep_args(description):
-    """The argument set every matrix-pair sweep takes."""
+def parse_sweep_args(description, end_default=1600, gpu_only=False):
+    """The argument set every matrix-pair sweep takes.
+
+    end_default varies per benchmark: the reductions run out of memory well before the end
+    of the matrix list, so they stop earlier. gpu_only drops the device choice for kernels
+    generated only for CUDA.
+    """
     parser = argparse.ArgumentParser(description=description)
-    parser.add_argument("--device", choices=["cpu", "cuda", "both"], default="both",
-                        help="which device's benchmark to run (default: both)")
+    if not gpu_only:
+        parser.add_argument("--device", choices=["cpu", "cuda", "both"], default="both",
+                            help="which device's benchmark to run (default: both)")
     parser.add_argument("--start", type=int, default=0,
                         help="first index into the matrix list (default: 0)")
-    parser.add_argument("--end", type=int, default=1600,
-                        help="one past the last index into the matrix list (default: 1600)")
+    parser.add_argument("--end", type=int, default=end_default,
+                        help=f"one past the last index into the matrix list "
+                             f"(default: {end_default})")
     parser.add_argument("--no-plot", action="store_true",
                         help="print results without writing figures or .npz files")
     args = parser.parse_args()
+    if gpu_only:
+        args.device = "cuda"
     args.devices = ["cpu", "cuda"] if args.device == "both" else [args.device]
     return args

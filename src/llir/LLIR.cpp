@@ -299,7 +299,8 @@ lStmt Declare::make(lType type, std::string name) {
 }
 
 lStmt RawStmt::make(std::string code) {
-    internal_assert(!code.empty()) << "Cannot make RawStmt with empty code.";
+    // Empty is allowed: it emits a blank line, which is how long verbatim blocks are
+    // broken up.
     RawStmt *node = new RawStmt;
     node->code = std::move(code);
     return node;

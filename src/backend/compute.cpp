@@ -317,6 +317,16 @@ llir::lStmt ComputeKernelLowerer::
                                       "<index_t, value_t>"),
         .name = result_tensor.tensor_name});
 
+    // A reduction whose reduced loops are innermost accumulates straight into the reduced
+    // result while walking result_tensor, so it needs both tensors.
+    if (output_write_tensor.tensor_name != result_tensor.tensor_name) {
+        args.emplace_back(llir::Function::Argument{
+            .mutating = true,
+            .type = llir::Generic_t::make(output_write_tensor.get_struct_name() +
+                                          "<index_t, value_t>"),
+            .name = output_write_tensor.tensor_name});
+    }
+
     if(next_sparse_intersection != LoopNum(forall_list.size())) {
         args.emplace_back(llir::Function::Argument{
             .mutating = true,
@@ -497,7 +507,7 @@ llir::lStmt ComputeKernelLowerer::lower_assign_statement(
             } else {
                 return llir::BaseExpr::make(
                 llir::lFunctionCall::make(
-                    "atomicAdd",
+                    "nacho_atomic_add",
                     {
                         llir::lAddress::make(output_write_tensor.get_values_field()[
                             output_write_tensor.get_level_indexing_expression(
@@ -1354,7 +1364,7 @@ llir::lStmt ComputeKernelLowerer::lower_loop(
             stmts.push_back(
                 llir::BaseExpr::make(
                 llir::lFunctionCall::make(
-                    "atomicAdd",
+                    "nacho_atomic_add",
                     {
                         llir::lAddress::make(output_write_tensor.get_values_field()[
                             output_write_tensor.get_level_indexing_expression(

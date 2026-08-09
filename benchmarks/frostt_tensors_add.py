@@ -28,6 +28,7 @@ import torch
 import nacho
 
 import config
+from common.frostt import iter_shifted_pairs, to_torch
 from common.timing import cpu_time, gpu_time, launch_args
 
 
@@ -38,47 +39,6 @@ def _release(device):
         torch.cuda.synchronize()
 
 
-def load_frostt(filename, dims):
-    """Read a .tns file into (coordinates, values), coordinates shaped (nnz, 3)."""
-    path = config.FROSTT_DIR / f"{filename}.tns"
-    if not path.is_file():
-        raise FileNotFoundError(
-            f"FROSTT tensor not found: {path}\n"
-            f"Set NACHO_FROSTT_DIR to the directory holding the FROSTT .tns files, or "
-            f"edit FROSTT_TENSORS in benchmarks/config.py.")
-    parsed = nacho.parse3D_i32_f32(str(path), *dims)
-    coordinates = np.stack([
-        np.asarray(parsed.row), np.asarray(parsed.col), np.asarray(parsed.dep)
-    ], axis=1)
-    return coordinates, np.asarray(parsed.data)
-
-
-def shift_coordinates(coordinates, values, shape):
-    """A copy with every coordinate advanced by one, clamped to the tensor's extent.
-
-    Clamping collapses entries at the far face onto their neighbours, so duplicates are
-    summed and the result is re-sorted. Done with numpy rather than a Python loop: these
-    tensors run to tens of millions of non-zeros.
-    """
-    shifted = np.minimum(coordinates + 1, np.array(shape, dtype=coordinates.dtype) - 1)
-
-    order = np.lexsort((shifted[:, 2], shifted[:, 1], shifted[:, 0]))
-    shifted, ordered_values = shifted[order], values[order]
-
-    starts = np.ones(len(shifted), dtype=bool)
-    starts[1:] = np.any(shifted[1:] != shifted[:-1], axis=1)
-    run_starts = np.flatnonzero(starts)
-    return shifted[run_starts], np.add.reduceat(ordered_values, run_starts)
-
-
-def to_torch(coordinates, values, shape, device):
-    indices = torch.from_numpy(np.ascontiguousarray(coordinates.T)).to(
-        dtype=torch.int64, device=device)
-    data = torch.from_numpy(np.ascontiguousarray(values)).to(
-        dtype=torch.float32, device=device)
-    return torch.sparse_coo_tensor(indices, data, tuple(shape)).coalesce()
-
-
 def benchmark_frostt_add(device="cpu", save_and_plot=True):
     """Time csf_add, coo3d_add and PyTorch on each configured FROSTT tensor."""
     on_gpu = device == "cuda"
@@ -87,16 +47,11 @@ def benchmark_frostt_add(device="cpu", save_and_plot=True):
     csf_kernel = nacho.gpu_csf_add_f32 if on_gpu else nacho.cpu_csf_add_f32
     coo3d_kernel = nacho.gpu_coo3d_add_f32 if on_gpu else nacho.cpu_coo3d_add_f32
 
-    config.require_dataset_dir(config.FROSTT_DIR, "FROSTT", "NACHO_FROSTT_DIR")
-
     names, csf_times, coo3d_times, pytorch_times, nnzs = [], [], [], [], []
 
-    for name, filename, dims in config.FROSTT_TENSORS:
-        print(f"\n=== {name}  shape={dims} ===")
-        a_coordinates, a_values = load_frostt(filename, dims)
-
-        b_coordinates, b_values = shift_coordinates(a_coordinates, a_values, dims)
-        print(f"  nnzA={len(a_values):,}  nnzB={len(b_values):,}")
+    for name, dims, a, b in iter_shifted_pairs(device):
+        a_coordinates, a_values = a
+        b_coordinates, b_values = b
 
         A_csf = nacho.to_csf3(a_coordinates, a_values, dims, device)
         B_csf = nacho.to_csf3(b_coordinates, b_values, dims, device)

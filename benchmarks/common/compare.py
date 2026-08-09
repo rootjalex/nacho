@@ -52,6 +52,23 @@ def csr_result_to_coo(result):
     return rows[kept], result.dim_j_indices[kept], result.values[kept]
 
 
+def csr_allclose(result, reference, tolerance=1e-4):
+    """Whether a generated CSR result matches a torch CSR up to floating point error.
+
+    A contraction sums a coordinate's contributions in whatever order the reduction
+    happens to visit them, so values agree only approximately even when the sparsity
+    structure is identical.
+    """
+    if not (torch.equal(reference.crow_indices(), result.dim_j_offsets) and
+            torch.equal(reference.col_indices(), result.dim_j_indices)):
+        return False
+    if reference.values().numel() == 0:
+        return True
+    relative = ((reference.values() - result.values).abs() /
+                reference.values().abs().clamp_min(1))
+    return bool(relative.max() < tolerance)
+
+
 def csr_as_coo_equal(result, reference):
     """Whether a generated CSR result matches a coalesced torch sparse COO tensor."""
     rows, cols, values = csr_result_to_coo(result)

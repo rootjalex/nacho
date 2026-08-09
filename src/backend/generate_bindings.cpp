@@ -158,7 +158,10 @@ void write_tensor_class(std::ostream &os, const TensorClass &described) {
     for (const ArrayField &array : described.arrays) {
         os << "    " << array_alias(described, array.element) << " " << array.name << ";\n";
     }
-    os << "    nacho::ShapeTuple<" << described.shape_fields.size() << "> shape;\n";
+    // A fully reduced result has no dimensions left, so it carries no shape at all.
+    if (!described.shape_fields.empty()) {
+        os << "    nacho::ShapeTuple<" << described.shape_fields.size() << "> shape;\n";
+    }
     os << "};\n\n";
 
     // Templated on the kernel's own struct: every kernel names its tensor structs after
@@ -186,27 +189,38 @@ void write_tensor_class(std::ostream &os, const TensorClass &described) {
         os << "        " << adopt << "<" << array.element << ">(t." << array.name
            << ", (size_t)(" << array.extent << ")),\n";
     }
-    os << "        nacho::make_shape<" << described.shape_fields.size() << ">({";
-    for (size_t i = 0; i < described.shape_fields.size(); ++i) {
-        os << (i ? ", " : "") << "t." << described.shape_fields[i];
+    if (!described.shape_fields.empty()) {
+        os << "        nacho::make_shape<" << described.shape_fields.size() << ">({";
+        for (size_t i = 0; i < described.shape_fields.size(); ++i) {
+            os << (i ? ", " : "") << "t." << described.shape_fields[i];
+        }
+        os << "}),\n";
     }
-    os << "}),\n";
     os << "    };\n";
     os << "}\n\n";
 }
 
 void write_tensor_class_registration(std::ostream &os, const TensorClass &described) {
+    const bool has_shape = !described.shape_fields.empty();
+
     os << "    nb::class_<" << described.class_name << ">(m, \"" << described.class_name << "\")\n";
     os << "        .def(nb::init<";
-    for (const ArrayField &array : described.arrays) {
-        os << "const " << array_alias(described, array.element) << " &, ";
+    for (size_t i = 0; i < described.arrays.size(); ++i) {
+        os << (i ? ", " : "")
+           << "const " << array_alias(described, described.arrays[i].element) << " &";
     }
-    os << "const nacho::ShapeTuple<" << described.shape_fields.size() << "> &>())\n";
+    if (has_shape) {
+        os << ", const nacho::ShapeTuple<" << described.shape_fields.size() << "> &";
+    }
+    os << ">())\n";
+
     for (const ArrayField &array : described.arrays) {
         os << "        .def_ro(\"" << array.name << "\", &" << described.class_name << "::" << array.name
-           << ", nb::rv_policy::reference)\n";
+           << ", nb::rv_policy::reference)" << (has_shape ? "\n" : ";\n\n");
     }
-    os << "        .def_ro(\"shape\", &" << described.class_name << "::shape, nb::rv_policy::reference);\n\n";
+    if (has_shape) {
+        os << "        .def_ro(\"shape\", &" << described.class_name << "::shape, nb::rv_policy::reference);\n\n";
+    }
 }
 
 std::ofstream open_generated(const std::string &filename) {
