@@ -312,8 +312,13 @@ namespace backend {
                     //std::cout<<"Inside sparse intersection "<<(Seq)node<<std::endl;
                     if(node->a.get()->is_sparse && node->b.get()->is_sparse)
                     {
+                        // Two sparse sides make this a sparse intersection whatever they
+                        // hold, but both still have to be walked so the sparse dimensions
+                        // under them reach num_sparse_dims.
                         found_sparse_intersection = true;
                         inside_sparse_intersection = false;
+                        node->a.accept(this);
+                        node->b.accept(this);
                         return;
                     }
                     if(node->a.get()->is_sparse) {

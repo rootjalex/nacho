@@ -29,6 +29,10 @@ struct ArrayField {
 struct TensorClass {
     std::string class_name;
     std::string target_tag;
+    // Concatenated index names of the tensor this was described from, e.g. "ij". The class
+    // is shared by every tensor of the format, but field names follow each tensor's own
+    // indices, so this distinguishes the conversion helpers.
+    std::string index_suffix;
     std::vector<std::string> shape_fields;  // dimension sizes, in level order
     std::vector<ArrayField> arrays;
     bool has_nnz = false;
@@ -42,6 +46,14 @@ struct KernelRegistration {
 std::map<std::string, TensorClass> &tensor_classes() {
     static std::map<std::string, TensorClass> classes;
     return classes;
+}
+
+// class name -> index suffix -> the tensor as that class sees it. A contracted index makes
+// operands of the same format carry different field names (spgemm's `a` is indexed (i,j),
+// its `b` (j,k)), so each distinct index tuple needs its own unwrap/wrap.
+std::map<std::string, std::map<std::string, TensorClass>> &tensor_class_views() {
+    static std::map<std::string, std::map<std::string, TensorClass>> views;
+    return views;
 }
 
 std::vector<KernelRegistration> &kernel_registrations() {
@@ -78,6 +90,12 @@ TensorClass describe(const TensorLowerer &tensor, const std::string &target_tag)
     described.class_name = format_name(format) + "_" + target_tag;
     described.target_tag = target_tag;
     described.has_nnz = true;
+
+    for (const Level &level : format.levels) {
+        for (const std::string &index_name : level.index.indices) {
+            described.index_suffix += index_name;
+        }
+    }
 
     const std::string value_type = value_type_name(tensor.type().dtype);
 
@@ -136,12 +154,15 @@ TensorClass describe(const TensorLowerer &tensor, const std::string &target_tag)
 }
 
 void record(const TensorClass &described) {
+    tensor_class_views()[described.class_name].emplace(described.index_suffix, described);
+
     auto [entry, inserted] = tensor_classes().emplace(described.class_name, described);
     if (inserted) {
         return;
     }
     // Two formats sharing a name would collide in the module; catch it here rather than
-    // at C++ compile time.
+    // at C++ compile time. Field names may differ between tensors of the same format, but
+    // the structure they describe — level order, buffer count — may not.
     internal_assert(entry->second.arrays.size() == described.arrays.size() &&
                     entry->second.shape_fields.size() == described.shape_fields.size())
         << "Two different layouts both map to the Python class '" << described.class_name
@@ -163,19 +184,28 @@ void write_tensor_class(std::ostream &os, const TensorClass &described) {
         os << "    nacho::ShapeTuple<" << described.shape_fields.size() << "> shape;\n";
     }
     os << "};\n\n";
+}
 
-    // Templated on the kernel's own struct: every kernel names its tensor structs after
-    // its operands (a_tensor_format, Z_tensor_format), but the layout is the same.
+// Converts between the Python class and one kernel's tensor struct. Templated on the
+// struct because every kernel names its structs after its operands (a_tensor_format,
+// Z_tensor_format); `view` supplies the field names for the indices that struct carries,
+// while `described` supplies the class's own, so the two are paired by level order.
+void write_tensor_conversions(std::ostream &os, const TensorClass &described,
+                              const TensorClass &view) {
+    const std::string suffixed = described.class_name + "_" + view.index_suffix;
+
     os << "template <typename TensorStruct>\n";
-    os << "TensorStruct unwrap_" << described.class_name << "(const " << described.class_name << " &v) {\n";
+    os << "TensorStruct unwrap_" << suffixed << "(const " << described.class_name << " &v) {\n";
     os << "    TensorStruct t = {};\n";
-    for (size_t i = 0; i < described.shape_fields.size(); ++i) {
-        os << "    t." << described.shape_fields[i] << " = v.shape.data()[" << i << "];\n";
+    for (size_t i = 0; i < view.shape_fields.size(); ++i) {
+        os << "    t." << view.shape_fields[i] << " = v.shape.data()[" << i << "];\n";
     }
-    for (const ArrayField &array : described.arrays) {
-        os << "    t." << array.name << " = nacho::borrow<" << array.element << ">(v." << array.name << ");\n";
-        if (!array.length_field.empty()) {
-            os << "    t." << array.length_field << " = (" << kIndexType << ")v." << array.name << ".shape(0);\n";
+    for (size_t i = 0; i < view.arrays.size(); ++i) {
+        const ArrayField &field = view.arrays[i];
+        const std::string &member = described.arrays[i].name;
+        os << "    t." << field.name << " = nacho::borrow<" << field.element << ">(v." << member << ");\n";
+        if (!field.length_field.empty()) {
+            os << "    t." << field.length_field << " = (" << kIndexType << ")v." << member << ".shape(0);\n";
         }
     }
     os << "    return t;\n";
@@ -183,16 +213,16 @@ void write_tensor_class(std::ostream &os, const TensorClass &described) {
 
     const std::string adopt = described.target_tag == "cpu" ? "nacho::adopt_cpu" : "nacho::adopt_gpu";
     os << "template <typename TensorStruct>\n";
-    os << described.class_name << " wrap_" << described.class_name << "(const TensorStruct &t) {\n";
+    os << described.class_name << " wrap_" << suffixed << "(const TensorStruct &t) {\n";
     os << "    return " << described.class_name << "{\n";
-    for (const ArrayField &array : described.arrays) {
+    for (const ArrayField &array : view.arrays) {
         os << "        " << adopt << "<" << array.element << ">(t." << array.name
            << ", (size_t)(" << array.extent << ")),\n";
     }
-    if (!described.shape_fields.empty()) {
-        os << "        nacho::make_shape<" << described.shape_fields.size() << ">({";
-        for (size_t i = 0; i < described.shape_fields.size(); ++i) {
-            os << (i ? ", " : "") << "t." << described.shape_fields[i];
+    if (!view.shape_fields.empty()) {
+        os << "        nacho::make_shape<" << view.shape_fields.size() << ">({";
+        for (size_t i = 0; i < view.shape_fields.size(); ++i) {
+            os << (i ? ", " : "") << "t." << view.shape_fields[i];
         }
         os << "}),\n";
     }
@@ -268,7 +298,8 @@ void generate_bindings(const BindingSpec &spec) {
     for (size_t i = 0; i < operands.size(); ++i) {
         const auto &[operand_name, operand_class] = operands[i];
         const TensorLowerer &operand = spec.operand_tensors.at(operand_name);
-        out << "        unwrap_" << operand_class.class_name << "<" << spec.kernel_name
+        out << "        unwrap_" << operand_class.class_name << "_" << operand_class.index_suffix
+            << "<" << spec.kernel_name
             << "::" << operand.get_struct_name() << "<int32_t, "
             << value_type_name(operand.type().dtype) << ">>(" << operand_name << ")";
         const bool last = (i + 1 == operands.size()) && spec.is_cpu;
@@ -278,7 +309,8 @@ void generate_bindings(const BindingSpec &spec) {
         out << "        num_blocks,\n        threads_per_block\n";
     }
     out << "    );\n";
-    out << "    return wrap_" << result_class.class_name << "(result);\n";
+    out << "    return wrap_" << result_class.class_name << "_" << result_class.index_suffix
+        << "(result);\n";
     out << "}\n\n";
     out << "} // namespace\n\n";
 
@@ -308,6 +340,9 @@ void finalize_bindings() {
     types << "#include \"nacho_nb.h\"\n\n";
     for (const auto &[class_name, described] : tensor_classes()) {
         write_tensor_class(types, described);
+        for (const auto &[suffix, view] : tensor_class_views().at(class_name)) {
+            write_tensor_conversions(types, described, view);
+        }
     }
     types << "void register_nacho_types(nb::module_ &m);\n";
     types.close();
