@@ -117,18 +117,18 @@ The second script is dedups and sorts the downloaded frostt tensor
 Each script directly in `benchmarks/` is a standalone entry point:
 
 ```bash
-python benchmarks/csr_add.py     --device both --start 0 --end 1600  # vs cuSPARSE/Taco/MKL
-python benchmarks/csr_mul.py     --device both --start 0 --end 1600  # vs PyTorch
-python benchmarks/coo_add.py     --device cuda --start 0 --end 1600  # vs PyTorch
-python benchmarks/coo_mul.py     --device cuda --start 0 --end 1600  # vs PyTorch
-python benchmarks/coo_csr_add.py --device both --start 0 --end 1600  # vs PyTorch
-python benchmarks/csr_add_3.py   --device cuda --start 0 --end 1600  # fused vs unfused
-python benchmarks/frostt_tensors_add.py --device both               # CSF3 vs COO3D vs torch
-python benchmarks/inner_prod.py  --device both                       # FROSTT, CSF3 vs COO3 vs torch
-python benchmarks/dcsr_lb_comparison.py --device both                # partitioning schemes
+numactl --physcpubind 0-15 python benchmarks/csr_add.py  --device both --start 0 --end 1600  # vs cuSPARSE/Taco/MKL
+numactl --physcpubind 0-15 python benchmarks/csr_mul.py     --device both --start 0 --end 1600  # vs PyTorch
+numactl --physcpubind 0-15 python benchmarks/coo_add.py     --device cuda --start 0 --end 1600  # vs PyTorch
+numactl --physcpubind 0-15 python benchmarks/coo_mul.py     --device cuda --start 0 --end 1600  # vs PyTorch
+numactl --physcpubind 0-15 python benchmarks/coo_csr_add.py --device both --start 0 --end 1600  # vs PyTorch
+numactl --physcpubind 0-15 python benchmarks/csr_add_3.py   --device cuda --start 0 --end 1600  # fused vs unfused
+numactl --physcpubind 0-15 python benchmarks/frostt_tensors_add.py --device both               # CSF3 vs COO3D vs torch
+numactl --physcpubind 0-15 python benchmarks/inner_prod.py  --device both                       # FROSTT, CSF3 vs COO3 vs torch
+numactl --physcpubind 0-15 python benchmarks/dcsr_lb_comparison.py --device both                # compare partitioning schemes
 
-python benchmarks/spgemm.py --start 0 --end 1300                    # vs cuSPARSE
-python benchmarks/sssmm.py  --start 0 --end 1300                    # fused vs unfused vs cuSPARSE
+numactl --physcpubind 0-15 python benchmarks/spgemm.py --start 0 --end 1300                    # vs cuSPARSE
+numactl --physcpubind 0-15 python benchmarks/sssmm.py  --start 0 --end 1300                    # fused vs unfused vs cuSPARSE
 ```
 
 Settings in `benchmarks/config.py` — dataset paths, iteration counts, output directory — 
