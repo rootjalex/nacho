@@ -12,7 +12,7 @@ pip install -r requirements.txt
 pip install torch --index-url https://download.pytorch.org/whl/cu126
 ```
 
-Replace `cu126` with the CUDA version you installed.
+Replace `cu126` to match the CUDA version on your machine.
 
 Tested with CUDA toolkit 12.6, driver 560.35, gcc 11.4, Python 3.12 and torch 2.8.0+cu128
 on an RTX 4090. `python/CMakeLists.txt` builds for `sm_89`; override with
@@ -36,9 +36,6 @@ cmake --build build-dbg --config Debug -j<N PARALLELISM>
 ./build/compiler                          # every kernel declared in compiler.cpp
 ./build/compiler --kernels csr_mul,csr_add  # just these
 ```
-
-Each run clears `generated/` first, so what is left behind is exactly what was asked
-for — and exactly what the extension build compiles.
 
 # Python bindings
 
