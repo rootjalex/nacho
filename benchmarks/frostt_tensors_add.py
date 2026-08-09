@@ -10,6 +10,11 @@ same nnz and a controlled amount of overlap. The same addition is run three ways
 Comparing the two nacho kernels shows what the level tree buys over a flat coordinate
 list at the same nnz.
 
+Each result is checked against the next: csf_add against coo3d_add, then coo3d_add
+against PyTorch. Coordinates have to agree exactly and values to within a relative
+tolerance. Holding two results at once roughly doubles peak memory on the largest
+tensors, so --no-check skips it.
+
 Tensors and their location come from config.FROSTT_TENSORS / config.FROSTT_DIR, and
 their coordinates must already be sorted lexicographically.
 
@@ -28,6 +33,8 @@ import torch
 import nacho
 
 import config
+from common.compare import (coo3_result_to_coordinates, coordinates_equal,
+                            csf3_result_to_coordinates)
 from common.frostt import iter_shifted_pairs, to_torch
 from common.timing import cpu_time, gpu_time, launch_args
 
@@ -39,7 +46,14 @@ def _release(device):
         torch.cuda.synchronize()
 
 
-def benchmark_frostt_add(device="cpu", save_and_plot=True):
+def _check(label, actual, expected):
+    """Report whether two (coordinates, values) pairs agree, and how they diverge."""
+    ok, reason = coordinates_equal(actual, expected)
+    print(f"  [check {label}] {'PASSED' if ok else 'FAILED — ' + reason}")
+    return ok
+
+
+def benchmark_frostt_add(device="cpu", save_and_plot=True, check=True):
     """Time csf_add, coo3d_add and PyTorch on each configured FROSTT tensor."""
     on_gpu = device == "cuda"
     measure = gpu_time if on_gpu else cpu_time
@@ -48,34 +62,53 @@ def benchmark_frostt_add(device="cpu", save_and_plot=True):
     coo3d_kernel = nacho.gpu_coo3d_add_f32 if on_gpu else nacho.cpu_coo3d_add_f32
 
     names, csf_times, coo3d_times, pytorch_times, nnzs = [], [], [], [], []
+    failed = []
 
     for name, dims, a, b in iter_shifted_pairs(device):
         a_coordinates, a_values = a
         b_coordinates, b_values = b
+        correct = True
 
         A_csf = nacho.to_csf3(a_coordinates, a_values, dims, device)
         B_csf = nacho.to_csf3(b_coordinates, b_values, dims, device)
-        _, csf_ms = measure(lambda: csf_kernel(A_csf, B_csf, *launch))
-        del A_csf, B_csf
+        csf_result, csf_ms = measure(lambda: csf_kernel(A_csf, B_csf, *launch))
+        # The result borrows nothing from its operands, so they go before the next stage
+        # allocates. Only the expanded coordinates are kept, and only when checking.
+        csf_coordinates = csf3_result_to_coordinates(csf_result) if check else None
+        del A_csf, B_csf, csf_result
         _release(device)
         print(f"  csf_add    {csf_ms:.2f} ms")
 
         A_coo3 = nacho.to_coo3(a_coordinates, a_values, dims, device)
         B_coo3 = nacho.to_coo3(b_coordinates, b_values, dims, device)
-        _, coo3d_ms = measure(lambda: coo3d_kernel(A_coo3, B_coo3, *launch))
-        del A_coo3, B_coo3
+        coo3d_result, coo3d_ms = measure(lambda: coo3d_kernel(A_coo3, B_coo3, *launch))
+        coo3d_coordinates = coo3_result_to_coordinates(coo3d_result) if check else None
+        del A_coo3, B_coo3, coo3d_result
         _release(device)
         print(f"  coo3d_add  {coo3d_ms:.2f} ms")
 
+        if check:
+            correct &= _check("csf_add vs coo3d_add", csf_coordinates, coo3d_coordinates)
+            del csf_coordinates
+            _release(device)
+
         A_torch = to_torch(a_coordinates, a_values, dims, device)
         B_torch = to_torch(b_coordinates, b_values, dims, device)
-        _, pytorch_ms = measure(lambda: (A_torch + B_torch).coalesce())
+        reference, pytorch_ms = measure(lambda: (A_torch + B_torch).coalesce())
         del A_torch, B_torch
-        _release(device)
         print(f"  PyTorch    {pytorch_ms:.2f} ms")
+
+        if check:
+            correct &= _check("coo3d_add vs PyTorch", coo3d_coordinates,
+                              (reference.indices(), reference.values()))
+            del coo3d_coordinates
+        del reference
+        _release(device)
 
         print(f"  speedup vs PyTorch: csf={pytorch_ms/csf_ms:.2f}x  "
               f"coo3d={pytorch_ms/coo3d_ms:.2f}x")
+        if not correct:
+            failed.append(name)
 
         names.append(name)
         nnzs.append(len(a_values) + len(b_values))
@@ -90,13 +123,13 @@ def benchmark_frostt_add(device="cpu", save_and_plot=True):
         print("\nNo tensors were benchmarked.")
         return names, csf_times, coo3d_times, pytorch_times
 
-    _print_summary(device, names, csf_times, coo3d_times, pytorch_times)
+    _print_summary(device, names, csf_times, coo3d_times, pytorch_times, failed)
     if save_and_plot:
         _plot_speedups(device, names, nnzs, csf_times, coo3d_times, pytorch_times)
     return names, csf_times, coo3d_times, pytorch_times
 
 
-def _print_summary(device, names, csf_times, coo3d_times, pytorch_times):
+def _print_summary(device, names, csf_times, coo3d_times, pytorch_times, failed):
     csf = np.array(csf_times)
     coo3d = np.array(coo3d_times)
     pytorch = np.array(pytorch_times)
@@ -112,6 +145,7 @@ def _print_summary(device, names, csf_times, coo3d_times, pytorch_times):
           f"csf={np.exp(np.mean(np.log(pytorch / csf))):.2f}x  "
           f"coo3d={np.exp(np.mean(np.log(pytorch / coo3d))):.2f}x")
     print(f"  geomean csf over coo3d: {np.exp(np.mean(np.log(coo3d / csf))):.2f}x")
+    print(f"  mismatches: {len(failed)} {failed if failed else ''}")
     print(rule)
 
 
@@ -150,10 +184,14 @@ def main():
                         help="which device's benchmark to run (default: both)")
     parser.add_argument("--no-plot", action="store_true",
                         help="print results without writing figures or .npz files")
+    parser.add_argument("--no-check", action="store_true",
+                        help="time only, skipping the correctness comparison and the "
+                             "second result it has to keep alive")
     args = parser.parse_args()
 
     for device in (["cpu", "cuda"] if args.device == "both" else [args.device]):
-        benchmark_frostt_add(device=device, save_and_plot=not args.no_plot)
+        benchmark_frostt_add(device=device, save_and_plot=not args.no_plot,
+                             check=not args.no_check)
 
 
 if __name__ == "__main__":

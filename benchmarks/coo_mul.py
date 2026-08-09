@@ -3,9 +3,11 @@
 Walks consecutive pairs in the SuiteSparse list as coalesced COO tensors over a common
 shape, and plots runtime against the combined nnz of the two operands.
 
-A product cancels wherever both operands are non-zero but the values multiply to zero.
-Nacho keeps those positions stored; torch prunes them. Both sides are pruned before the
-correctness comparison, outside the timed region.
+On the GPU, torch does not intersect the operands: it walks A's positions and stores a
+zero wherever B has no entry, so its raw product carries A's sparsity structure rather
+than the intersection nacho produces. Pruning those zeros is what makes the two results
+the same tensor, so it is timed as part of torch's work. The Nacho implementation
+intersects properly and needs no such step.
 
     python benchmarks/coo_mul.py --device cpu --start 0 --end 1600
 """
@@ -32,6 +34,16 @@ def _load_coo_pair(df, i, device):
             rows, cols)
 
 
+def _torch_product(A_torch, B_torch, on_gpu):
+    """The elementwise product as a tensor holding only the positions both operands share."""
+    product = A_torch * B_torch
+    if not on_gpu:
+        return product.coalesce()
+    kept = product.values() != 0
+    return torch.sparse_coo_tensor(product.indices()[:, kept], product.values()[kept],
+                                   product.size()).coalesce()
+
+
 def benchmark_coo_mul(start, end, device="cpu", save_and_plot=True):
     """Nacho vs PyTorch elementwise COO multiply over consecutive matrix pairs."""
     on_gpu = device == "cuda"
@@ -52,7 +64,7 @@ def benchmark_coo_mul(start, end, device="cpu", save_and_plot=True):
         print(f"  M={rows}  N={cols}  nnzA={nnz_a}  nnzB={nnz_b}")
         print(f"  A={df.iloc[i-1]['name']}  B={df.iloc[i]['name']}")
 
-        reference, pytorch_ms = measure(lambda: (A_torch * B_torch).coalesce())
+        reference, pytorch_ms = measure(lambda: _torch_product(A_torch, B_torch, on_gpu))
         result, nacho_ms = measure(lambda: kernel(A_coo, B_coo, *launch))
 
         correct = coo_equal(result, prune_zeros(reference), prune=True)

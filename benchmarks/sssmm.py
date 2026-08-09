@@ -2,17 +2,15 @@
 
 Computes c[i,k] * sum_j a[i,j] * b[j,k] as one generated kernel, so the product is only
 formed where the mask has an entry and the intermediate A @ B is never materialised in
-full. The comparisons materialise it:
+full. Both comparisons materialise it, differing only in who computes the product:
 
-  Nacho unfused   spgemm(A, B) then csr_mul with C
-  cuSPARSE        torch.sparse.mm(A, B) then an elementwise multiply
+  Nacho unfused   gpu_spgemm_f32(A, B)          then gpu_csr_mul_f32 with C
+  cuSPARSE        gpu_spgemm_cusparse_f32(A, B) then gpu_csr_mul_f32 with C
+
 
 Each iteration measures up to two products: A, A, A when A is square, and the consecutive
 triple with each operand sliced so the dimensions line up. A triple that cannot be
 reconciled is skipped.
-
-Generated for the GPU only, and the default range stops short of the full matrix list for
-the same reason as spgemm: the intermediate is sized by the multiply count.
 
     python benchmarks/sssmm.py --start 0 --end 1300
 """
@@ -21,7 +19,8 @@ import torch
 
 import nacho
 
-from common.compare import csr_allclose, summarize
+from common.compare import csr_structure_equal, csr_structure_failure_reason, summarize
+from common.csr import as_nacho_csr, to_baseline_csr
 from common.parser import matrix_list, parse_matrix
 from common.plotter import plot_scatter
 from common.timing import flush_gpu_state, gpu_time, launch_args, parse_sweep_args
@@ -43,11 +42,19 @@ def _time_product(label, run):
         return None, None
 
 
+def _cusparse_unfused(A_base, B_base, C_csr, launch):
+    """cuSPARSE forms A @ B, the generated csr_mul applies the mask."""
+    product = nacho.gpu_spgemm_cusparse_f32(A_base, B_base)
+    return nacho.gpu_csr_mul_f32(as_nacho_csr(product), C_csr, *launch)
+
+
 def _measure_triple(A_torch, B_torch, C_torch, launch):
     """Time the fused kernel and both unfused routes on one masked product."""
     A_csr = nacho.to_csr(A_torch, "cuda")
     B_csr = nacho.to_csr(B_torch, "cuda")
     C_csr = nacho.to_csr(C_torch, "cuda")
+    A_base = to_baseline_csr(A_torch, "cuda")
+    B_base = to_baseline_csr(B_torch, "cuda")
 
     fused, fused_ms = _time_product(
         "nacho fused", lambda: nacho.gpu_sssmm_f32(A_csr, B_csr, C_csr, *launch))
@@ -56,19 +63,21 @@ def _measure_triple(A_torch, B_torch, C_torch, launch):
         lambda: nacho.gpu_csr_mul_f32(nacho.gpu_spgemm_f32(A_csr, B_csr, *launch),
                                       C_csr, *launch))
     reference, cusparse_ms = _time_product(
-        "cuSPARSE", lambda: torch.sparse.mm(A_torch, B_torch) * C_torch)
+        "cuSPARSE", lambda: _cusparse_unfused(A_base, B_base, C_csr, launch))
 
     correct = True
     if fused is not None and reference is not None:
-        correct = csr_allclose(fused, reference.to_sparse_csr())
+        correct = csr_structure_equal(fused, reference)
         print(f"  nacho fused    {fused_ms:.4f} ms   correct={correct}")
         if unfused_ms is not None:
             print(f"  nacho unfused  {unfused_ms:.4f} ms   "
                   f"speedup_fused={unfused_ms/fused_ms:.3f}x")
         print(f"  cuSPARSE       {cusparse_ms:.4f} ms   "
               f"speedup_fused={cusparse_ms/fused_ms:.3f}x")
+        if not correct:
+            csr_structure_failure_reason(fused, reference)
 
-    del A_csr, B_csr, C_csr, fused, reference
+    del A_csr, B_csr, C_csr, A_base, B_base, fused, reference
     return fused_ms, unfused_ms, cusparse_ms, correct
 
 

@@ -96,18 +96,43 @@ export NACHO_SUITESPARSE_DIR=/path/to/suitesparse   # .mtx files, every 2-D benc
 export NACHO_FROSTT_DIR=/path/to/frostt             # .tns files, frostt_tensors_add.py
 ```
 
-FROSTT tensors must have lexicographically sorted coordinates and no duplicate
-coordinates.
+### Fetching the datasets
 
-Each script directly in `benchmarks/` is then a standalone entry point:
+`benchmarks/datasets/` holds the scripts that populate those two directories. They write
+to the paths above, so export the variables first. Both downloaders skip what is already
+on disk and can be re-run after an interrupted transfer.
+
+```bash
+python benchmarks/datasets/download_suitesparse.py --limit 400
+```
+
+Downloads the matrices named in `benchmarks/suitesparse_stats.csv`, smallest first.
+`--limit N` takes only the N smallest by non-zero count — the prefix that
+`--start`/`--end` index into — because the full collection is several hundred GB.
+
+```bash
+python benchmarks/datasets/download_frostt.py nell-2
+python benchmarks/datasets/sort_frostt.py nell-2
+```
+
+FROSTT tensors need the second step. The kernels co-iterate their operands in coordinate
+order and assume each coordinate appears once, which the published files do not
+guarantee, so `sort_frostt.py` rewrites `nell-2.tns` into `nell-2_sorted.tns` with
+coordinates ordered lexicographically and duplicates summed. It is the `_sorted` stem
+that `FROSTT_TENSORS` in `benchmarks/config.py` names; add an entry there, with the
+tensor's dimensions, for anything beyond nell-2. Both scripts take `--all`.
+
+### Running
+
+Each script directly in `benchmarks/` is a standalone entry point:
 
 ```bash
 python benchmarks/csr_add.py     --device both --start 0 --end 1600  # vs cuSPARSE/Taco/MKL
 python benchmarks/csr_mul.py     --device both --start 0 --end 1600  # vs PyTorch
 python benchmarks/coo_add.py     --device both --start 0 --end 1600  # vs PyTorch
 python benchmarks/coo_mul.py     --device both --start 0 --end 1600  # vs PyTorch
-python benchmarks/coo_csr_add.py --device cpu --start 0 --end 1600  # vs PyTorch
-python benchmarks/csr_add_3.py   --device cpu --start 0 --end 1600  # fused vs unfused
+python benchmarks/coo_csr_add.py --device both --start 0 --end 1600  # vs PyTorch
+python benchmarks/csr_add_3.py   --device both --start 0 --end 1600  # fused vs unfused
 python benchmarks/frostt_tensors_add.py --device both               # CSF3 vs COO3D vs torch
 python benchmarks/inner_prod.py  --device both                       # FROSTT, CSF3 vs COO3 vs torch
 python benchmarks/dcsr_lb_comparison.py --device both                # partitioning schemes

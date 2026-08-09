@@ -1,15 +1,8 @@
-"""Sparse matrix product: the generated kernel against cuSPARSE.
+"""Sparse matrix product: the generated kernel against cuSPARSE SpGEMM.
 
 Contracts j out of a[i,j] * b[j,k]. Each iteration measures up to two products: A @ A when
 A is square, and A @ B for the consecutive pair, with B sliced to its first K rows so the
 inner dimensions line up. A pair whose dimensions cannot be reconciled is skipped.
-
-torch's sparse CSR matmul on CUDA dispatches to cuSPARSE, so that is the comparison.
-
-Generated for the GPU only: contracting the scatter needs a stage nacho emits solely for
-CUDA. The default range stops short of the full matrix list because the intermediate holds
-one entry per scalar multiply, and the largest matrices exhaust device memory. Either side
-running out records no time for that point rather than aborting the sweep.
 
     python benchmarks/spgemm.py --start 0 --end 1300
 """
@@ -18,7 +11,8 @@ import torch
 
 import nacho
 
-from common.compare import csr_allclose, summarize
+from common.compare import csr_structure_equal, csr_structure_failure_reason, summarize
+from common.csr import as_nacho_csr, to_baseline_csr
 from common.parser import matrix_list, parse_matrix
 from common.plotter import plot_scatter
 from common.timing import flush_gpu_state, gpu_time, launch_args, parse_sweep_args
@@ -44,19 +38,24 @@ def _measure_pair(A_torch, B_torch, launch):
     """Time nacho and cuSPARSE on one product and report whether they agree."""
     A_csr = nacho.to_csr(A_torch, "cuda")
     B_csr = nacho.to_csr(B_torch, "cuda")
+    A_base = to_baseline_csr(A_torch, "cuda")
+    B_base = to_baseline_csr(B_torch, "cuda")
 
     result, nacho_ms = _time_product("nacho", lambda: nacho.gpu_spgemm_f32(A_csr, B_csr, *launch))
     flush_gpu_state()
-    reference, cusparse_ms = _time_product("cuSPARSE", lambda: torch.sparse.mm(A_torch, B_torch))
+    reference, cusparse_ms = _time_product(
+        "cuSPARSE", lambda: nacho.gpu_spgemm_cusparse_f32(A_base, B_base))
     flush_gpu_state()
 
     correct = True
     if result is not None and reference is not None:
-        correct = csr_allclose(result, reference.to_sparse_csr())
+        correct = csr_structure_equal(result, as_nacho_csr(reference))
         print(f"  nacho     {nacho_ms:.4f} ms   correct={correct}")
         print(f"  cuSPARSE  {cusparse_ms:.4f} ms   speedup={cusparse_ms/nacho_ms:.3f}x")
+        if not correct:
+            csr_structure_failure_reason(result, as_nacho_csr(reference))
 
-    del A_csr, B_csr, result, reference
+    del A_csr, B_csr, A_base, B_base, result, reference
     flush_gpu_state()
     return nacho_ms, cusparse_ms, correct
 

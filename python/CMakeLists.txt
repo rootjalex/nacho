@@ -74,6 +74,8 @@ set(NACHO_BASELINE_SRC
     "${NACHO_BASELINES_DIR}/csr_add/csr_add_baselines_nb.cpp"
     "${NACHO_BASELINES_DIR}/csr_add/csr_add_taco.cu"
     "${NACHO_BASELINES_DIR}/csr_add/csr_add_cusparse.cu"
+    "${NACHO_BASELINES_DIR}/spgemm/spgemm_baselines_nb.cpp"
+    "${NACHO_BASELINES_DIR}/spgemm/spgemm_cusparse.cu"
 )
 
 nanobind_add_module(

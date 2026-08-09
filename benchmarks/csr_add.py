@@ -18,6 +18,7 @@ import torch
 import nacho
 
 from common.compare import csr_equal, csr_failure_reason, summarize
+from common.csr import to_baseline_csr
 from common.parser import matrix_list, parse_matrix
 from common.plotter import plot_scatter
 from common.timing import flush_gpu_state, launch_args, parse_sweep_args, timer_for
@@ -39,17 +40,6 @@ def _clip_to_common_shape(sparse, rows, cols, to_cpu=False):
         indptr, indices, values = indptr.cpu(), indices.cpu(), values.cpu()
     return torch.sparse_csr_tensor(to_int32_if_safe(indptr), to_int32_if_safe(indices),
                                    values, (rows, cols))
-
-
-def _to_baseline_csr(csr, device):
-    """The same buffers as a baseline CSR, which the hand-written kernels take."""
-    cls = nacho.BaselineCSR_cpu if device == "cpu" else nacho.BaselineCSR_gpu
-    return cls(
-        csr.crow_indices().to(dtype=torch.int32, device=device),
-        csr.col_indices().to(dtype=torch.int32, device=device),
-        csr.values().to(dtype=torch.float32, device=device),
-        torch.tensor([csr.shape[0], csr.shape[1]], dtype=torch.int32),
-    )
 
 
 def benchmark_csr_add(start, end, device="cpu", save_and_plot=True):
@@ -76,8 +66,8 @@ def benchmark_csr_add(start, end, device="cpu", save_and_plot=True):
         B_torch = _clip_to_common_shape(B_raw, rows, cols, to_cpu=not on_gpu)
         A_csr = nacho.to_csr(A_torch, device)
         B_csr = nacho.to_csr(B_torch, device)
-        A_base = _to_baseline_csr(A_torch, device)
-        B_base = _to_baseline_csr(B_torch, device)
+        A_base = to_baseline_csr(A_torch, device)
+        B_base = to_baseline_csr(B_torch, device)
 
         # An add touches every non-zero of both operands, so their sum is the work done.
         combined_nnz = int((A_torch.crow_indices() + B_torch.crow_indices()).max().item())

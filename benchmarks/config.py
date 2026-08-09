@@ -34,7 +34,8 @@ STATS_CSV = _path("STATS_CSV", BENCHMARKS_DIR / "suitesparse_stats.csv")
 FROSTT_DIR = _path("FROSTT_DIR", Path("/scratch/frostt/"))
 
 # FROSTT tensors to benchmark: (name, file stem, (I, J, K)). Coordinates must already be
-# sorted lexicographically; sparse_gpu's sort_tns.py produces the *_sorted files.
+# sorted lexicographically and free of duplicates, which is what the *_sorted stems are:
+# datasets/sort_frostt.py writes them from the downloaded files.
 FROSTT_TENSORS = [
     # ("nell-2", "nell-2_sorted", (12092, 9184, 28818)),
     ("nell-1", "nell-1_sorted", (2902330, 2143368, 25495389)),

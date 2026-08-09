@@ -614,11 +614,12 @@ const std::vector<std::string> &scatter_reduction_lines() {
 
         // The lengths were copied back asynchronously and the host reads them right below
         // to size its allocations, so the copies have to have landed by now.
-        main_func.body.emplace_back(
-            llir::BaseExpr::make(
-                llir::lFunctionCall::make("cudaStreamSynchronize", {cuda_stream_var})
-            )
-        );
+        // Not sure if this is required or not?
+        // main_func.body.emplace_back(
+        //     llir::BaseExpr::make(
+        //         llir::lFunctionCall::make("cudaStreamSynchronize", {cuda_stream_var})
+        //     )
+        // );
 
         for (LoopNum loop = previous_sparse_intersection + 1; loop <= current_sparse_intersection; ++loop) {
             if (result_tensor.tensor_level_exists(loop) && result_tensor.is_sparse(loop)) {
