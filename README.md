@@ -1,4 +1,4 @@
-# nacho
+# Nacho
 
 Sparse Tensor Algebra compiler for GPUs and multicore CPUs
 
