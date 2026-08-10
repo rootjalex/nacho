@@ -45,7 +45,10 @@ namespace backend {
         llir::lExpr thread_id_var = llir::lVar::make(llir::Int_t::make(32), "thread_id");
         llir::lExpr total_work_var = llir::lVar::make(llir::Int_t::make(32), "total_work");
         llir::lExpr per_thread_work_var = llir::lVar::make(llir::Int_t::make(32), "per_thread_work");
-        llir::lExpr work_offsets_var = llir::lVar::make(llir::Ptr_t::make(llir::Int_t::make(32)), "T_work_offsets");
+
+        // The sparse-intersection level whose scratch is being emitted. Names that level's
+        // buffers, and keys the pointers registered for freeing.
+        LoopNum current_allocation_level = BEFORE_FIRST_LOOP;
 
 
         FuncDecl main_func;
@@ -274,6 +277,21 @@ namespace backend {
         inline std::string get_operand_pos_map_var_name() {
             return result_tensor.tensor_name + "_pos_map";
         }
+
+        // One work-offsets buffer per sparse intersection. The buffer a level fills is read
+        // by the next level's partition kernel, so each level carries its own.
+        inline std::string get_work_offsets_var_name(LoopNum current_sparse_intersection) {
+            return "T_work_offsets_" + get_all_loops_string(current_sparse_intersection);
+        }
+
+        inline llir::lExpr get_work_offsets_var(LoopNum current_sparse_intersection) {
+            return llir::lVar::make(llir::Ptr_t::make(llir::Int_t::make(32)),
+                                    get_work_offsets_var_name(current_sparse_intersection));
+        }
+
+        inline llir::lExpr work_offsets_var() {
+            return get_work_offsets_var(current_allocation_level);
+        }
     };
 
 
@@ -290,7 +308,6 @@ namespace backend {
         // Tracks pointers registered via generate_single_memory_allocation_statement, keyed by the
         // sparse-intersection level
         std::map<std::string, std::vector<llir::lExpr>> allocated_pointers;
-        LoopNum current_allocation_level = BEFORE_FIRST_LOOP;
 
         void generate_memory_allocations(
             llir::lType partition_struct, LoopNum previous_sparse_intersection, LoopNum current_sparse_intersection,

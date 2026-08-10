@@ -80,11 +80,16 @@ namespace backend {
                 }
             }
 
+            main_func.body.emplace_back(
+                llir::Declare::make(llir::Ptr_t::make(llir::Int_t::make(32)),
+                                    get_work_offsets_var_name(current_sparse_intersection))
+            );
+
             // Indexed by position in the previous level of the result, plus a terminator:
             // generate_work_offsets_scan() prefix-sums [1, length] and reads [length].
             main_func.body.emplace_back(
                 generate_single_memory_allocation_statement(
-                    work_offsets_var,
+                    work_offsets_var(),
                     llir::Ptr_t::make(llir::Int_t::make(32)),
                     llir::lVar::make(sizet_type, "sizeof(int32_t)")
                         * (result_tensor.get_length_field(result_tensor.loop_index(previous_sparse_intersection))
@@ -211,7 +216,7 @@ namespace backend {
 
     void StitchAndGenerateCPU::generate_work_offsets_scan(LoopNum previous_sparse_intersection, LoopNum current_sparse_intersection) {
         main_func.body.emplace_back(
-            llir::Store::make(work_offsets_var[llir::lConst::make(0)], llir::lConst::make(0))
+            llir::Store::make(work_offsets_var()[llir::lConst::make(0)], llir::lConst::make(0))
         );
         llir::lExpr length = result_tensor.get_length_field(result_tensor.loop_index(previous_sparse_intersection));
         llir::lExpr loop_var = llir::lVar::make(llir::Int_t::make(32), "t");
@@ -222,8 +227,8 @@ namespace backend {
                 loop_var <= length,
                 llir::lConst::make(1),
                 llir::Accumulate::make(
-                    work_offsets_var[loop_var],
-                    work_offsets_var[loop_var - llir::lConst::make(1)]
+                    work_offsets_var()[loop_var],
+                    work_offsets_var()[loop_var - llir::lConst::make(1)]
                 )
             )
         );
@@ -232,7 +237,7 @@ namespace backend {
     llir::lStmt StitchAndGenerateCPU::generate_total_work_from_offsets_statement(llir::lExpr index_expr) {
         return llir::Store::make(
             llir::lVar::make(llir::Int_t::make(32), "total_work"),
-            work_offsets_var[index_expr]
+            work_offsets_var()[index_expr]
         );
     }
 

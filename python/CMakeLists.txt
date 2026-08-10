@@ -78,10 +78,13 @@ set(NACHO_BASELINE_SRC
     "${NACHO_BASELINES_DIR}/spgemm/spgemm_cusparse.cu"
 )
 
+# NOMINSIZE: nanobind otherwise appends -Os to every CXX source, which overrides the
+# Release -O3. 
 nanobind_add_module(
   nacho_ext
   STABLE_ABI
   NB_STATIC
+  NOMINSIZE
   ${NACHO_GENERATED_CPP}
   ${NACHO_GENERATED_CU}
   ${NACHO_RUNTIME_SRC}

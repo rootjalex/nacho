@@ -310,6 +310,8 @@ const std::vector<std::string> &scatter_reduction_lines() {
         llir::lType partition_struct, LoopNum previous_sparse_intersection, LoopNum current_sparse_intersection,
         bool precompute_kernel_defined, bool compute_kernel_defined
     ) {
+        current_allocation_level = current_sparse_intersection;
+
         // CUB deduces its iterator types from the arguments even when d_temp_storage is null
         // and it only reports the temp-storage size, so the sizing queries below pass a typed
         // null pointer matching the buffers the real scans operate on.
@@ -464,8 +466,12 @@ const std::vector<std::string> &scatter_reduction_lines() {
 
         if(compute_kernel_defined) {
             main_func.body.emplace_back(
+                llir::Declare::make(llir::Ptr_t::make(llir::Int_t::make(32)),
+                                    get_work_offsets_var_name(current_sparse_intersection))
+            );
+            main_func.body.emplace_back(
                 llir::Store::make(
-                    work_offsets_var,
+                    work_offsets_var(),
                     mem_block_slice(llir::Ptr_t::make(llir::Int_t::make(32)))
                 )
             );
@@ -642,7 +648,7 @@ const std::vector<std::string> &scatter_reduction_lines() {
         main_func.body.emplace_back(
             llir::BaseExpr::make(
                 llir::lFunctionCall::make("cudaMemsetAsync", {
-                    work_offsets_var,
+                    work_offsets_var(),
                     llir::lConst::make(0),
                     llir::lVar::make(sizet_type, "sizeof(int32_t)"),
                     cuda_stream_var
@@ -654,8 +660,8 @@ const std::vector<std::string> &scatter_reduction_lines() {
                 llir::lFunctionCall::make("cub::DeviceScan::InclusiveSum", {
                     llir::lVar::make(void_type, "cub_temp_storage_" + get_all_loops_string(current_sparse_intersection)),
                     llir::lVar::make(sizet_type, "cub_bytes"),
-                    work_offsets_var + llir::lConst::make(1),
-                    work_offsets_var + llir::lConst::make(1),
+                    work_offsets_var() + llir::lConst::make(1),
+                    work_offsets_var() + llir::lConst::make(1),
                     result_tensor.get_length_field(result_tensor.loop_index(previous_sparse_intersection)),
                     cuda_stream_var
                 })
@@ -678,7 +684,7 @@ const std::vector<std::string> &scatter_reduction_lines() {
         return llir::BaseExpr::make(
             llir::lFunctionCall::make("cudaMemcpyAsync", {
                 llir::lAddress::make(llir::lVar::make(llir::Int_t::make(32), "total_work")),
-                work_offsets_var + index_expr,
+                work_offsets_var() + index_expr,
                 llir::lVar::make(sizet_type, "sizeof(int32_t)"),
                 device_to_host,
                 cuda_stream_var

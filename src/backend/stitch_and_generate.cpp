@@ -135,7 +135,7 @@ namespace backend {
         } else if (param.name == get_operand_pos_map_var_name()) {
             return llir::lVar::make(param.type, param.name);
         } else if (param.name == "T_work_offsets") {
-            return work_offsets_var;
+            return work_offsets_var();
         }
         internal_assert(false) << "Unknown parameter name: " << param.name;
         return llir::lExpr();
@@ -417,13 +417,6 @@ namespace backend {
             llir::Declare::make(
                 llir::Int_t::make(32),
                 "per_thread_work"
-            )
-        );
-
-        main_func.body.emplace_back(
-            llir::Declare::make(
-                llir::Ptr_t::make(llir::Int_t::make(32)),
-                "T_work_offsets"
             )
         );
 
