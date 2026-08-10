@@ -142,6 +142,45 @@ def plot_scatter(filename, x_data, x_label, nacho, cusparse=None, pytorch=None, 
     compute_stats("Nacho Unfused", unfused, nacho)
 
 
+def plot_heatmap(filename, data, exponents, x_label, y_label):
+    """Speedup over a grid of two parameters, as a fixed 1.5 x 1.5 inch figure.
+
+    The axes are placed at hardcoded fractions of the figure rather than by a layout
+    engine, and the figure is saved without a tight bounding box, so every panel comes
+    out the same size whatever the tick labels are.
+    """
+    np.savez(_results_path(filename, ".npz"), speedups=data, exponents=exponents)
+
+    font_size = 6
+    figure = plt.figure(figsize=(1.5, 1.5))
+
+    left, bottom, width, height = 0.26, 0.26, 0.50, 0.56
+    gap, bar_width = 0.02, 0.04
+    axes = figure.add_axes([left, bottom, width, height])
+    bar_axes = figure.add_axes([left + width + gap, bottom, bar_width, height])
+
+    # imshow with aspect="auto" fills the axes box exactly rather than forcing square
+    # pixels, which would shrink the map away from the size fixed above.
+    image = axes.imshow(data, cmap="viridis", aspect="auto", origin="upper")
+
+    bar = figure.colorbar(image, cax=bar_axes)
+    bar.ax.tick_params(labelsize=font_size, pad=1, length=2)
+    bar.set_label("Speedup", fontsize=font_size, labelpad=2)
+
+    axes.set_xticks(np.arange(len(exponents)))
+    axes.set_yticks(np.arange(len(exponents)))
+    axes.set_xticklabels([f"{e:.1f}" for e in exponents], fontsize=font_size,
+                         rotation=45, ha="right", rotation_mode="anchor")
+    axes.set_yticklabels([f"{e:.1f}" for e in exponents], fontsize=font_size)
+    axes.xaxis.set_ticks_position("bottom")
+    axes.tick_params(axis="both", which="major", labelsize=font_size, pad=2, length=2)
+    axes.set_xlabel(x_label, fontsize=font_size, labelpad=2)
+    axes.set_ylabel(y_label, fontsize=font_size, labelpad=2)
+
+    _save_figure(filename)
+    plt.close(figure)
+
+
 def compute_stats(name, baseline, nacho):
     """Print the speedup distribution of nacho over one baseline series."""
     if baseline is None:

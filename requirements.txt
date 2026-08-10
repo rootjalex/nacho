@@ -9,3 +9,4 @@ numpy
 scipy
 pandas
 matplotlib
+networkx  # powerlaw_heatmap_csr_add.py generates its matrices from a degree sequence

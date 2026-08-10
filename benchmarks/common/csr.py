@@ -21,10 +21,10 @@ def to_baseline_csr(csr, device):
     )
 
 
-def as_nacho_csr(baseline):
+def as_nacho_csr(baseline, device="cuda"):
     """A baseline kernel's result as the class the generated kernels take.
 
-    The generated kernel reads through to the same buffers, so the baseline result has to
-    outlive the call.
+    Nothing is copied, so the baseline result has to outlive whatever reads through it.
     """
-    return nacho.CSR_gpu(baseline.indptr, baseline.indices, baseline.values, baseline.shape)
+    cls = nacho.CSR_cpu if device == "cpu" else nacho.CSR_gpu
+    return cls(baseline.indptr, baseline.indices, baseline.values, baseline.shape)

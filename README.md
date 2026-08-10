@@ -129,6 +129,7 @@ numactl --physcpubind 0-15 python benchmarks/coo_mul.py     --device cuda --star
 numactl --physcpubind 0-15 python benchmarks/coo_csr_add.py --device both --start 0 --end 1600  # vs PyTorch
 numactl --physcpubind 0-15 python benchmarks/csr_add_3.py   --device cuda --start 0 --end 1600  # fused vs unfused
 numactl --physcpubind 0-15 python benchmarks/dcsr_lb_comparison.py --device both                # compare partitioning schemes
+numactl --physcpubind 0-15 python benchmarks/powerlaw_heatmap_csr_add.py --device both  # skew sweep, synthetic
 
 numactl --physcpubind 0-15 python benchmarks/spgemm.py --start 0 --end 1300                    # vs cuSPARSE
 numactl --physcpubind 0-15 python benchmarks/sssmm.py  --start 0 --end 1300                    # fused vs unfused vs cuSPARSE

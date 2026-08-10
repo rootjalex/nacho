@@ -52,6 +52,17 @@ def csr_result_to_coo(result):
     return rows[kept], result.dim_j_indices[kept], result.values[kept]
 
 
+def csr_close(result, reference, atol=1e-5):
+    """Whether two generated CSR results agree, values to within atol.
+
+    An addition visits each output coordinate's two contributions in a fixed order, so
+    unlike a contraction its values are comparable directly.
+    """
+    return (torch.equal(reference.dim_j_offsets, result.dim_j_offsets) and
+            torch.equal(reference.dim_j_indices, result.dim_j_indices) and
+            torch.allclose(result.values, reference.values, atol=atol))
+
+
 def csr_structure_equal(result, reference):
     """Whether two generated CSR results have identical sparsity structure.
 
