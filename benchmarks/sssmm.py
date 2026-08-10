@@ -7,6 +7,9 @@ full. Both baselines materialise it, differing in who computes the product and t
   cuSPARSE        gpu_spgemm_cusparse_f32(A, B) then gpu_csr_mul_f32 with C
   PyTorch         torch.sparse.mm(A, B) then an elementwise multiply with C
 
+torch's multiply keeps the mask's sparsity structure rather than intersecting, so its
+route is timed with the pruning that brings the result back to the tensor the other two
+produce.
 
 Each iteration measures up to two products: A, A, A when A is square, and the consecutive
 triple with each operand sliced so the dimensions line up. A triple that cannot be
@@ -48,6 +51,20 @@ def _cusparse_unfused(A_base, B_base, C_csr, launch):
     return nacho.gpu_csr_mul_f32(as_nacho_csr(product), C_csr, *launch)
 
 
+def _pytorch_unfused(A_torch, B_torch, C_torch):
+    """torch forms A @ B, then masks it with C.
+
+    Masking keeps the mask's sparsity structure, storing a zero wherever C has an entry
+    and the product does not. Dropping those is what leaves the tensor the other two
+    routes produce, so it counts as part of the work.
+    """
+    product = torch.mul(C_torch, torch.sparse.mm(A_torch, B_torch))
+    coo = product.to_sparse_coo().coalesce()
+    kept = coo.values() != 0
+    return torch.sparse_coo_tensor(coo.indices()[:, kept], coo.values()[kept],
+                                   coo.size()).to_sparse_csr()
+
+
 def _measure_triple(A_torch, B_torch, C_torch, launch):
     """Time the fused kernel against the two unfused baselines on one masked product."""
     A_csr = nacho.to_csr(A_torch, "cuda")
@@ -61,7 +78,7 @@ def _measure_triple(A_torch, B_torch, C_torch, launch):
     reference, cusparse_ms = _time_product(
         "cuSPARSE", lambda: _cusparse_unfused(A_base, B_base, C_csr, launch))
     _, pytorch_ms = _time_product(
-        "PyTorch", lambda: torch.sparse.mm(A_torch, B_torch) * C_torch)
+        "PyTorch", lambda: _pytorch_unfused(A_torch, B_torch, C_torch))
 
     correct = True
     if fused is not None and reference is not None:
