@@ -12,8 +12,9 @@ The sweep varies two things independently:
 The heatmap is % rows skipped against row skew, coloured by
 single-phase time / recursive time, so >1 means recursive partitioning wins.
 
+    python benchmarks/dcsr_lb_comparison.py               # both devices
     python benchmarks/dcsr_lb_comparison.py --device cpu
-    python benchmarks/dcsr_lb_comparison.py --device gpu
+    python benchmarks/dcsr_lb_comparison.py --device cuda
     python benchmarks/dcsr_lb_comparison.py --replot results.csv --out plot.png
 """
 
@@ -482,16 +483,63 @@ SKEW_VALUES = [0.10, 0.26, 0.40, 0.52, 0.62]
 DIST_SKEW_VALUES = [0.0, 0.4, 0.8, 1.2, 1.6, 2.0]
 
 
+def _tag_path(path, suffix):
+    """Insert `_suffix` before the extension, so one --csv/--out serves both devices."""
+    root, extension = os.path.splitext(path)
+    return f"{root}_{suffix}{extension}"
+
+
+def run_device(args, device, tag_paths):
+    """Sweep (or reload) one device's records, then summarise and plot them.
+
+    tag_paths distinguishes an explicit --csv/--out per device; without it a
+    --device both run would have the second device overwrite the first's files.
+    """
+    on_gpu = device == "cuda"
+    suffix = "gpu" if on_gpu else "cpu"
+
+    csv_arg = _tag_path(args.csv, suffix) if args.csv and tag_paths else args.csv
+    out_arg = _tag_path(args.out, suffix) if args.out and tag_paths else args.out
+    csv_path = csv_arg or str(config.RESULTS_DIR / f"dcsr_lb_comparison_{suffix}.csv")
+    out_path = out_arg or str(config.RESULTS_DIR / f"dcsr_lb_comparison_{suffix}_heatmap.png")
+
+    if csv_arg and os.path.exists(csv_arg):
+        print(f"[{device}] Loading records from {csv_arg} (skipping sweep) ...")
+        records = load_csv(csv_arg)
+    else:
+        if not on_gpu and not args.skip_sanity_check:
+            run_sanity_check()
+
+        total = len(CONFIGS) * len(SKEW_VALUES) * len(DIST_SKEW_VALUES) * args.seeds
+        print(f"[{device}] Sweeping {len(CONFIGS)} configs x {len(SKEW_VALUES)} "
+              f"intersection points x {len(DIST_SKEW_VALUES)} dist_skew x "
+              f"{args.seeds} seeds = {total} runs\n")
+
+        sweep = run_sweep_gpu if on_gpu else run_sweep
+        records = sweep(CONFIGS, SKEW_VALUES, DIST_SKEW_VALUES, n_seeds=args.seeds)
+        if not records:
+            print(f"[{device}] No successful runs - nothing to plot.")
+            return
+        save_csv(records, csv_path)
+
+    recursive_col, single_col = _columns_for(records)
+    print_speedup_summary(records, recursive_col, single_col)
+    plot_speedup_heatmap(records, out_path, recursive_col, single_col)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--device", choices=["cpu", "gpu"], default="cpu",
-                        help="which pair of kernels to time (default: cpu)")
+    parser.add_argument("--device", choices=["cpu", "cuda", "both"], default="both",
+                        help="which device's benchmark to run (default: both)")
     parser.add_argument("--seeds", type=int, default=3,
                         help="random structures per (skew, dist_skew) cell (default: 3)")
     parser.add_argument("--csv", default=None,
                         help="write records here; if the file exists, replot it "
-                             "instead of sweeping")
-    parser.add_argument("--out", default=None, help="output image path")
+                             "instead of sweeping. With --device both, _cpu/_gpu is "
+                             "appended to the stem")
+    parser.add_argument("--out", default=None,
+                        help="output image path; with --device both, _cpu/_gpu is "
+                             "appended to the stem")
     parser.add_argument("--replot", metavar="CSV", default=None,
                         help="replot an existing CSV and exit")
     parser.add_argument("--skip-sanity-check", action="store_true",
@@ -508,32 +556,9 @@ def main():
         plot_speedup_heatmap(records, out_path, recursive_col, single_col)
         return
 
-    on_gpu = args.device == "gpu"
-    suffix = "gpu" if on_gpu else "cpu"
-    csv_path = args.csv or str(config.RESULTS_DIR / f"dcsr_lb_comparison_{suffix}.csv")
-    out_path = args.out or str(config.RESULTS_DIR / f"dcsr_lb_comparison_{suffix}_heatmap.png")
-
-    if args.csv and os.path.exists(args.csv):
-        print(f"Loading records from {args.csv} (skipping sweep) ...")
-        records = load_csv(args.csv)
-    else:
-        if not on_gpu and not args.skip_sanity_check:
-            run_sanity_check()
-
-        total = len(CONFIGS) * len(SKEW_VALUES) * len(DIST_SKEW_VALUES) * args.seeds
-        print(f"Sweeping {len(CONFIGS)} configs x {len(SKEW_VALUES)} intersection points "
-              f"x {len(DIST_SKEW_VALUES)} dist_skew x {args.seeds} seeds = {total} runs\n")
-
-        sweep = run_sweep_gpu if on_gpu else run_sweep
-        records = sweep(CONFIGS, SKEW_VALUES, DIST_SKEW_VALUES, n_seeds=args.seeds)
-        if not records:
-            print("No successful runs - nothing to plot.")
-            return
-        save_csv(records, csv_path)
-
-    recursive_col, single_col = _columns_for(records)
-    print_speedup_summary(records, recursive_col, single_col)
-    plot_speedup_heatmap(records, out_path, recursive_col, single_col)
+    devices = ["cpu", "cuda"] if args.device == "both" else [args.device]
+    for device in devices:
+        run_device(args, device, tag_paths=len(devices) > 1)
 
 
 if __name__ == "__main__":
