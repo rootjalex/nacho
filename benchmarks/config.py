@@ -47,6 +47,9 @@ FROSTT_TENSORS = [
 # Where .npz result files and plots are written.
 RESULTS_DIR = _path("RESULTS_DIR", REPO_ROOT / "benchmark_results")
 
+# Untimed iterations run before each measurement.
+WARMUP_COUNT = _int("WARMUP_COUNT", 5)
+
 # Timed iterations per measurement, and how many of the slowest/fastest to trim.
 ITER_COUNT = _int("ITER_COUNT", 14)
 TRIM = _int("TRIM", 2)

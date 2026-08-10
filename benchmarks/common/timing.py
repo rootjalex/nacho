@@ -1,7 +1,8 @@
 """Timing helpers shared by the benchmark scripts.
 
-Every measurement runs config.ITER_COUNT times and reports a trimmed mean, dropping
-config.TRIM samples from each tail so a stray slow run does not dominate.
+Every measurement first runs config.WARMUP_COUNT untimed iterations, then runs
+config.ITER_COUNT times and reports a trimmed mean, dropping config.TRIM samples from each
+tail so a stray slow run does not dominate.
 """
 
 import argparse
@@ -28,6 +29,8 @@ def _trimmed_mean(times):
 
 def gpu_time(fn):
     """Run fn() on the GPU; return (last result, trimmed mean ms) from CUDA events."""
+    for _ in range(config.WARMUP_COUNT):
+        fn()
     torch.cuda.synchronize()
     times = []
     result = None
@@ -44,6 +47,8 @@ def gpu_time(fn):
 
 def cpu_time(fn):
     """Run fn() on the host; return (last result, trimmed mean ms)."""
+    for _ in range(config.WARMUP_COUNT):
+        fn()
     times = []
     result = None
     for _ in range(config.ITER_COUNT):
