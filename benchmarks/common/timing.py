@@ -35,6 +35,8 @@ def gpu_time(fn):
     times = []
     result = None
     for _ in range(config.ITER_COUNT):
+        if result is not None:
+            del result
         start = torch.cuda.Event(enable_timing=True)
         end = torch.cuda.Event(enable_timing=True, blocking=True)
         start.record()
@@ -52,6 +54,8 @@ def cpu_time(fn):
     times = []
     result = None
     for _ in range(config.ITER_COUNT):
+        if result is not None:
+            del result
         started = time.perf_counter()
         result = fn()
         times.append((time.perf_counter() - started) * 1000)

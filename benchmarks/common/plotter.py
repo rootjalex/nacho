@@ -154,7 +154,9 @@ def plot_heatmap(filename, data, exponents, x_label, y_label):
     font_size = 6
     figure = plt.figure(figsize=(1.5, 1.5))
 
-    left, bottom, width, height = 0.26, 0.26, 0.50, 0.56
+    # Room to the right of the bar for its tick labels and the "Speedup" label, wide
+    # enough for the three-digit ticks a GPU panel reaches.
+    left, bottom, width, height = 0.24, 0.26, 0.46, 0.56
     gap, bar_width = 0.02, 0.04
     axes = figure.add_axes([left, bottom, width, height])
     bar_axes = figure.add_axes([left + width + gap, bottom, bar_width, height])
@@ -165,7 +167,7 @@ def plot_heatmap(filename, data, exponents, x_label, y_label):
 
     bar = figure.colorbar(image, cax=bar_axes)
     bar.ax.tick_params(labelsize=font_size, pad=1, length=2)
-    bar.set_label("Speedup", fontsize=font_size, labelpad=2)
+    bar.set_label("Speedup", fontsize=font_size, labelpad=1)
 
     axes.set_xticks(np.arange(len(exponents)))
     axes.set_yticks(np.arange(len(exponents)))
