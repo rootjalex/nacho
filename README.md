@@ -119,7 +119,8 @@ require.
 
 ### Running
 
-Each script directly in `benchmarks/` is a standalone entry point:
+Each script directly in `benchmarks/` is a standalone entry point. The following script can be used to run 
+all the benchmarks.
 
 ```bash
 numactl --physcpubind 0-15 python benchmarks/csr_add.py  --device both --start 0 --end 1600  # vs cuSPARSE/Taco/MKL
@@ -140,6 +141,35 @@ numactl --physcpubind 0-15 python benchmarks/inner_prod.py  --device both       
 Settings in `benchmarks/config.py` — dataset paths, iteration counts, output directory — 
 can be overridden by an environment variable of the same name prefixed with `NACHO_`.
 
+
+If running cpu-only benchmarks, run
+```bash
+numactl --physcpubind 0-15 python benchmarks/csr_add.py  --device cpu --start 0 --end 1600  # vs Taco/MKL
+numactl --physcpubind 0-15 python benchmarks/csr_mul.py     --device cpu --start 0 --end 1600  # vs PyTorch
+numactl --physcpubind 0-15 python benchmarks/coo_csr_add.py --device cpu --start 0 --end 1600  # vs PyTorch
+numactl --physcpubind 0-15 python benchmarks/dcsr_lb_comparison.py --device cpu               # compare partitioning schemes
+numactl --physcpubind 0-15 python benchmarks/powerlaw_heatmap_csr_add.py --device cpu       # skew sweep, synthetic
+
+numactl --physcpubind 0-15 python benchmarks/frostt_tensors_add.py --device cpu               # CSF3 vs COO3D vs torch
+numactl --physcpubind 0-15 python benchmarks/inner_prod.py  --device cpu                       # FROSTT, CSF3 vs COO3 vs torch
+```
+
+If running gpu-only benchmarks, run
+```bash
+numactl --physcpubind 0-15 python benchmarks/csr_add.py  --device cuda --start 0 --end 1600  # vs cuSPARSE/Taco
+numactl --physcpubind 0-15 python benchmarks/csr_mul.py     --device cuda --start 0 --end 1600  # vs PyTorch
+numactl --physcpubind 0-15 python benchmarks/coo_add.py     --device cuda --start 0 --end 1600  # vs PyTorch
+numactl --physcpubind 0-15 python benchmarks/coo_mul.py     --device cuda --start 0 --end 1600  # vs PyTorch
+numactl --physcpubind 0-15 python benchmarks/coo_csr_add.py --device cuda --start 0 --end 1600  # vs PyTorch
+numactl --physcpubind 0-15 python benchmarks/csr_add_3.py   --device cuda --start 0 --end 1600  # fused vs unfused
+numactl --physcpubind 0-15 python benchmarks/dcsr_lb_comparison.py --device cuda                # compare partitioning schemes
+numactl --physcpubind 0-15 python benchmarks/powerlaw_heatmap_csr_add.py --device cuda       # skew sweep, synthetic
+
+numactl --physcpubind 0-15 python benchmarks/spgemm.py --start 0 --end 1300                    # vs cuSPARSE
+numactl --physcpubind 0-15 python benchmarks/sssmm.py  --start 0 --end 1300                    # fused vs unfused vs cuSPARSE
+numactl --physcpubind 0-15 python benchmarks/frostt_tensors_add.py --device cuda               # CSF3 vs COO3D vs torch
+numactl --physcpubind 0-15 python benchmarks/inner_prod.py  --device cuda                       # FROSTT, CSF3 vs COO3 vs torch
+```
 
 ### Acknowledgements
 
