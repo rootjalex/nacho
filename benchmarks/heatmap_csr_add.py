@@ -18,7 +18,7 @@ The comparison is the load balancing, not the library: both sides are the same a
 the baseline being the row-parallel kernel in baselines/ that assigns one row per thread.
 On the GPU cuSPARSE stands in for it, being the vendor's row-parallel implementation.
 
-    python benchmarks/powerlaw_heatmap_csr_add.py --device both
+    python benchmarks/heatmap_csr_add.py --device both
 """
 
 import argparse

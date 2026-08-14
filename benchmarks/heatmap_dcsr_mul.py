@@ -12,10 +12,10 @@ The sweep varies two things independently:
 The heatmap is % rows skipped against row skew, coloured by
 single-phase time / recursive time, so >1 means recursive partitioning wins.
 
-    python benchmarks/dcsr_lb_comparison.py               # both devices
-    python benchmarks/dcsr_lb_comparison.py --device cpu
-    python benchmarks/dcsr_lb_comparison.py --device cuda
-    python benchmarks/dcsr_lb_comparison.py --replot results.csv --out plot.png
+    python benchmarks/heatmap_dcsr_mul.py               # both devices
+    python benchmarks/heatmap_dcsr_mul.py --device cpu
+    python benchmarks/heatmap_dcsr_mul.py --device cuda
+    python benchmarks/heatmap_dcsr_mul.py --replot results.csv --out plot.png
 """
 
 import argparse
