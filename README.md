@@ -4,8 +4,14 @@ Sparse Tensor Algebra compiler for GPUs and multicore CPUs
 
 ### Setup
 
-Install first: the CUDA toolkit (`nvcc` on `PATH` or in `CUDACXX`), oneTBB, and Python
-3.12 or newer. Then:
+Install first: the CUDA toolkit, oneTBB, and Python 3.12 or newer. `nvcc` has to be
+findable before configuring, either on `PATH` or named by `CUDACXX`:
+
+```bash
+export PATH=/usr/local/cuda-12.6/bin:$PATH   # or: export CUDACXX=/usr/local/cuda-12.6/bin/nvcc
+```
+
+Then:
 
 ```bash
 pip install -r requirements.txt

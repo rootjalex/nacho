@@ -1,10 +1,13 @@
 #!/bin/bash
-#SBATCH --tasks-per-node=24
-#SBATCH -N 2
-#SBATCH --cpu_bind=verbose,cores
-#SBATCH -t 360
 
-# Command: ./download_suitesparse_reals.sh
+# Downloads the real-valued SuiteSparse matrices the benchmarks read, into the working
+# directory. Run it from $NACHO_SUITESPARSE_DIR, then unpack the archives:
+#
+#   cd "$NACHO_SUITESPARSE_DIR"
+#   bash <nacho>/benchmarks/datasets/download_suitesparse_reals.sh
+#   find . -name '*.tar.gz' -print0 | xargs -0 -P 8 -n 1 tar -xzf
+#
+# The archives total about 30 GB and expand to about 115 GB.
 
 wget https://sparse.tamu.edu/MM/HB/1138_bus.tar.gz &
 wget https://sparse.tamu.edu/MM/HB/494_bus.tar.gz &
