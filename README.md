@@ -4,14 +4,15 @@ Sparse Tensor Algebra compiler for GPUs and multicore CPUs
 
 ### Setup
 
-Install first: the CUDA toolkit, oneTBB, Python 3.12 or newer, and LaTeX, which the
-benchmark scripts typeset their figures with. LaTeX alone is:
-
+Install first: the CUDA toolkit, oneTBB, Python 3.12 or newer, CMake, and LaTeX, which the
+benchmark scripts typeset their figures with. We use the following conda environment:
 ```bash
-sudo apt install texlive-latex-base texlive-latex-extra cm-super dvipng ghostscript
+conda create -n nacho_env python=3.12
+conda activate nacho_env
+conda install conda-forge::tbb-devel conda-forge::cmake nvidia::cuda-toolkit=12.6 texlive-core ghostscript
 ```
 
-`nvcc` has to be findable before configuring, either on `PATH` or named by `CUDACXX`:
+If you already have your own CUDA toolkit, `nvcc` has to be findable before configuring, either on `PATH` or named by `CUDACXX`:
 
 ```bash
 export PATH=/usr/local/cuda-12.6/bin:$PATH   # or: export CUDACXX=/usr/local/cuda-12.6/bin/nvcc
@@ -168,19 +169,19 @@ numactl --physcpubind 0-15 python benchmarks/inner_prod.py  --device cpu        
 
 If running gpu-only benchmarks, run
 ```bash
-numactl --physcpubind 0-15 python benchmarks/csr_add.py  --device cuda --start 0 --end 1600     # vs cuSPARSE/Taco
-numactl --physcpubind 0-15 python benchmarks/csr_mul.py     --device cuda --start 0 --end 1600  # vs PyTorch
-numactl --physcpubind 0-15 python benchmarks/coo_add.py     --device cuda --start 0 --end 1600  # vs PyTorch
-numactl --physcpubind 0-15 python benchmarks/coo_mul.py     --device cuda --start 0 --end 1600  # vs PyTorch
-numactl --physcpubind 0-15 python benchmarks/coo_csr_add.py --device cuda --start 0 --end 1600  # vs PyTorch
-numactl --physcpubind 0-15 python benchmarks/csr_add_3.py   --device cuda --start 0 --end 1600  # fused vs unfused
-numactl --physcpubind 0-15 python benchmarks/heatmap_dcsr_mul.py --device cuda                  # compare partitioning schemes
-numactl --physcpubind 0-15 python benchmarks/heatmap_csr_add.py --device cuda                   # skew sweep, synthetic
+python benchmarks/csr_add.py  --device cuda --start 0 --end 1600                                # vs cuSPARSE/Taco
+python benchmarks/csr_mul.py     --device cuda --start 0 --end 1600                             # vs PyTorch
+python benchmarks/coo_add.py     --device cuda --start 0 --end 1600                             # vs PyTorch
+python benchmarks/coo_mul.py     --device cuda --start 0 --end 1600                             # vs PyTorch
+python benchmarks/coo_csr_add.py --device cuda --start 0 --end 1600                             # vs PyTorch
+python benchmarks/csr_add_3.py   --device cuda --start 0 --end 1600                             # fused vs unfused
+python benchmarks/heatmap_dcsr_mul.py --device cuda                                             # compare partitioning schemes
+python benchmarks/heatmap_csr_add.py --device cuda                                              # skew sweep, synthetic
 
-numactl --physcpubind 0-15 python benchmarks/spgemm.py --start 0 --end 1300                     # vs cuSPARSE
-numactl --physcpubind 0-15 python benchmarks/sssmm.py  --start 0 --end 1300                     # fused vs unfused vs cuSPARSE
-numactl --physcpubind 0-15 python benchmarks/frostt_tensors_add.py --device cuda                # CSF3 vs COO3D vs torch
-numactl --physcpubind 0-15 python benchmarks/inner_prod.py  --device cuda                       # FROSTT, CSF3 vs COO3 vs torch
+python benchmarks/spgemm.py --start 0 --end 1300                                                # vs cuSPARSE
+python benchmarks/sssmm.py  --start 0 --end 1300                                                # fused vs unfused vs cuSPARSE
+python benchmarks/frostt_tensors_add.py --device cuda                                           # CSF3 vs COO3D vs torch
+python benchmarks/inner_prod.py  --device cuda                                                  # FROSTT, CSF3 vs COO3 vs torch
 ```
 
 ### Acknowledgements
