@@ -3,11 +3,12 @@
 Every plot also writes an .npz of its raw series next to the figure, so a run can be
 re-plotted without re-benchmarking. Output goes to config.RESULTS_DIR.
 
-Figures are typeset with LaTeX to match the paper. Set NACHO_PLOT_USETEX=0 on a machine
-without a LaTeX install.
+Figures are typeset with LaTeX to match the paper, falling back to matplotlib's own text
+rendering where LaTeX is not installed. NACHO_PLOT_USETEX forces either one.
 """
 
 import os
+import shutil
 
 import matplotlib
 import matplotlib.pyplot as plt
@@ -16,7 +17,21 @@ import numpy as np
 
 import config
 
-matplotlib.rcParams["text.usetex"] = os.environ.get("NACHO_PLOT_USETEX", "1") == "1"
+
+def _latex_installed():
+    """Whether matplotlib can typeset with LaTeX, which needs both of these on PATH."""
+    return all(shutil.which(program) for program in ("latex", "dvipng"))
+
+
+_usetex_default = "1" if _latex_installed() else "0"
+matplotlib.rcParams["text.usetex"] = os.environ.get("NACHO_PLOT_USETEX",
+                                                    _usetex_default) == "1"
+
+# Said once, by the first figure written, rather than on import: a --no-plot run has no
+# figures to say it about.
+_report_missing_latex = (_usetex_default == "0"
+                         and not matplotlib.rcParams["text.usetex"])
+
 matplotlib.rcParams.update({
     "font.size": 8,
     "axes.labelsize": 8,
@@ -48,6 +63,12 @@ FIGURE_FORMATS = ("eps", "pdf")
 
 def _save_figure(name, **savefig_kwargs):
     """Write the current figure once per entry in FIGURE_FORMATS."""
+    global _report_missing_latex
+    if _report_missing_latex:
+        print("LaTeX not found: figures use matplotlib's text rendering, which crowds the "
+              "rotated axis labels and embeds Type 3 fonts.")
+        _report_missing_latex = False
+
     for extension in FIGURE_FORMATS:
         path = _results_path(name, f".{extension}")
         plt.savefig(path, format=extension, **savefig_kwargs)
