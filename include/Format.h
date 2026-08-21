@@ -211,7 +211,7 @@ struct Format {
             return false;
         if(levels[levels.size() - 1].format != LevelFormat::Singleton_unique)
             return false;
-        for(int i = 1; i < levels.size() - 1; i++) {
+        for(size_t i = 1; i < levels.size() - 1; i++) {
             if(levels[i].format != LevelFormat::Singleton_non_unique)
                 return false;
         }

@@ -144,6 +144,10 @@ namespace backend {
         this->lower_binary_search_function(false);
         this->lower_struct_definitions(sparse_intersection_levels[sparse_intersection_levels.size()-2]);
 
+        if (is_scatter_reduction) {
+            stitch_and_generate->add_to_header_file(stitch_and_generate->scatter_header_functions());
+        }
+
         std::map<std::string, nacho::backend::TensorLowerer> included_tensors_current;
         llir::lType partition_struct;
         llir::lStmt partition_kernel;

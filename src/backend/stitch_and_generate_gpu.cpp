@@ -20,76 +20,63 @@ const std::vector<std::string> &scatter_reduction_lines() {
         "  const index_t contract_products = $PRODUCTS$;",
         "  const auto contract_policy = thrust::cuda::par_nosync.on(stream);",
         "",
-        "  index_t* contract_segments = nullptr;",
-        "  index_t* contract_keys_alt = nullptr;",
-        "  index_t* contract_row_of = nullptr;",
-        "  index_t* contract_row_ids = nullptr;",
-        "  index_t* contract_unique_rows = nullptr;",
-        "  index_t* contract_row_counts = nullptr;",
-        "  value_t* contract_values_alt = nullptr;",
-        "  value_t* contract_summed_values = nullptr;",
-        "  int64_t* contract_keys = nullptr;",
-        "  int64_t* contract_summed_keys = nullptr;",
+        "  if (contract_products == 0) {",
+        "    $OUT_LENGTH$ = 0;",
+        "    cudaMallocAsync((void**)&$OUT_OFFSETS$, sizeof(index_t) * (contract_rows + 1), stream);",
+        "    cudaMemsetAsync($OUT_OFFSETS$, 0, sizeof(index_t) * (contract_rows + 1), stream);",
+        "    cudaMallocAsync((void**)&$OUT_INDICES$, sizeof(index_t) * 1, stream);",
+        "    cudaMallocAsync((void**)&$OUT_VALUES$, sizeof(value_t) * 1, stream);",
+        "    ",
+        "    cudaFreeAsync($REDUCED_OFFSETS$, stream);",
+        "    cudaFreeAsync($REDUCED_INDICES$, stream);",
+        "    cudaFreeAsync($INNER_OFFSETS$, stream);",
+        "    cudaFreeAsync($INNER_INDICES$, stream);",
+        "    cudaFreeAsync($TEMP_VALUES$, stream);",
+        "  } else {",
+        "    index_t* contract_segments = nullptr;",
+        "    index_t* contract_keys_alt = nullptr;",
+        "    value_t* contract_values_alt = nullptr;",
+        "    int32_t* head_flags = nullptr;",
+        "    int32_t* out_indices = nullptr;",
         "",
-        "  // CUB sizes its scratch from the counts alone, so these probes run before the pool",
-        "  // exists and the iterators they are handed are still null.",
-        "  size_t contract_sort_bytes = 0;",
-        "  size_t contract_scan_bytes = 0;",
-        "  {",
-        "    cub::DoubleBuffer<index_t> probe_keys(contract_keys_alt, contract_keys_alt);",
-        "    cub::DoubleBuffer<value_t> probe_values(contract_values_alt, contract_values_alt);",
-        "    cub::DeviceSegmentedSort::SortPairs(nullptr, contract_sort_bytes, probe_keys, probe_values,",
+        "    // Probe CUB sizes",
+        "    size_t sort_bytes = 0;",
+        "    cub::DoubleBuffer<index_t> probe_keys(nullptr, nullptr);",
+        "    cub::DoubleBuffer<value_t> probe_values(nullptr, nullptr);",
+        "    cub::DeviceSegmentedSort::SortPairs(nullptr, sort_bytes, probe_keys, probe_values,",
         "                                        contract_products, contract_rows,",
-        "                                        contract_segments, contract_segments + 1, stream);",
-        "  }",
-        "  cub::DeviceScan::InclusiveSum(nullptr, contract_scan_bytes, contract_row_counts,",
-        "                                contract_row_counts, contract_rows, stream);",
-        // Not const: CUB takes the size by mutable reference, and rewrites it on each call.
-        "  size_t contract_scratch_bytes =",
-        "      contract_sort_bytes > contract_scan_bytes ? contract_sort_bytes : contract_scan_bytes;",
+        "                                        (index_t*)nullptr, (index_t*)nullptr, stream);",
         "",
-        "  // Every buffer below is one entry per scalar product, so together they can outgrow",
-        "  // the device. One allocation makes that failure atomic: a sequence of them would",
-        "  // strand whatever had already succeeded, since the frees are only reached on the way",
-        "  // out. Widest alignment first, then the 4-byte buffers, then CUB's scratch on a",
-        "  // 256-byte boundary.",
-        "  const size_t contract_n = (size_t)contract_products;",
-        "  const size_t contract_pool_bytes =",
-        "      2 * sizeof(int64_t) * contract_n",
-        "    + 2 * sizeof(value_t) * contract_n",
-        "    + 5 * sizeof(index_t) * contract_n",
-        "    + sizeof(index_t) * (size_t)(contract_rows + 1)",
-        "    + 256 + contract_scratch_bytes;",
-        "  void* contract_pool = nullptr;",
-        "  cudaMallocAsync(&contract_pool, contract_pool_bytes, stream);",
-        "  char* contract_base = (char*)contract_pool;",
-        "  size_t contract_offset = 0;",
-        "  contract_keys = (int64_t*)(contract_base + contract_offset);",
-        "  contract_offset += sizeof(int64_t) * contract_n;",
-        "  contract_summed_keys = (int64_t*)(contract_base + contract_offset);",
-        "  contract_offset += sizeof(int64_t) * contract_n;",
-        "  contract_values_alt = (value_t*)(contract_base + contract_offset);",
-        "  contract_offset += sizeof(value_t) * contract_n;",
-        "  contract_summed_values = (value_t*)(contract_base + contract_offset);",
-        "  contract_offset += sizeof(value_t) * contract_n;",
-        "  contract_keys_alt = (index_t*)(contract_base + contract_offset);",
-        "  contract_offset += sizeof(index_t) * contract_n;",
-        "  contract_row_of = (index_t*)(contract_base + contract_offset);",
-        "  contract_offset += sizeof(index_t) * contract_n;",
-        "  contract_row_ids = (index_t*)(contract_base + contract_offset);",
-        "  contract_offset += sizeof(index_t) * contract_n;",
-        "  contract_unique_rows = (index_t*)(contract_base + contract_offset);",
-        "  contract_offset += sizeof(index_t) * contract_n;",
-        "  contract_row_counts = (index_t*)(contract_base + contract_offset);",
-        "  contract_offset += sizeof(index_t) * contract_n;",
-        "  contract_segments = (index_t*)(contract_base + contract_offset);",
-        "  contract_offset += sizeof(index_t) * (size_t)(contract_rows + 1);",
-        "  contract_offset = ((contract_offset + 255) / 256) * 256;",
-        "  void* contract_scratch = (void*)(contract_base + contract_offset);",
+        "    size_t scan_bytes = 0;",
+        "    cub::DeviceScan::InclusiveSum(nullptr, scan_bytes, (int32_t*)nullptr, (int32_t*)nullptr, contract_products, stream);",
         "",
-        "  // Outer coordinate p spans inner positions",
-        "  // [inner_offsets[reduced_offsets[p]], inner_offsets[reduced_offsets[p + 1]]).",
-        "  {",
+        "    size_t scratch_bytes = sort_bytes > scan_bytes ? sort_bytes : scan_bytes;",
+        "",
+        "    // Massive allocation reduction: Dropped 6 heavy arrays",
+        "    const size_t n = (size_t)contract_products;",
+        "    const size_t pool_bytes = ",
+        "        sizeof(index_t) * n +                  // keys_alt",
+        "        sizeof(value_t) * n +                  // values_alt",
+        "        sizeof(index_t) * (size_t)(contract_rows + 1) + // segments",
+        "        sizeof(int32_t) * n +                  // head_flags",
+        "        sizeof(int32_t) * n +                  // out_indices",
+        "        256 + scratch_bytes;",
+        "",
+        "    void* contract_pool = nullptr;",
+        "    cudaMallocAsync(&contract_pool, pool_bytes, stream);",
+        "    char* base = (char*)contract_pool;",
+        "    size_t offset = 0;",
+        "",
+        "    contract_keys_alt = (index_t*)(base + offset); offset += sizeof(index_t) * n;",
+        "    contract_values_alt = (value_t*)(base + offset); offset += sizeof(value_t) * n;",
+        "    contract_segments = (index_t*)(base + offset); offset += sizeof(index_t) * (size_t)(contract_rows + 1);",
+        "    head_flags = (int32_t*)(base + offset); offset += sizeof(int32_t) * n;",
+        "    out_indices = (int32_t*)(base + offset); offset += sizeof(int32_t) * n;",
+        "    ",
+        "    offset = ((offset + 255) / 256) * 256;",
+        "    void* contract_scratch = (void*)(base + offset);",
+        "",
+        "    // 1. Build segment boundaries directly using your policy and transform",
         "    const index_t* contract_inner_offsets = $INNER_OFFSETS$;",
         "    thrust::transform(contract_policy,",
         "                      $REDUCED_OFFSETS$, $REDUCED_OFFSETS$ + (contract_rows + 1),",
@@ -97,84 +84,54 @@ const std::vector<std::string> &scatter_reduction_lines() {
         "                      [contract_inner_offsets] __device__ (index_t position) {",
         "                        return contract_inner_offsets[position];",
         "                      });",
+        "",
+        "    // Segmented Sort",
+        "    cub::DoubleBuffer<index_t> d_keys($INNER_INDICES$, contract_keys_alt);",
+        "    cub::DoubleBuffer<value_t> d_vals($TEMP_VALUES$, contract_values_alt);",
+        "    cub::DeviceSegmentedSort::SortPairs(contract_scratch, scratch_bytes,",
+        "                                        d_keys, d_vals,",
+        "                                        contract_products, contract_rows,",
+        "                                        contract_segments, contract_segments + 1, stream);",
+        "",
+        "    // Mark heads",
+        "    int grid_products = (contract_products + threads_per_block - 1) / threads_per_block;",
+        "    // NOTE: Call global kernels that are injected at the top of the file",
+        "    mark_heads_kernel<<<grid_products, threads_per_block, 0, stream>>>(",
+        "        d_keys.Current(), contract_segments, contract_rows, contract_products, head_flags);",
+        "",
+        "    // Inclusive Scan to generate 1-indexed group IDs",
+        "    cub::DeviceScan::InclusiveSum(contract_scratch, scratch_bytes, head_flags, out_indices, contract_products, stream);",
+        "",
+        "    int32_t total_unique = 0;",
+        "    cudaMemcpyAsync(&total_unique, out_indices + contract_products - 1, sizeof(int32_t), cudaMemcpyDeviceToHost, stream);",
+        "    cudaStreamSynchronize(stream);",
+        "    $OUT_LENGTH$ = total_unique;",
+        "",
+        "    // Output Allocation",
+        "    cudaMallocAsync((void**)&$OUT_OFFSETS$, sizeof(index_t) * (contract_rows + 1), stream);",
+        "    cudaMallocAsync((void**)&$OUT_INDICES$, sizeof(index_t) * (total_unique > 0 ? total_unique : 1), stream);",
+        "    cudaMallocAsync((void**)&$OUT_VALUES$, sizeof(value_t) * (total_unique > 0 ? total_unique : 1), stream);",
+        "    cudaMemsetAsync($OUT_VALUES$, 0, sizeof(value_t) * (total_unique > 0 ? total_unique : 1), stream);",
+        "",
+        "    // Extract Row Offsets",
+        "    int grid_rows_k = (contract_rows + 1 + threads_per_block - 1) / threads_per_block;",
+        "    extract_offsets_kernel<<<grid_rows_k, threads_per_block, 0, stream>>>(",
+        "        contract_segments, out_indices, contract_rows, contract_products, total_unique, $OUT_OFFSETS$);",
+        "",
+        "    // Custom Segmented Sum (replaces thrust::reduce_by_key)",
+        "    if (total_unique > 0) {",
+        "        reduce_values_kernel<<<grid_products, threads_per_block, 0, stream>>>(",
+        "            d_keys.Current(), d_vals.Current(), out_indices, contract_products, $OUT_INDICES$, $OUT_VALUES$);",
+        "    }",
+        "",
+        "    // Cleanup",
+        "    cudaFreeAsync($REDUCED_OFFSETS$, stream);",
+        "    cudaFreeAsync($REDUCED_INDICES$, stream);",
+        "    cudaFreeAsync($INNER_OFFSETS$, stream);",
+        "    cudaFreeAsync($INNER_INDICES$, stream);",
+        "    cudaFreeAsync($TEMP_VALUES$, stream);",
+        "    cudaFreeAsync(contract_pool, stream);",
         "  }",
-        "",
-        "  cub::DoubleBuffer<index_t> contract_sorted_keys($INNER_INDICES$, contract_keys_alt);",
-        "  cub::DoubleBuffer<value_t> contract_sorted_values($TEMP_VALUES$, contract_values_alt);",
-        "  cub::DeviceSegmentedSort::SortPairs(contract_scratch, contract_scratch_bytes,",
-        "                                      contract_sorted_keys, contract_sorted_values,",
-        "                                      contract_products, contract_rows,",
-        "                                      contract_segments, contract_segments + 1, stream);",
-        "",
-        "  {",
-        "    const index_t* contract_bounds = contract_segments;",
-        "    const index_t contract_row_count = contract_rows;",
-        "    thrust::transform(contract_policy,",
-        "                      thrust::make_counting_iterator<index_t>(0),",
-        "                      thrust::make_counting_iterator<index_t>(contract_products),",
-        "                      contract_row_of,",
-        "                      [contract_bounds, contract_row_count] __device__ (index_t position) {",
-        "                        index_t low = 0;",
-        "                        index_t high = contract_row_count;",
-        "                        while (low < high) {",
-        "                          const index_t mid = (low + high + 1) / 2;",
-        "                          if (contract_bounds[mid] <= position) { low = mid; } else { high = mid - 1; }",
-        "                        }",
-        "                        return low;",
-        "                      });",
-        "    const index_t* contract_rows_of = contract_row_of;",
-        "    const index_t* contract_inner = contract_sorted_keys.Current();",
-        "    thrust::transform(contract_policy,",
-        "                      thrust::make_counting_iterator<index_t>(0),",
-        "                      thrust::make_counting_iterator<index_t>(contract_products),",
-        "                      contract_keys,",
-        "                      [contract_rows_of, contract_inner] __device__ (index_t position) {",
-        "                        return ((int64_t)contract_rows_of[position] << 32)",
-        "                             | (int64_t)(uint32_t)contract_inner[position];",
-        "                      });",
-        "  }",
-        "",
-        "  const auto contract_end = thrust::reduce_by_key(contract_policy,",
-        "      contract_keys, contract_keys + contract_products,",
-        "      contract_sorted_values.Current(),",
-        "      contract_summed_keys, contract_summed_values,",
-        "      thrust::equal_to<int64_t>(), thrust::plus<value_t>());",
-        "  cudaStreamSynchronize(stream);",
-        "  $OUT_LENGTH$ = (index_t)(contract_end.first - contract_summed_keys);",
-        "",
-        "  cudaMallocAsync((void**)&$OUT_OFFSETS$, sizeof(index_t) * (contract_rows + 1), stream);",
-        "  cudaMallocAsync((void**)&$OUT_INDICES$, sizeof(index_t) * $OUT_LENGTH$, stream);",
-        "  cudaMallocAsync((void**)&$OUT_VALUES$, sizeof(value_t) * $OUT_LENGTH$, stream);",
-        "  cudaMemsetAsync($OUT_OFFSETS$, 0, sizeof(index_t) * (contract_rows + 1), stream);",
-        "",
-        "  thrust::transform(contract_policy, contract_summed_keys, contract_summed_keys + $OUT_LENGTH$,",
-        "                    $OUT_INDICES$,",
-        "                    [] __device__ (int64_t key) { return (index_t)(key & 0xFFFFFFFF); });",
-        "  thrust::copy(contract_policy, contract_summed_values,",
-        "               contract_summed_values + $OUT_LENGTH$, $OUT_VALUES$);",
-        "  thrust::transform(contract_policy, contract_summed_keys, contract_summed_keys + $OUT_LENGTH$,",
-        "                    contract_row_ids,",
-        "                    [] __device__ (int64_t key) { return (index_t)(key >> 32); });",
-        "",
-        "  // Rebuild the output's offsets from how many entries each outer coordinate kept.",
-        "  const auto contract_rows_end = thrust::reduce_by_key(contract_policy,",
-        "      contract_row_ids, contract_row_ids + $OUT_LENGTH$,",
-        "      thrust::make_constant_iterator<index_t>(1),",
-        "      contract_unique_rows, contract_row_counts);",
-        "  cudaStreamSynchronize(stream);",
-        "  const index_t contract_unique = (index_t)(contract_rows_end.first - contract_unique_rows);",
-        "  thrust::scatter(contract_policy, contract_row_counts, contract_row_counts + contract_unique,",
-        "                  contract_unique_rows, $OUT_OFFSETS$ + 1);",
-        "  cub::DeviceScan::InclusiveSum(contract_scratch, contract_scratch_bytes,",
-        "                                $OUT_OFFSETS$ + 1, $OUT_OFFSETS$ + 1, contract_rows, stream);",
-        "",
-        "  // Both halves of each sort double buffer, so whichever one ended up current.",
-        "  cudaFreeAsync($REDUCED_OFFSETS$, stream);",
-        "  cudaFreeAsync($REDUCED_INDICES$, stream);",
-        "  cudaFreeAsync($INNER_OFFSETS$, stream);",
-        "  cudaFreeAsync($INNER_INDICES$, stream);",
-        "  cudaFreeAsync($TEMP_VALUES$, stream);",
-        "  cudaFreeAsync(contract_pool, stream);",
         "}",
     };
     return lines;
@@ -295,6 +252,117 @@ const std::vector<std::string> &scatter_reduction_lines() {
             }
             main_func.body.emplace_back(llir::RawStmt::make(emitted));
         }
+    }
+
+    llir::lStmt StitchAndGenerateGPU::scatter_header_functions() {
+        // This is an outrageous hack.
+        // TODO: fix.
+        return llir::RawStmt::make(R"(
+template <typename index_t>
+__global__ void mark_heads_kernel(
+    const index_t* __restrict__ sorted_k,
+    const index_t* __restrict__ contract_segments,
+    const int32_t num_rows,
+    const int32_t num_intermediate,
+    int32_t* __restrict__ head_flags)
+{
+    int32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < num_intermediate) {
+        int32_t low = 0;
+        int32_t high = num_rows;
+        while (low < high) {
+            int32_t mid = (low + high + 1) / 2;
+            if (contract_segments[mid] <= idx) { low = mid; } else { high = mid - 1; }
+        }
+        int32_t i = low;
+
+        bool is_head = false;
+        if (idx == contract_segments[i]) {
+            is_head = true;
+        } else if (sorted_k[idx] != sorted_k[idx - 1]) {
+            is_head = true;
+        }
+        head_flags[idx] = is_head ? 1 : 0;
+    }
+}
+
+template <typename index_t>
+__global__ void extract_offsets_kernel(
+    const index_t* __restrict__ contract_segments,
+    const int32_t* __restrict__ out_indices, 
+    const int32_t num_rows,
+    const int32_t num_intermediate,
+    const int32_t total_unique,
+    index_t* __restrict__ Z_k_offsets)
+{
+    int32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx <= num_rows) {
+        if (idx == num_rows) {
+            Z_k_offsets[idx] = total_unique;
+        } else {
+            int32_t seg_start = contract_segments[idx];
+            if (seg_start < num_intermediate) {
+                Z_k_offsets[idx] = out_indices[seg_start] - 1;
+            } else {
+                Z_k_offsets[idx] = total_unique;
+            }
+        }
+    }
+}
+
+template <typename index_t, typename value_t>
+__global__ void reduce_values_kernel(
+    const index_t* __restrict__ sorted_k,
+    const value_t* __restrict__ sorted_val,
+    const int32_t* __restrict__ out_indices,
+    const int32_t num_intermediate,
+    index_t* __restrict__ Z_k_indices,
+    value_t* __restrict__ Z_values)
+{
+    int32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+    // NO EARLY RETURN! We flag valid threads to keep the warp synchronized
+    bool valid = (idx < num_intermediate);
+
+    int32_t my_out_id = -1;
+    index_t my_k = 0;
+    value_t my_val = 0;
+
+    if (valid) {
+        my_out_id = out_indices[idx] - 1;
+        my_k = sorted_k[idx];
+        my_val = sorted_val[idx];
+    }
+
+    // Unconditional warp-synchronous segmented scan
+    #pragma unroll
+    for (int offset = 1; offset < 32; offset *= 2) {
+        int32_t other_id = __shfl_up_sync(0xffffffff, my_out_id, offset);
+        value_t other_val = __shfl_up_sync(0xffffffff, my_val, offset);
+
+        // Add only if both lanes belong to the same segment and are valid
+        if (threadIdx.x % 32 >= offset && my_out_id == other_id && my_out_id != -1) {
+            my_val += other_val;
+        }
+    }
+
+    // Unconditional warp-synchronous read from the next lane
+    int32_t next_id = __shfl_down_sync(0xffffffff, my_out_id, 1);
+
+    if (valid) {
+        bool is_last_in_warp = false;
+        // Check lane 31, array boundary, OR segment boundary safely
+        if (threadIdx.x % 32 == 31 || idx == num_intermediate - 1 || next_id != my_out_id) {
+            is_last_in_warp = true;
+        }
+
+        if (is_last_in_warp) {
+            atomicAdd(&Z_values[my_out_id], my_val);
+            Z_k_indices[my_out_id] = my_k;
+        }
+    }
+}
+)");
     }
 
     llir::lStmt StitchAndGenerateGPU::generate_zero_range_statement(llir::lExpr field, llir::lExpr byte_count) {

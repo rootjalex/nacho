@@ -174,6 +174,8 @@ namespace backend {
         // coordinates land on one output coordinate. Only the GPU target implements it.
         virtual void stitch_scatter_reduction();
 
+        virtual llir::lStmt scatter_header_functions();
+
         // Number of values/non-zeros the tensor stores, as the product rule used when allocating a
         // result: a sparse level sets the count to its length, a dense level scales by its
         // size. A tensor with no levels holds one value.
@@ -342,6 +344,8 @@ namespace backend {
             std::vector<std::string> requested_operand_ordering);
 
         void stitch_scatter_reduction() override;
+
+        llir::lStmt scatter_header_functions() override;
 
         void generate_memory_allocations(
             llir::lType partition_struct, LoopNum previous_sparse_intersection, LoopNum current_sparse_intersection,

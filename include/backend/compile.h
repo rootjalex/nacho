@@ -59,6 +59,7 @@ namespace backend {
             CIN get_modified_cin_for_sparse_intersection(LoopNum target_loop, CIN& cin);
 
             void lower_binary_search_function(bool is_upper_bound);
+            void lower_scatter_reduction();
             llir::lType lower_result_pos_to_operand_pos_map_struct(LoopNum last_sparse_intersection);
             std::map<std::string, TensorLowerer> get_included_tensors_for_level(LoopNum loop_num);
             void lower_merged_index_equality_func(TensorIndex idx);

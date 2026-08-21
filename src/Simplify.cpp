@@ -95,7 +95,7 @@ struct Simplify : public SimplifySeq {
         bool atleast_one_tensor_in_universe_defined = false;
         for (const auto &[name, type, level] : node->tensors) {
             bool tensor_defined = true;
-            for(int i = 0; i <= level; i++) {
+            for(size_t i = 0; i <= level; i++) {
                 Seq temp = Index::make(name, type, i);
                 if (defined.count(temp) == 0) {
                     tensor_defined = false;

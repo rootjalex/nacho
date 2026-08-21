@@ -324,6 +324,11 @@ namespace backend {
             << "Kernel '" << name << "': scatter reduction is only supported on GPU";
     }
 
+    llir::lStmt StitchAndGenerate::scatter_header_functions() {
+        internal_assert(false)
+            << "Kernel '" << name << "': scatter reduction is only supported on GPU";
+    }
+
     llir::lExpr StitchAndGenerate::values_extent(const TensorLowerer &tensor) const {
         llir::lExpr extent = llir::lConst::make(1);
         for (TensorLevelNum level = BEFORE_FIRST_LEVEL + 1; level < tensor.end_tensor_level(); ++level) {
