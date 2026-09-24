@@ -155,10 +155,24 @@ Expr optimize_coo(const Expr &expr) {
 
 } // namespace
 
-CIN compile_to_cin(const Expr &expr, std::string out) {
+CIN compile_to_cin(const Expr &expr, std::string out, std::optional<Format> out_format) {
     Expr optimized_expr = optimize_coo(expr);
 
     TensorType out_type = optimized_expr.type();
+    // If the user has specified an output format, we need to check that it is
+    // compatible with the inferred format and overwrites the inferred format.
+    if (out_format) {
+        const auto &inferred = out_type.format.levels;
+        const auto &requested = out_format->levels;
+        bool same_indices = inferred.size() == requested.size();
+        for (size_t i = 0; same_indices && i < inferred.size(); ++i) {
+            same_indices = inferred[i].index == requested[i].index;
+        }
+        internal_assert(same_indices && out_format->bc_levels.empty())
+            << "Result format " << *out_format << " must order the same indices as the inferred "
+            << out_type.format << " for: " << expr;
+        out_type.format = *out_format;
+    }
 
     internal_assert(out_type.format.bc_levels.empty())
         << "TODO: support explicit loop ordering for: " << expr

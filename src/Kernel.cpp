@@ -73,6 +73,11 @@ Kernel &Kernel::result_name(std::string name) {
     return *this;
 }
 
+Kernel &Kernel::result_format(Format format) {
+    result_format_ = std::move(format);
+    return *this;
+}
+
 Kernel &Kernel::operand_ordering(std::vector<std::string> names) {
     internal_assert(!names.empty()) << "Kernel '" << name_ << "' operand ordering cannot be empty";
     operand_ordering_ = std::move(names);
@@ -111,7 +116,7 @@ void Kernel::emit() {
 
     for (Target target : targets_) {
         const bool is_cpu = target == Target::CPU;
-        backend::CINLowerer lowerer(compile_to_cin(expr_, result_name_), name_, is_cpu, operand_ordering_);
+        backend::CINLowerer lowerer(compile_to_cin(expr_, result_name_, result_format_), name_, is_cpu, operand_ordering_);
         lowerer.recursive_partitioning = recursive_partitioning_;
         lowerer.lower_cin();
 

@@ -2,6 +2,7 @@
 
 #include "Frontend.h"
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -37,6 +38,11 @@ public:
     // Name of the result tensor, and so of its generated struct. Defaults to "Z".
     Kernel &result_name(std::string name);
 
+    // Storage format of the result. Defaults to the format inferred from the expression,
+    // which is sparse along any index that is sparse in an operand. Must order the same
+    // indices as the inferred format.
+    Kernel &result_format(Format format);
+
     // The order the kernel takes its operands in, in both the C++ signature and the
     // Python wrapper. Must name every operand of the expression exactly once. Defaults
     // to the operands' names in lexicographic order.
@@ -65,6 +71,7 @@ private:
     Expr expr_;
     std::vector<Target> targets_{Target::CPU, Target::GPU};
     std::string result_name_ = "Z";
+    std::optional<Format> result_format_;
     std::vector<std::string> operand_ordering_;
     std::vector<std::pair<Target, std::string>> python_names_;
     bool bindings_ = true;
