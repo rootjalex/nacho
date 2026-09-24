@@ -14,7 +14,7 @@ import torch
 
 from . import nacho_ext as _ext
 
-__all__ = ["to_csr", "to_dcsr", "to_coo", "to_coo3", "to_csf3"]
+__all__ = ["to_csr", "to_dcsr", "to_coo", "to_coo3", "to_csf3", "to_dense_vector"]
 
 def _shape(rows, cols):
     return torch.tensor([rows, cols], dtype=torch.int32)
@@ -115,4 +115,15 @@ def to_csf3(coordinates, values, shape, device="cpu"):
         tensor(coordinates[:, 2], torch.int32),
         tensor(values, torch.float32),
         torch.tensor(shape, dtype=torch.int32),
+    )
+
+def to_dense_vector(vector, device="cuda"):
+    """torch dense vector -> _ext.DenseVector_gpu."""
+    if device != "cuda":
+        raise ValueError("DenseVector is currently only generated for GPU")
+    vector = vector.to(dtype=torch.float32, device=device)
+
+    return _ext.DenseVector_gpu(
+        vector,
+        torch.tensor([vector.shape[0]], dtype=torch.int32),
     )
