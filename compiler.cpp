@@ -71,6 +71,10 @@ void test() {
         {"i", LevelFormat::Dense}
     }).named("DenseVector");
 
+     Format d_j = Format::ordered({
+        {"j", LevelFormat::Dense}
+    }).named("DenseVector");
+
     // A full reduction contracts every dimension away, leaving a single value.
     Format scalar = Format::ordered({}).named("Scalar");
 
@@ -85,6 +89,7 @@ void test() {
     TensorType dcsr_f32 = TensorType(dcsr, dType::Float32);
     TensorType s_f32 = TensorType(s, dType::Float32);
     TensorType d_f32 = TensorType(d, dType::Float32);
+    TensorType d_j_f32 = TensorType(d_j, dType::Float32);
 
 
     Expr a_csr_ij = Tensor::make(csr_f32, "a");
@@ -105,6 +110,7 @@ void test() {
     Expr a_coo_ijk = Tensor::make(coo3d_f32, "a");
     Expr b_coo_ijk = Tensor::make(coo3d_f32, "b");
     Expr c_csr_ik = Tensor::make(csr3_f32, "c");
+    Expr x_dense_j = Tensor::make(d_j_f32, "x");
 
 
     // Element-wise kernels.
@@ -141,6 +147,14 @@ void test() {
     Kernel("inner_prod").expr(Sum::make("i", Sum::make("j", Sum::make("k", a_csf_ijk * b_csf_ijk)))).emit();
 
     Kernel("inner_prod_coo").expr(Sum::make("i", Sum::make("j", Sum::make("k", a_coo_ijk * b_coo_ijk)))).emit();
+
+    // A is CSC, so each column j scatters its contributions into y(i). Inference would
+    // make y sparse in i (i is sparse in A); store it dense instead.
+    Kernel("spmv")
+        .expr(Sum::make("j", a_csc_ji * x_dense_j))
+        .result_format(d)
+        .targets({Target::GPU})
+        .emit();
 
     Kernel("spgemm")
         .expr(Sum::make("j", a_csr_ij * b_csr_jk))

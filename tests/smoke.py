@@ -108,6 +108,8 @@ def from_csf3_result(result):
 
 
 def matches(actual, expected):
+    if isinstance(actual, np.ndarray):
+        return actual.shape == expected.shape and np.allclose(actual, expected, atol=TOLERANCE)
     if isinstance(actual, dict):
         if actual.keys() != expected.keys():
             return False
@@ -228,6 +230,18 @@ def case_sssmm(device):
     return from_csr_result(result), (a @ b).multiply(c)
 
 
+def case_spmv(device):
+    """y = A x with A in CSC: each column j scatters into a dense y. The kernel's CSC layout
+    is the CSR class over transposed data, so A is passed as the CSR of its transpose."""
+    a = random_csr(ROWS, COLS)
+    x = RNG.random(COLS).astype(np.float32)
+    dense_vector = nacho.DenseVector_cpu if device == "cpu" else nacho.DenseVector_gpu
+    result = kernel("spmv", device)(
+        nacho.to_csr(as_torch_csr(a.T.tocsr()), device),
+        dense_vector(torch.from_numpy(x).to(device), torch.tensor([COLS], dtype=torch.int32)))
+    return buffer(result.values), a @ x
+
+
 def _expected_inner_product(a_coordinates, a_values, b_coordinates, b_values):
     """Sum over the coordinates the two tensors share."""
     a_entries = {tuple(int(x) for x in c): float(v)
@@ -287,6 +301,7 @@ CASES = [
     ("coo3d_add", case_coo3d_add),
     ("inner_prod", case_inner_prod),
     ("inner_prod_coo", case_inner_prod_coo),
+    ("spmv", case_spmv),
     ("spgemm", case_spgemm),
     ("sssmm", case_sssmm),
 ]
