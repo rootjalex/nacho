@@ -120,8 +120,12 @@ namespace nacho {
     
         inline TensorLevelNum loop_num_to_tensor_level(LoopNum loop_num) const {
             // Map loop levels to tensor levels
-            if(loop_num == BEFORE_FIRST_LOOP || loop_num == end_loop_num()) {
-                return TensorLevelNum(loop_num.get());
+            // The end sentinels map to each other; a tensor can have fewer levels than there are loops.
+            if(loop_num == BEFORE_FIRST_LOOP) {
+                return BEFORE_FIRST_LEVEL;
+            }
+            if(loop_num == end_loop_num()) {
+                return end_tensor_level();
             }
             internal_assert(tensor_type.format.level_exists(all_loop_indices[loop_num.get()])) << "Loop index " << all_loop_indices[loop_num.get()] << " does not exist in tensor format levels.";
             return tensor_type.format.get_level_order(all_loop_indices[loop_num.get()]);
@@ -129,8 +133,11 @@ namespace nacho {
 
         inline LoopNum tensor_level_to_loop_num(TensorLevelNum tensor_level) const {
             // Map tensor levels to loop levels
-            if(tensor_level == BEFORE_FIRST_LEVEL || tensor_level == end_tensor_level()) {
-                return LoopNum(tensor_level.get());
+            if(tensor_level == BEFORE_FIRST_LEVEL) {
+                return BEFORE_FIRST_LOOP;
+            }
+            if(tensor_level == end_tensor_level()) {
+                return end_loop_num();
             }
             TensorIndex idx = tensor_type.format.levels[tensor_level.get()].index;
             auto it = std::find(all_loop_indices.begin(), all_loop_indices.end(), idx);
