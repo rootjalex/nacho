@@ -78,6 +78,7 @@ set(NACHO_BASELINE_SRC
     "${NACHO_BASELINES_DIR}/spgemm/spgemm_cusparse.cu"
     "${NACHO_BASELINES_DIR}/spmv/spmv_baselines_nb.cpp"
     "${NACHO_BASELINES_DIR}/spmv/spmv_cusparse.cu"
+    "${NACHO_BASELINES_DIR}/spmv/spmv_lbs.cu"
 )
 
 # NOMINSIZE: nanobind otherwise appends -Os to every CXX source, which overrides the

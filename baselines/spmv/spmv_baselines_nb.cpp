@@ -30,10 +30,28 @@ ArrayGPU<float> gpu_spmv_cusparse(const CSRGpu &a, const ArrayGPU<float> &x) {
     return adopt_gpu<float>(y, static_cast<size_t>(m));
 }
 
+ArrayGPU<float> gpu_spmv_lbs(const CSRGpu &a, const ArrayGPU<float> &x) {
+
+    float *y = nullptr;
+
+    // Same layout as the cuSPARSE call: a stores CSR(A^T) == CSC(A).
+    const int32_t k = a.shape.data()[0];
+    const int32_t m = a.shape.data()[1];
+
+    gpu_spmv_lbs_f32(m, k, const_cast<int32_t *>(a.indptr.data()),
+                     const_cast<int32_t *>(a.indices.data()),
+                     const_cast<float *>(a.values.data()),
+                     static_cast<int64_t>(a.values.shape(0)),
+                     const_cast<float *>(x.data()), y);
+
+    return adopt_gpu<float>(y, static_cast<size_t>(m));
+}
+
 } // namespace
 
 void register_spmv_baselines(nb::module_ &m) {
     m.def("gpu_spmv_cusparse_f32", &gpu_spmv_cusparse);
+    m.def("gpu_spmv_lbs_f32", &gpu_spmv_lbs);
 }
 
 } // namespace baselines

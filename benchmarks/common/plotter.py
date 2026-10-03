@@ -49,6 +49,7 @@ SERIES_COLORS = {
     "PyTorch": "#CC6677",
     "Intel MKL": "#DDCC77",
     "Taco": "#AA4499",
+    "LBS": "#EE7733",
 }
 
 
@@ -103,7 +104,7 @@ def plot(nnz, manual, cusparse, pytorch, name):
 
 
 def plot_scatter(filename, x_data, x_label, nacho, cusparse=None, pytorch=None, taco=None,
-                 unfused=None, pytorch_as_mkl=False, save=True):
+                 unfused=None, lbs=None, pytorch_as_mkl=False, save=True):
     """Runtime against x_data for each implementation, on log-log axes.
 
     A None entry in a series marks a run that did not complete (out of memory or timeout);
@@ -111,7 +112,7 @@ def plot_scatter(filename, x_data, x_label, nacho, cusparse=None, pytorch=None, 
     """
     if save:
         np.savez(_results_path(filename, ".npz"), x=x_data, nacho=nacho,
-                 cusparse=cusparse, pytorch=pytorch, taco=taco, unfused=unfused)
+                 cusparse=cusparse, pytorch=pytorch, taco=taco, unfused=unfused, lbs=lbs)
 
     plt.figure(figsize=(3.33, 1.15))
 
@@ -132,6 +133,7 @@ def plot_scatter(filename, x_data, x_label, nacho, cusparse=None, pytorch=None, 
     add_series(taco, "Taco")
     add_series(pytorch, "Intel MKL" if pytorch_as_mkl else "PyTorch")
     add_series(cusparse, "cuSPARSE")
+    add_series(lbs, "LBS")
     add_series(unfused, "Nacho Unfused")
     add_series(nacho, "Nacho")
 
@@ -161,6 +163,7 @@ def plot_scatter(filename, x_data, x_label, nacho, cusparse=None, pytorch=None, 
     compute_stats("Intel MKL" if pytorch_as_mkl else "PyTorch", pytorch, nacho)
     compute_stats("TACO", taco, nacho)
     compute_stats("Nacho Unfused", unfused, nacho)
+    compute_stats("LBS", lbs, nacho)
 
 
 def plot_heatmap(filename, data, exponents, x_label, y_label):

@@ -1,6 +1,7 @@
 """Sparse matrix vector multiplication: the generated kernel against:
 - cuSPARSE
-- pyTorch's SpMV.
+- pyTorch's SpMV
+- hand-written load-balanced search (LBS) kernel.
 
 Contracts j out of a[i,j] * b[j]. This is a column-major format traversal of the
 sparse matrix. Outputs to a dense vector y[i]. This is because cuSPARSE produces
@@ -119,6 +120,19 @@ def _measure_pair(A_coo, x_torch, launch):
     )
 
     # ------------------------------------------------------------------
+    # LBS
+    # ------------------------------------------------------------------
+
+    # Same CSC(A) operands as cuSPARSE; output as a (m,) tensor
+    result_lbs, lbs_ms = _time_product(
+        "lbs",
+        lambda: nacho.gpu_spmv_lbs_f32(
+            A_cusparse,
+            x_torch,
+        ),
+    )
+
+    # ------------------------------------------------------------------
     # Correctness
     # ------------------------------------------------------------------
 
@@ -155,6 +169,20 @@ def _measure_pair(A_coo, x_torch, launch):
 
         correct &= cusparse_correct
 
+    # LBS vs PyTorch.
+    if result_lbs is not None and reference is not None:
+        lbs_correct = torch.allclose(
+            result_lbs,
+            reference,
+            rtol=1e-4,
+            atol=1e-5,
+        )
+        print(f"  lbs       {lbs_ms:.4f} ms   speedup={lbs_ms/nacho_ms:.3f}x")
+        if not lbs_correct:
+            dense_failure_reason(result_lbs, reference)
+
+        correct &= lbs_correct
+
     del (
         A_csr_t,
         A_nacho,
@@ -165,10 +193,11 @@ def _measure_pair(A_coo, x_torch, launch):
         x_matrix,
         reference,
         result_cusparse,
+        result_lbs,
         result_nacho,
     )
     # flush_gpu_state()
-    return (nacho_ms, cusparse_ms, torch_ms, correct)
+    return (nacho_ms, cusparse_ms, lbs_ms, torch_ms, correct)
 
 
 def benchmark_spmv(start, end, save_and_plot=True):
@@ -178,18 +207,20 @@ def benchmark_spmv(start, end, save_and_plot=True):
     launch = launch_args("cuda")
     df = matrix_list()
 
-    nnz_totals, nacho_runtimes, pytorch_runtimes, cusparse_runtimes, failed = (
-        [],
-        [],
-        [],
-        [],
-        [],
-    )
+    (
+        nnz_totals,
+        nacho_runtimes,
+        pytorch_runtimes,
+        cusparse_runtimes,
+        lbs_runtimes,
+        failed,
+    ) = ([], [], [], [], [], [])
 
-    def record(nnz, nacho_ms, cusparse_ms, pytorch_ms, correct, index):
+    def record(nnz, nacho_ms, cusparse_ms, lbs_ms, pytorch_ms, correct, index):
         nnz_totals.append(nnz)
         nacho_runtimes.append(nacho_ms)
         cusparse_runtimes.append(cusparse_ms)
+        lbs_runtimes.append(lbs_ms)
         pytorch_runtimes.append(pytorch_ms)
         if not correct:
             print(f"  FAILED at {index}")
@@ -209,8 +240,10 @@ def benchmark_spmv(start, end, save_and_plot=True):
         A_coo = parse_matrix(df.iloc[i]["name"], return_coo=True)
         x = dense_vector(A_coo.shape[1], device="cuda")
 
-        nacho_ms, cusparse_ms, pytorch_ms, correct = _measure_pair(A_coo, x, launch)
-        record(A_coo._nnz(), nacho_ms, cusparse_ms, pytorch_ms, correct, i)
+        nacho_ms, cusparse_ms, lbs_ms, pytorch_ms, correct = _measure_pair(
+            A_coo, x, launch
+        )
+        record(A_coo._nnz(), nacho_ms, cusparse_ms, lbs_ms, pytorch_ms, correct, i)
 
         del A_coo, x
         # flush_gpu_state()
@@ -223,6 +256,7 @@ def benchmark_spmv(start, end, save_and_plot=True):
             "nnz(A)",
             nacho=nacho_runtimes,
             cusparse=cusparse_runtimes,
+            lbs=lbs_runtimes,
             pytorch=pytorch_runtimes,
         )
 
@@ -254,10 +288,25 @@ def benchmark_spmv(start, end, save_and_plot=True):
         failed,
     )
 
+    # Nacho vs LBS
+    both = [
+        (n, c)
+        for n, c in zip(nacho_runtimes, lbs_runtimes)
+        if n is not None and c is not None
+    ]
+    summarize(
+        f"gpu spmv {start}-{end}",
+        [n for n, _ in both],
+        "LBS",
+        [c for _, c in both],
+        failed,
+    )
+
     print(
         f"  incomplete: nacho {sum(t is None for t in nacho_runtimes)}, "
         f"pytorch {sum(t is None for t in pytorch_runtimes)}, "
         f"cuSPARSE {sum(t is None for t in cusparse_runtimes)}, "
+        f"LBS {sum(t is None for t in lbs_runtimes)}, "
         f"of {len(nnz_totals)} products"
     )
 
